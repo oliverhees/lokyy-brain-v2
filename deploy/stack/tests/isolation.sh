@@ -122,6 +122,10 @@ expect "ben clears the test key again" "$(put "$jar_ben" firma /api/config '{"ap
 expect "capture disabled (MINDBASE_DISABLE_CAPTURE): ben → firma /api/devices" \
   "$(curl -s -o /dev/null -w '%{http_code}' -b "$jar_ben" "$(printf $V firma)/api/devices")" "404"
 rm -f "$jar_carl"
+for v in anna ben firma; do
+  expect "vault-$v: SSRF guard not relaxed (MINDBASE_ALLOW_PRIVATE_FETCH unset)" \
+    "$(docker compose exec -T "vault-$v" printenv MINDBASE_ALLOW_PRIVATE_FETCH >/dev/null 2>&1 && echo SET || echo unset)" "unset"
+done
 
 echo "== 4. Direct container access bypassing Traefik"
 in_c() { docker compose exec -T "$1" sh -c "$2" 2>/dev/null; }
