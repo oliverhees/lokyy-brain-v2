@@ -29,7 +29,8 @@ docker build -f deploy/Dockerfile -t lokyy-brain-vault .
 
 docker network create vaults   # internal network shared with the aggregator
 
-docker run -d --name vault-acme --network vaults \
+docker network create --internal mcp-acme   # vault <-> aggregator only, no egress
+docker run -d --name vault-acme --network mcp-acme \
   -v vault-acme-data:/data \
   -e MCP_HTTP_PORT=4322 \
   -e MCP_HTTP_TOKEN="$(openssl rand -hex 32)" \
@@ -38,7 +39,7 @@ docker run -d --name vault-acme --network vaults \
   lokyy-brain-vault
 ```
 
-No `-p` flag: the ports stay on the `vaults` network. The aggregator connects to `http://vault-acme:4322/mcp`. In a real deployment, pass the tokens from your secret store instead of generating them inline, so you can also configure them in the aggregator.
+No `-p` flag: the ports stay on the internal `mcp-acme` network, which only the vault and the aggregator join (one such network per vault). The aggregator connects to `http://vault-acme:4322/mcp`. Because port 4321 is reachable on every network the container joins, the aggregator can reach the unauthenticated web API too — for real deployments put the web UI on a separate network shared only with the authenticating reverse proxy, and use the proxy secret guard once LBV2-8 is merged. A complete reference setup (Traefik, Authentik, per-vault networks, egress) is developed in LBV2-2. In a real deployment, pass the tokens from your secret store instead of generating them inline, so you can also configure them in the aggregator.
 
 The container runs as the non-root user `vault` (uid 10001) under `tini`.
 
