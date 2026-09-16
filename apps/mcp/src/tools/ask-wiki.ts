@@ -35,6 +35,12 @@ export const definition = {
 
 const WIKI_LAYERS = ['notes', 'concepts'] as const;
 
+/** First `max` UTF-16 code units, one fewer if the cut would split a surrogate pair. */
+function cutAt(text: string, max: number): string {
+  const last = text.charCodeAt(max - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
+}
+
 /** Slug of a search hit path in the root wiki (`wiki/notes/<slug>.md` or `wiki/concepts/<slug>.md`). */
 function hitSlug(path: string): string {
   return path
@@ -101,9 +107,9 @@ export async function handle(ctx: Context, rawInput: unknown) {
       if (remaining <= 0) break;
       const page = await readPage(ctx, slug);
       if (!page) continue;
-      const body = page.body.length > MAX_PAGE_BODY_CHARS ? `${page.body.slice(0, MAX_PAGE_BODY_CHARS)}${TRUNCATION_MARK}` : page.body;
+      const body = page.body.length > MAX_PAGE_BODY_CHARS ? `${cutAt(page.body, MAX_PAGE_BODY_CHARS)}${TRUNCATION_MARK}` : page.body;
       let section = `\n\n## [${i}] ${page.title} (slug: ${slug})\n\n${body}`;
-      if (section.length > remaining) section = `${section.slice(0, remaining)}${TRUNCATION_MARK}`;
+      if (section.length > remaining) section = `${cutAt(section, remaining)}${TRUNCATION_MARK}`;
       contextBlock += section;
       citations.push({
         n: i,

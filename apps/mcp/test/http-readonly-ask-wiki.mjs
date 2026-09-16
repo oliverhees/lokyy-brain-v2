@@ -80,6 +80,7 @@ writeFileSync(join(dataDir, 'wiki', 'concepts', 'hidden-concept.md'), '# Hidden 
 writeFileSync(join(dataDir, 'wiki', 'concepts', 'hidden-concept.meta.json'), meta('hidden-concept', 'CANARYHCON', { visibility: 'internal' }));
 // M1 fixtures: huge public pages, not matched by any search in this test.
 const BIG_SLUGS = Array.from({ length: 6 }, (_, i) => `big-${i}`);
+page('emoji-page', 'Emoji', `EMOJISTART${'a'.repeat(7999 - 'EMOJISTART'.length)}\u{1F600}${'b'.repeat(100)}`);
 BIG_SLUGS.forEach((slug, i) => page(slug, `Big ${i}`, `BIGSTART${i} ${'lorem ipsum '.repeat(5000)} BIGEND${i}`));
 writeFileSync(join(dataDir, 'wiki', 'concepts', 'second-public.md'), '# Concept\n\nCANARYCONCEPT shared guide');
 writeFileSync(join(dataDir, 'wiki', 'concepts', 'second-public.meta.json'), meta('second-public', 'CANARYCONCEPT', { visibility: 'pii' }));
@@ -255,6 +256,11 @@ async function run() {
     const bigAgain = await call(full, 'ask_wiki', { question: 'zzqq', context_pages: BIG_SLUGS, max_pages: 20 });
     check(bigAgain.includes('Mock answer') && JSON.parse(llmRequests.at(-1)).messages[0].content === bigContent, 'full: truncation is deterministic');
     check(llmRequests.at(-1).length < 60000, 'readonly/full: request body bounded');
+    // N1: a cut never splits a surrogate pair (emoji straddles the 8000-char body cut).
+    await call(full, 'ask_wiki', { question: 'zzqq', context_pages: ['emoji-page'] });
+    const emojiContent = JSON.parse(llmRequests.at(-1)).messages[0].content;
+    check(emojiContent.includes('EMOJISTART') && !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(emojiContent),
+      'full: truncation leaves no lone surrogate');
 
     // Central slug check for context_pages and ingest_plan.raw_id (all profiles).
     n = llmRequests.length;
