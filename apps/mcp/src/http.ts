@@ -6,6 +6,8 @@
 //
 // Env:
 //   MCP_HTTP_TOKEN            required, >= 32 chars; clients send `Authorization: Bearer <token>`
+//   MCP_HTTP_READONLY_TOKEN   optional, >= 32 chars, different from MCP_HTTP_TOKEN; sessions opened
+//                             with it only see and call tools on the READ_ONLY_TOOLS allowlist
 //   MCP_HTTP_PORT             default 4322
 //   MCP_HTTP_HOST             default 0.0.0.0
 //   MCP_HTTP_MAX_SESSIONS     default 32; when full, the least recently used session is evicted
@@ -17,6 +19,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { loadContext } from './context.js';
 import { createMcpServer } from './index.js';
+import type { AccessProfile } from './access.js';
 
 const MIN_TOKEN_LENGTH = 32;
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -37,12 +40,17 @@ function intEnv(name: string, fallback: number, min: number): number {
   return value;
 }
 
-/** Constant-time token comparison; hashing first equalises lengths. */
-function tokenMatches(header: string | undefined, expected: string): boolean {
-  if (!header?.startsWith('Bearer ')) return false;
-  const given = createHash('sha256').update(header.slice('Bearer '.length)).digest();
-  const want = createHash('sha256').update(expected).digest();
-  return timingSafeEqual(given, want);
+const sha256 = (value: string): Buffer => createHash('sha256').update(value).digest();
+
+/** Resolves the bearer token to an access profile; constant-time against every configured token. */
+function profileFor(header: string | undefined, tokens: ReadonlyArray<[Buffer, AccessProfile]>): AccessProfile | null {
+  if (!header?.startsWith('Bearer ')) return null;
+  const given = sha256(header.slice('Bearer '.length));
+  let match: AccessProfile | null = null;
+  for (const [want, profile] of tokens) {
+    if (timingSafeEqual(given, want)) match = profile;
+  }
+  return match;
 }
 
 class HttpError extends Error {
@@ -75,6 +83,17 @@ async function main(): Promise<void> {
     log(`fatal: MCP_HTTP_TOKEN must be set and at least ${MIN_TOKEN_LENGTH} characters`);
     process.exit(1);
   }
+  const readonlyToken = process.env['MCP_HTTP_READONLY_TOKEN'] ?? '';
+  if (readonlyToken && readonlyToken.length < MIN_TOKEN_LENGTH) {
+    log(`fatal: MCP_HTTP_READONLY_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters`);
+    process.exit(1);
+  }
+  if (readonlyToken && readonlyToken === token) {
+    log('fatal: MCP_HTTP_READONLY_TOKEN must differ from MCP_HTTP_TOKEN');
+    process.exit(1);
+  }
+  const tokens: Array<[Buffer, AccessProfile]> = [[sha256(token), 'full']];
+  if (readonlyToken) tokens.push([sha256(readonlyToken), 'readonly']);
   const port = intEnv('MCP_HTTP_PORT', 4322, 1);
   const host = process.env['MCP_HTTP_HOST'] ?? '0.0.0.0';
   const maxSessions = intEnv('MCP_HTTP_MAX_SESSIONS', 32, 1);
@@ -84,7 +103,7 @@ async function main(): Promise<void> {
 
   const ctx = await loadContext({});
 
-  interface Session { transport: StreamableHTTPServerTransport; lastSeen: number; inFlight: number }
+  interface Session { transport: StreamableHTTPServerTransport; lastSeen: number; inFlight: number; profile: AccessProfile }
   const sessions = new Map<string, Session>();
   // Sessions still initializing count toward the cap so concurrent initializes cannot overshoot it.
   let pending = 0;
@@ -123,7 +142,8 @@ async function main(): Promise<void> {
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
-      if (!tokenMatches(req.headers.authorization, token)) {
+      const profile = profileFor(req.headers.authorization, tokens);
+      if (!profile) {
         sendJson(res, 401, 'Unauthorized');
         return;
       }
@@ -141,6 +161,11 @@ async function main(): Promise<void> {
       if (sessionId !== undefined && !session) {
         // Spec: an unknown session must answer 404 so the client re-initializes.
         sendJson(res, 404, 'Session not found', -32001);
+        return;
+      }
+      if (session && session.profile !== profile) {
+        // A session keeps the access profile of the token that opened it.
+        sendJson(res, 403, 'Forbidden: token does not match session');
         return;
       }
       if (session) {
@@ -176,14 +201,14 @@ async function main(): Promise<void> {
           onsessioninitialized: (id) => {
             pending--;
             registered = true;
-            sessions.set(id, { transport, lastSeen: Date.now(), inFlight: 0 });
+            sessions.set(id, { transport, lastSeen: Date.now(), inFlight: 0, profile });
           },
         });
         transport.onclose = () => {
           if (transport.sessionId) sessions.delete(transport.sessionId);
         };
         try {
-          await createMcpServer(ctx).connect(transport);
+          await createMcpServer(ctx, profile).connect(transport);
           await transport.handleRequest(req, res, body);
         } finally {
           if (!registered) pending--;
