@@ -1,5 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
+import { safeFetch } from '@mindbase/core';
 
 export interface ArticleExtractOptions {
   /** ms before abort (default 15000) */
@@ -22,25 +23,18 @@ export async function extractArticleText(
   url: string,
   opts: ArticleExtractOptions = {},
 ): Promise<{ text: string; title?: string }> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 15000);
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      headers: {
-        'User-Agent': opts.userAgent ?? 'MindBase/0.1',
-        Accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
-      },
-      signal: ctrl.signal,
-      redirect: 'follow',
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+  // SSRF-safe: capture URLs come from clients (LBV2-13).
+  const res = await safeFetch(url, {
+    headers: {
+      'User-Agent': opts.userAgent ?? 'MindBase/0.1',
+      Accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
+    },
+    timeoutMs: opts.timeoutMs ?? 15000,
+  });
   if (!res.ok) throw new Error(`readability: HTTP ${res.status}`);
 
   const html = await res.text();
-  const dom = new JSDOM(html, { url });
+  const dom = new JSDOM(html, { url: res.url });
   const reader = new Readability(dom.window.document);
   const article = reader.parse();
   const text = (article?.textContent ?? '').trim();

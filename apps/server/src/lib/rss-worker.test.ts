@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FeedStore } from '@mindbase/core';
 import type { Feed } from '@mindbase/core';
-import { RSSWorker } from './rss-worker';
+import { RSSWorker, type FeedFetcher } from './rss-worker';
 import type { Inbox } from './inbox';
 import type { ServerContext } from '../context';
 
@@ -73,11 +73,11 @@ const RSS_BODY = `<?xml version="1.0" encoding="UTF-8"?>
 </rss>`;
 
 let dir: string;
-let fetchMock: MockedFunction<typeof fetch>;
+let fetchMock: MockedFunction<FeedFetcher>;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'mb-rss-worker-'));
-  fetchMock = vi.spyOn(globalThis, 'fetch') as MockedFunction<typeof fetch>;
+  fetchMock = vi.fn<FeedFetcher>();
 });
 
 afterEach(() => {
@@ -121,7 +121,7 @@ describe('RSSWorker.tick()', () => {
 
     const ctx = makeCtx({ readabilityEnabled: false });
     const inbox = makeInbox();
-    const worker = new RSSWorker(ctx, store, inbox);
+    const worker = new RSSWorker(ctx, store, inbox, undefined, fetchMock);
 
     const result = await worker.tick();
     expect(result.feeds_polled).toBe(1);
@@ -166,7 +166,7 @@ describe('RSSWorker.tick()', () => {
 
     const ctx = makeCtx({ readabilityEnabled: false });
     const inbox = makeInbox();
-    const worker = new RSSWorker(ctx, store, inbox);
+    const worker = new RSSWorker(ctx, store, inbox, undefined, fetchMock);
 
     const result = await worker.tick();
     expect(result.total_ingested).toBe(1); // only brand-new
@@ -182,7 +182,7 @@ describe('RSSWorker.tick()', () => {
 
     const ctx = makeCtx({ readabilityEnabled: false });
     const inbox = makeInbox();
-    const worker = new RSSWorker(ctx, store, inbox);
+    const worker = new RSSWorker(ctx, store, inbox, undefined, fetchMock);
 
     const result = await worker.tick();
     expect(result.total_ingested).toBe(0);
@@ -201,7 +201,7 @@ describe('RSSWorker.tick()', () => {
 
     const ctx = makeCtx({ readabilityEnabled: false });
     const inbox = makeInbox();
-    const worker = new RSSWorker(ctx, store, inbox);
+    const worker = new RSSWorker(ctx, store, inbox, undefined, fetchMock);
 
     const result = await worker.tick();
     expect(result.total_ingested).toBe(0);
@@ -220,7 +220,7 @@ describe('RSSWorker.tick()', () => {
 
     const ctx = makeCtx({ readabilityEnabled: false });
     const inbox = makeInbox();
-    const worker = new RSSWorker(ctx, store, inbox);
+    const worker = new RSSWorker(ctx, store, inbox, undefined, fetchMock);
 
     await worker.tick();
 
@@ -236,7 +236,7 @@ describe('RSSWorker.tick()', () => {
 
     const ctx = makeCtx({ readabilityEnabled: false, fetchTimeoutMs: 100 });
     const inbox = makeInbox();
-    const worker = new RSSWorker(ctx, store, inbox);
+    const worker = new RSSWorker(ctx, store, inbox, undefined, fetchMock);
 
     const result = await worker.tick();
     expect(result.errors).toHaveLength(1);
@@ -254,7 +254,7 @@ describe('RSSWorker.extractText (via pollOne)', () => {
 
     const ctx = makeCtx({ readabilityEnabled: false });
     const inbox = makeInbox();
-    const worker = new RSSWorker(ctx, store, inbox);
+    const worker = new RSSWorker(ctx, store, inbox, undefined, fetchMock);
 
     await worker.tick();
 
@@ -276,7 +276,7 @@ describe('RSSWorker.extractText (via pollOne)', () => {
 
     const ctx = makeCtx({ readabilityEnabled: true });
     const inbox = makeInbox();
-    const worker = new RSSWorker(ctx, store, inbox);
+    const worker = new RSSWorker(ctx, store, inbox, undefined, fetchMock);
 
     const result = await worker.tick();
     // Both new items should still be ingested via fallback
@@ -290,7 +290,7 @@ describe('RSSWorker.pollOne()', () => {
     const store = new FeedStore(dir);
     const ctx = makeCtx();
     const inbox = makeInbox();
-    const worker = new RSSWorker(ctx, store, inbox);
+    const worker = new RSSWorker(ctx, store, inbox, undefined, fetchMock);
     await expect(worker.pollOne('nonexistent-id')).rejects.toThrow('Feed not found');
   });
 
@@ -301,9 +301,27 @@ describe('RSSWorker.pollOne()', () => {
 
     const ctx = makeCtx({ readabilityEnabled: false });
     const inbox = makeInbox();
-    const worker = new RSSWorker(ctx, store, inbox);
+    const worker = new RSSWorker(ctx, store, inbox, undefined, fetchMock);
 
     const result = await worker.pollOne(feed.id);
     expect(result.ingested).toBe(2); // 2 new items ingested even though feed is disabled
+  });
+});
+
+describe('RSSWorker SSRF protection (LBV2-13)', () => {
+  it('default fetcher refuses a feed URL on a private address', async () => {
+    delete process.env['MINDBASE_ALLOW_PRIVATE_FETCH'];
+    const store = new FeedStore(dir);
+    const feed = await store.add({
+      url: 'http://169.254.169.254/latest/meta-data/',
+      name: 'Metadata',
+      tags: [],
+      project: undefined,
+      interval_minutes: undefined,
+      site_url: undefined,
+    });
+    const worker = new RSSWorker(makeCtx({ readabilityEnabled: false }), store, makeInbox());
+    const error = await worker.pollOne(feed.id).then(() => null, (e: unknown) => e as Error);
+    expect(error?.message).toMatch(/blocked/i);
   });
 });

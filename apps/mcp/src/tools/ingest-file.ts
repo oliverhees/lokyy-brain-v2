@@ -6,7 +6,7 @@ import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
 import { resolveProjectId } from '../lib/resolve-project.js';
 import { extractPdfText } from '../lib/extract-pdf.js';
-import { projectPaths, isoToday } from '@mindbase/core';
+import { projectPaths, isoToday, safeFetch, SafeFetchError, type SafeFetchResponse } from '@mindbase/core';
 
 const MAX_BYTES = 50 * 1024 * 1024; // 50MB
 const RETURN_CHAR_CAP = 40_000;
@@ -36,16 +36,20 @@ export const definition = {
 interface Fetched { buf: Buffer; filename: string; ext: string }
 
 async function fetchRemoteFile(url: string): Promise<Fetched | { error: string }> {
-  let res: Response;
+  let res: SafeFetchResponse;
   try {
-    res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(60_000) });
+    // SSRF-safe: private/loopback/metadata targets are refused on every redirect hop (LBV2-13).
+    res = await safeFetch(url, { timeoutMs: 60_000, maxBytes: MAX_BYTES });
   } catch (e) {
+    if (e instanceof SafeFetchError && e.code === 'too_large') {
+      return { error: 'Downloaded file is larger than the 50MB limit.' };
+    }
     return { error: `Download failed: ${(e as Error).message}` };
   }
   if (!res.ok) return { error: `Download failed: HTTP ${res.status} from ${url}` };
 
   const ctype = (res.headers.get('content-type') ?? '').toLowerCase();
-  const urlPath = new URL(url).pathname;
+  const urlPath = new URL(res.url).pathname;
   const urlExt = extname(urlPath).toLowerCase();
 
   let ext: string;
@@ -58,10 +62,7 @@ async function fetchRemoteFile(url: string): Promise<Fetched | { error: string }
     return { error: `Unsupported content-type '${ctype}'. Supported: PDF, markdown, plain text.` };
   }
 
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length > MAX_BYTES) {
-    return { error: `Downloaded file is ${(buf.length / 1024 / 1024).toFixed(1)}MB — the limit is 50MB.` };
-  }
+  const buf = res.body;
 
   // Filename: Content-Disposition beats URL basename.
   const dispo = res.headers.get('content-disposition') ?? '';

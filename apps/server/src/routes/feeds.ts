@@ -3,11 +3,12 @@ import multer from 'multer';
 import Parser from 'rss-parser';
 import type { ServerContext } from '../context';
 import type { FeedStore } from '@mindbase/core';
-import { parseOpml } from '@mindbase/core';
+import { parseOpml, safeFetch } from '@mindbase/core';
 import type { RSSWorker } from '../lib/rss-worker';
 
 const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } });
-const probe = new Parser({ timeout: 15000 });
+const probe = new Parser();
+const FEED_MAX_BYTES = 5 * 1024 * 1024;
 
 export function feedsRoutes(
   _ctx: ServerContext,
@@ -33,7 +34,10 @@ export function feedsRoutes(
     }
     try {
       // Probe to validate + grab feed name
-      const parsed = await probe.parseURL(url);
+      // SSRF-safe download, then parse (rss-parser's parseURL follows redirects anywhere).
+      const fetched = await safeFetch(url, { timeoutMs: 15_000, maxBytes: FEED_MAX_BYTES });
+      if (!fetched.ok) throw new Error(`HTTP ${fetched.status}`);
+      const parsed = await probe.parseString(await fetched.text());
       const feed = await feeds.add({
         url,
         name: parsed.title ?? url,

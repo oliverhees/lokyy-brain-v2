@@ -1,6 +1,7 @@
 // apps/mcp/src/tools/add-rss-feed.ts
 import { z } from 'zod';
 import Parser from 'rss-parser';
+import { safeFetch } from '@mindbase/core';
 import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
 
@@ -32,7 +33,8 @@ export const definition = {
   },
 };
 
-const probe = new Parser({ timeout: 15000 });
+const probe = new Parser();
+const FEED_MAX_BYTES = 5 * 1024 * 1024;
 
 export async function handle(ctx: Context, rawInput: unknown) {
   const parsed = inputSchema.safeParse(rawInput);
@@ -46,7 +48,10 @@ export async function handle(ctx: Context, rawInput: unknown) {
     let feedTitle: string;
     let siteUrl: string | undefined;
     try {
-      const probed = await probe.parseURL(url);
+      // SSRF-safe download, then parse (rss-parser's parseURL follows redirects anywhere).
+      const res = await safeFetch(url, { timeoutMs: 15_000, maxBytes: FEED_MAX_BYTES });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const probed = await probe.parseString(await res.text());
       feedTitle = probed.title ?? url;
       siteUrl = probed.link;
     } catch (e) {

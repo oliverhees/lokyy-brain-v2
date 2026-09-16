@@ -2,10 +2,29 @@ import Parser from 'rss-parser';
 import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import type { ServerContext } from '../context';
+import { safeFetch } from '@mindbase/core';
 import type { FeedStore, Feed } from '@mindbase/core';
 import type { Inbox } from './inbox';
 
-const parser = new Parser({ timeout: 15000 });
+const parser = new Parser();
+const FEED_MAX_BYTES = 5 * 1024 * 1024;
+
+/** The response subset the worker reads; `Response` and `SafeFetchResponse` both satisfy it. */
+export interface FeedFetchResponse {
+  status: number;
+  statusText: string;
+  ok: boolean;
+  headers: { get(name: string): string | null };
+  text(): Promise<string>;
+}
+
+export type FeedFetcher = (
+  url: string,
+  init: { headers: Record<string, string>; timeoutMs: number; maxBytes?: number },
+) => Promise<FeedFetchResponse>;
+
+/** Feed and article URLs come from users and from feed content: SSRF-safe by default (LBV2-13). */
+const defaultFetcher: FeedFetcher = (url, init) => safeFetch(url, init);
 
 interface PollResult {
   ingested: number;
@@ -21,6 +40,7 @@ export class RSSWorker {
     private feeds: FeedStore,
     private inbox: Inbox,
     private intervalMs: number = 60 * 60 * 1000,
+    private fetcher: FeedFetcher = defaultFetcher,
   ) {}
 
   start(): void {
@@ -81,14 +101,7 @@ export class RSSWorker {
     if (feed.last_modified) headers['If-Modified-Since'] = feed.last_modified;
 
     const timeoutMs = this.ctx.config.rss?.fetchTimeoutMs ?? 15000;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    let res: Response;
-    try {
-      res = await fetch(feed.url, { headers, signal: ctrl.signal });
-    } finally {
-      clearTimeout(timer);
-    }
+    const res = await this.fetcher(feed.url, { headers, timeoutMs, maxBytes: FEED_MAX_BYTES });
 
     if (res.status === 304) {
       await this.feeds.markPolled(feed.id, { newGuids: [], ingested: 0 });
@@ -171,18 +184,12 @@ export class RSSWorker {
     const readabilityEnabled = this.ctx.config.rss?.readabilityEnabled !== false;
     if (readabilityEnabled && item.link) {
       try {
-        const ctrl = new AbortController();
-        const timer = setTimeout(
-          () => ctrl.abort(),
-          this.ctx.config.rss?.fetchTimeoutMs ?? 15000,
-        );
-        const res = await fetch(item.link, {
+        const res = await this.fetcher(item.link, {
           headers: {
             'User-Agent': this.ctx.config.rss?.fetchUserAgent ?? 'MindBase/0.1',
           },
-          signal: ctrl.signal,
+          timeoutMs: this.ctx.config.rss?.fetchTimeoutMs ?? 15000,
         });
-        clearTimeout(timer);
         if (res.ok) {
           const html = await res.text();
           const dom = new JSDOM(html, { url: item.link });
