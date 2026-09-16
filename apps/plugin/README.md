@@ -17,6 +17,8 @@
 
 ## Install
 
+> **Lokyy Brain v2 note — the plugin runs the upstream npm package.** `.mcp.json` starts the MCP server with `npx -y mindbase-mcp`, which downloads the upstream MindBase release from npm. It does **not** contain the Lokyy Brain v2 changes (for example slug and project-id validation, the HTTP transport with access profiles, or SSRF protection for URL fetches). The Lokyy Brain v2 packages are private and are not published to npm. To use the fork's MCP server, build `apps/mcp` from this repository and point your MCP client at `apps/mcp/dist/cli.js` (stdio) or run `apps/mcp/dist/http.js` (see `docs/self-hosting-mcp-http.md`).
+
 Via the official marketplace (once available):
 ```bash
 /plugin marketplace add mindbase
