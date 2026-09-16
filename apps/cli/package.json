@@ -2,7 +2,8 @@
   "name": "mindbase-cli",
   "version": "0.1.0",
   "description": "Karpathy's LLM-Wiki pattern as a CLI — your local AI-maintained research wiki. Ingest sources (PDFs / URLs / text) and let an LLM build & maintain a persistent compounding wiki of interlinked markdown pages.",
-  "license": "MIT",
+  "private": true,
+  "license": "SEE LICENSE IN ../../NOTICE.md",
   "type": "module",
   "bin": {
     "mindbase": "./dist/index.js"

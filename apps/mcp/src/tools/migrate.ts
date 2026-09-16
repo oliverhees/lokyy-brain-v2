@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { userInfo } from 'node:os';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isValidProjectId } from '../lib/resolve-project.js';
 import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
 import { migrateProject } from '@mindbase/core';
@@ -46,6 +47,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
       return errorResult(`Failed to list projects: ${(e as Error).message}`);
     }
   } else if (projectId) {
+    if (!isValidProjectId(projectId)) return errorResult('Invalid projectId: use the project directory name, not a path.');
     projectIds.push(projectId);
   }
 

@@ -2,7 +2,8 @@
   "name": "mindbase-app",
   "version": "0.4.5",
   "description": "One-command launcher for MindBase \u2014 Karpathy's LLM Wiki as a product. Starts the local server + web UI: npx mindbase-app",
-  "license": "MIT",
+  "private": true,
+  "license": "SEE LICENSE IN ../../NOTICE.md",
   "type": "module",
   "bin": {
     "mindbase-app": "bin/mindbase-app.js"

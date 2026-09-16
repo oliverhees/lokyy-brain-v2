@@ -7,9 +7,12 @@ import { rawTreeRoutes } from './raw.js';
 import { attachmentsTreeRoutes } from './attachments.js';
 import { backlinksTreeRoutes } from './backlinks.js';
 import { templateTreeRoutes } from './template.js';
+import { rejectInvalidUser } from '../../lib/user-attribution.js';
 
 export function treeRoutes(ctx: ServerContext): Router {
   const router = Router();
+  // The user header names a contributor directory; reject bad values up front.
+  router.use(rejectInvalidUser);
   router.use('/', quickRoutes(ctx));
   router.use('/', attachmentsTreeRoutes(ctx));
   router.use('/', templateTreeRoutes(ctx));

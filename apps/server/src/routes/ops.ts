@@ -11,7 +11,7 @@ import {
   type OpEvent, type OpsCtx,
 } from '../ops/runner';
 import { makeHybridSearchClosure } from '../lib/compile-deps';
-import { resolveUser } from '../lib/user-attribution';
+import { resolveUser, rejectInvalidUser } from '../lib/user-attribution';
 
 function sse(ctx: ServerContext, res: Response): (e: OpEvent) => void {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -56,6 +56,8 @@ async function opsCtx(ctx: ServerContext, req: Request): Promise<OpsCtx | { erro
 
 export function opsRoutes(ctx: ServerContext): Router {
   const router = Router();
+  // Must run before sse() commits a 200 so a bad user header is a real 400.
+  router.use(rejectInvalidUser);
 
   // POST /api/ops/contribute
   //   { mode: 'plan', text, sourcePath? }         → phases + plan event

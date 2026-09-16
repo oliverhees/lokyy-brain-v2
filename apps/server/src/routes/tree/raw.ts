@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { createReadStream } from 'node:fs';
 import { readdir as readdirP, readFile as readFileP, stat as statP, mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { ServerContext } from '../../context.js';
-import { projectPaths, isoToday } from '@mindbase/core';
+import { projectPaths, isoToday, isValidIsoDate, isSafePathSegment, resolveInside } from '@mindbase/core';
 import { projectRoot as makeProjectRoot, detectLayoutVersion } from '../../context.js';
 import { BINARY_EXTS } from '../../lib/binary-probe.js';
 import { extractPdfText } from '../../lib/extract-pdf.js';
@@ -18,6 +18,13 @@ function sanitizeBase(name: string): string {
 
 async function pathExists(p: string): Promise<boolean> {
   try { await statP(p); return true; } catch { return false; }
+}
+
+/** Absolute path of sources/raw/<date>/<id>, or null if the params could escape it. */
+function rawEntryPath(ctx: ServerContext, date: string, id: string): string | null {
+  if (!isValidIsoDate(date) || !isSafePathSegment(id)) return null;
+  const rawRoot = join(ctx.dataDir, 'projects', ctx.currentProjectId, projectPaths().rawDir);
+  return resolveInside(rawRoot, date, id);
 }
 
 export function rawTreeRoutes(ctx: ServerContext): Router {
@@ -101,9 +108,9 @@ export function rawTreeRoutes(ctx: ServerContext): Router {
     const projectId = ctx.currentProjectId;
     const layout = await detectLayoutVersion(makeProjectRoot(ctx.dataDir, projectId));
     if (layout === 'v1') return res.status(409).json({ error: 'V1_LAYOUT_UNSUPPORTED' });
-    const p = projectPaths();
-    const dirAbs = join(ctx.dataDir, 'projects', projectId, p.rawDir, req.params.date);
-    const abs = join(dirAbs, req.params.id);
+    const abs = rawEntryPath(ctx, req.params.date, req.params.id);
+    if (!abs) return res.status(400).json({ error: 'Invalid raw entry' });
+    const dirAbs = dirname(abs);
     try {
       // Binary formats (e.g. PDFs) read as utf-8 are garbage — prefer the
       // .extracted.md sidecar when one exists.
@@ -118,9 +125,8 @@ export function rawTreeRoutes(ctx: ServerContext): Router {
   });
 
   router.get('/raw/:date/:id/binary', (req, res) => {
-    const projectId = ctx.currentProjectId;
-    const p = projectPaths();
-    const abs = join(ctx.dataDir, 'projects', projectId, p.rawDir, req.params.date, req.params.id);
+    const abs = rawEntryPath(ctx, req.params.date, req.params.id);
+    if (!abs) return res.status(400).json({ error: 'Invalid raw entry' });
     const stream = createReadStream(abs);
     stream.on('error', () => res.status(404).end());
     stream.pipe(res);

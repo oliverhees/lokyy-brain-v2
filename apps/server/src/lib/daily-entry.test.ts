@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendDailyEntry } from './daily-entry';
@@ -41,5 +41,10 @@ describe('appendDailyEntry', () => {
     expect(body.match(/same thought/g)).toHaveLength(1);
     const log = await readFile(join(root, 'logs', `${today()}.md`), 'utf-8');
     expect(log.trim().split('\n')).toHaveLength(1);
+  });
+
+  it.each(['../../escaped-user', '..', 'a/b'])('refuses username %j and writes nothing', async (user) => {
+    await expect(appendDailyEntry(join(root, 'p'), user, 'pwn')).rejects.toThrow('Invalid username');
+    expect(await readdir(root)).toEqual([]);
   });
 });

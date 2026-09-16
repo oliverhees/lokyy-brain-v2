@@ -132,4 +132,62 @@ describe('FileStore — trash semantics', () => {
     const entries = await store.listTrash();
     expect(entries).toEqual([]);
   });
+
+  describe('path traversal (LBV2-11)', () => {
+    // The store root is a subdirectory so `..` ids have a real victim to hit.
+    let vaultDir: string;
+    let vault: FileStore;
+    const victim = () => path.join(tmpDir, 'victim');
+
+    beforeEach(async () => {
+      vaultDir = path.join(tmpDir, 'vault');
+      await fs.mkdir(path.join(vaultDir, '.trash'), { recursive: true });
+      await fs.mkdir(victim(), { recursive: true });
+      await fs.writeFile(path.join(victim(), 'keep.txt'), 'precious');
+      vault = new FileStore(vaultDir);
+    });
+
+    it.each(['..', '../..', '../victim', '../../victim', 'x/../../victim'])(
+      'permanentlyDelete refuses entry id %j and deletes nothing outside .trash',
+      async (id) => {
+        await expect(vault.permanentlyDelete(id)).rejects.toThrow('Trash entry not found');
+        expect(await fs.readFile(path.join(victim(), 'keep.txt'), 'utf-8')).toBe('precious');
+        await expect(fs.access(vaultDir)).resolves.toBeUndefined();
+      },
+    );
+
+    it.each(['..', '../victim', '../../victim'])('restoreFromTrash refuses entry id %j', async (id) => {
+      // A manifest one level up would be picked up by a plain join.
+      await fs.writeFile(path.join(tmpDir, 'manifest.json'), JSON.stringify({ id: 'x', label: 'x', deletedAt: '', files: [] }));
+      await expect(vault.restoreFromTrash(id)).rejects.toThrow('Trash entry not found');
+      expect(await fs.readFile(path.join(victim(), 'keep.txt'), 'utf-8')).toBe('precious');
+      await expect(fs.access(vaultDir)).resolves.toBeUndefined();
+    });
+
+    it('restoreFromTrash refuses a crafted manifest whose originalPath escapes the entry dir', async () => {
+      await vault.writeText('wiki/notes/a.md', 'A');
+      const entry = await vault.moveToTrash(['wiki/notes/a.md']);
+      const entryDir = path.join(vaultDir, '.trash', entry.id);
+      const crafted = { ...entry, files: [{ originalPath: '../../../victim/keep.txt' }, { originalPath: 'wiki/notes/a.md' }] };
+      await fs.writeFile(path.join(entryDir, 'manifest.json'), JSON.stringify(crafted));
+
+      await expect(vault.restoreFromTrash(entry.id)).rejects.toThrow('Invalid trash manifest');
+      // Nothing moved, nothing deleted.
+      expect(await fs.readFile(path.join(victim(), 'keep.txt'), 'utf-8')).toBe('precious');
+      await expect(fs.access(path.join(entryDir, 'wiki/notes/a.md'))).resolves.toBeUndefined();
+      expect(await vault.exists('wiki/notes/a.md')).toBe(false);
+    });
+
+    it('listTrash does not read meta files outside the entry dir via a crafted manifest', async () => {
+      await fs.writeFile(path.join(victim(), 'secret.meta.json'), JSON.stringify({ title: 'LEAKED-TITLE', kind: 'secret' }));
+      const id = '2026-09-16T12-00-00-000Z-abcde';
+      await fs.mkdir(path.join(vaultDir, '.trash', id), { recursive: true });
+      await fs.writeFile(
+        path.join(vaultDir, '.trash', id, 'manifest.json'),
+        JSON.stringify({ id, label: 'x', deletedAt: '2026-09-16T12:00:00.000Z', files: [{ originalPath: '../../../victim/secret.md' }] }),
+      );
+      const entries = await vault.listTrash();
+      expect(JSON.stringify(entries)).not.toContain('LEAKED-TITLE');
+    });
+  });
 });

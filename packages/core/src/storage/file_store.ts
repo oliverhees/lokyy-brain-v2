@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import type { DirEntry, Store } from './store';
+import { isValidTrashEntryId, resolveInside } from './safe-names';
 
 export interface TrashEntry {
   id: string;          // <iso-timestamp>-<short-random>
@@ -21,8 +22,19 @@ export interface TrashEntry {
 export class FileStore implements Store {
   constructor(private rootDir: string) {}
 
+  /**
+   * Maps a store-relative path to an absolute path. Leading slashes stay relative to
+   * the root (same as the previous path.join behaviour); anything that would leave the
+   * root via `..` is refused, because slugs and ids reach this from MCP clients and
+   * HTTP requests.
+   */
   private resolve(filePath: string): string {
-    return nodePath.join(this.rootDir, filePath);
+    const root = nodePath.resolve(this.rootDir);
+    const full = nodePath.resolve(root, `.${nodePath.sep}${filePath}`);
+    if (full !== root && !full.startsWith(root + nodePath.sep)) {
+      throw new Error('Path is outside the store root');
+    }
+    return full;
   }
 
   async writeText(path: string, content: string): Promise<void> {
@@ -87,8 +99,14 @@ export class FileStore implements Store {
     return nodePath.join(this.rootDir, '.trash');
   }
 
+  /**
+   * Entry ids reach this from HTTP params, so only the format moveToTrash
+   * generates is accepted; anything else is reported as not found.
+   */
   private trashEntryDir(entryId: string): string {
-    return nodePath.join(this.trashDir(), entryId);
+    const dir = isValidTrashEntryId(entryId) ? resolveInside(this.trashDir(), entryId) : null;
+    if (!dir) throw new Error('Trash entry not found');
+    return dir;
   }
 
   /**
@@ -176,6 +194,7 @@ export class FileStore implements Store {
 
     const results: TrashEntry[] = [];
     for (const name of subdirs) {
+      if (!isValidTrashEntryId(name)) continue;
       const manifestPath = nodePath.join(this.trashDir(), name, 'manifest.json');
       try {
         const raw = await fs.readFile(manifestPath, 'utf-8');
@@ -205,7 +224,9 @@ export class FileStore implements Store {
       if (f.kind && f.title) continue;
       if (!f.originalPath.endsWith('.md')) continue;
       const metaRel = f.originalPath.replace(/\.md$/, '.meta.json');
-      const metaAbs = nodePath.join(this.trashEntryDir(entryId), metaRel);
+      // Manifests are on-disk data; never follow a path out of the entry dir.
+      const metaAbs = resolveInside(this.trashEntryDir(entryId), metaRel);
+      if (!metaAbs) continue;
       try {
         const text = await fs.readFile(metaAbs, 'utf-8');
         const meta = JSON.parse(text) as { kind?: string; title?: string };
@@ -229,15 +250,25 @@ export class FileStore implements Store {
       const raw = await fs.readFile(manifestPath, 'utf-8');
       entry = JSON.parse(raw) as TrashEntry;
     } catch {
-      throw new Error(`Trash entry not found: ${entryId}`);
+      throw new Error('Trash entry not found');
+    }
+
+    // Validate every path before moving anything, so a crafted manifest can
+    // neither pull files from outside the entry nor leave a half-restored entry.
+    const moves: Array<{ originalPath: string; srcAbs: string; destAbs: string }> = [];
+    for (const { originalPath } of Array.isArray(entry.files) ? entry.files : []) {
+      const srcAbs = typeof originalPath === 'string' ? resolveInside(entryDir, originalPath) : null;
+      const destAbs = typeof originalPath === 'string' ? resolveInside(this.rootDir, originalPath) : null;
+      if (!srcAbs || !destAbs || srcAbs === nodePath.join(entryDir, 'manifest.json')) {
+        throw new Error('Invalid trash manifest');
+      }
+      moves.push({ originalPath, srcAbs, destAbs });
     }
 
     const restored: string[] = [];
     const skipped: string[] = [];
 
-    for (const { originalPath } of entry.files) {
-      const srcAbs = nodePath.join(entryDir, originalPath);
-      const destAbs = this.resolve(originalPath);
+    for (const { originalPath, srcAbs, destAbs } of moves) {
 
       // Check collision
       try {
@@ -266,7 +297,7 @@ export class FileStore implements Store {
     try {
       await fs.access(entryDir);
     } catch {
-      throw new Error(`Trash entry not found: ${entryId}`);
+      throw new Error('Trash entry not found');
     }
     await fs.rm(entryDir, { recursive: true, force: true });
   }

@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/mindbase-mcp?label=mindbase-mcp)](https://www.npmjs.com/package/mindbase-mcp)
 [![npm downloads](https://img.shields.io/npm/dw/mindbase-mcp)](https://www.npmjs.com/package/mindbase-mcp)
 [![CI](https://github.com/frankchu91/mindbase-llm-wiki/actions/workflows/ci.yml/badge.svg)](https://github.com/frankchu91/mindbase-llm-wiki/actions)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: MIT + PolyForm NC](https://img.shields.io/badge/license-MIT%20%2B%20PolyForm%20NC-orange)](NOTICE.md)
 [![Website](https://img.shields.io/badge/website-live%20demos-blue)](https://frankchu91.github.io/mindbase-llm-wiki/)
 [![Glama score](https://glama.ai/mcp/servers/frankchu91/mindbase/badges/score.svg)](https://glama.ai/mcp/servers/frankchu91/mindbase)
 
@@ -225,7 +225,10 @@ Beta through 2026-Q4. If you tried MindBase and gave up — please tell me why: 
 
 ## License
 
-[MIT](LICENSE) — do what you want, no warranty. If you build something interesting on top, I'd love to hear about it.
+This repository is **Lokyy Brain v2**, a fork of [MindBase](https://github.com/frankchu91/mindbase-llm-wiki), and contains code under two licenses — see [NOTICE.md](NOTICE.md):
+
+- Upstream MindBase code (up to commit `7aa8fcd`, and later changes merged from upstream): [MIT](LICENSE-MIT), Copyright (c) 2026 Haobing Chu.
+- Modifications made in this fork after `7aa8fcd`: [PolyForm Noncommercial 1.0.0](LICENSE). Commercial use of these modifications requires a separate license — contact info@lokyy.de.
 
 ---
 

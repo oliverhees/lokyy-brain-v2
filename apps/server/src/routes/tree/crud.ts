@@ -5,6 +5,7 @@ import type { ServerContext } from '../../context.js';
 import { projectRoot as makeProjectRoot, detectLayoutVersion } from '../../context.js';
 import { resolveTreePath, isPathSafe, isSingleFileCategory, type TreeCategory, TREE_CATEGORIES } from '../../lib/tree-paths.js';
 import { resolveUser } from '../../lib/user-attribution.js';
+import { isValidUsername } from '@mindbase/core';
 
 const KNOWN = new Set<string>(TREE_CATEGORIES);
 
@@ -34,6 +35,18 @@ function splitContributorPath(relPath: string): { user: string | null; relPath: 
   return { user: relPath.slice(0, slash), relPath: relPath.slice(slash + 1) };
 }
 
+/**
+ * Resolves the user + file for a request path: contributors take the user from
+ * the first path segment (else the header user). Returns null when that user
+ * is not a valid username — it becomes a directory name.
+ */
+function resolveUserPath(category: TreeCategory, raw: string, headerUser: string): { user: string; relPath: string } | null {
+  if (category !== 'contributors') return { user: headerUser, relPath: raw };
+  const parts = splitContributorPath(raw);
+  const user = parts.user ?? headerUser;
+  return isValidUsername(user) ? { user, relPath: parts.relPath } : null;
+}
+
 export function crudRoutes(ctx: ServerContext): Router {
   const router = Router();
 
@@ -50,24 +63,20 @@ export function crudRoutes(ctx: ServerContext): Router {
     if (!rawNew || !isPathSafe(rawOld) || !isPathSafe(rawNew)) return res.status(400).json({ error: 'Invalid path' });
     // Contributors paths arrive as <user>/<rest> — split like GET/PUT do,
     // otherwise the header user gets prepended twice.
-    let oldUser = resolveUser(req);
-    let newUser = oldUser;
-    let relOld = rawOld;
-    let relNew = rawNew;
-    if (category === 'contributors') {
-      const o = splitContributorPath(rawOld);
-      const n = splitContributorPath(rawNew);
-      if (o.user) { oldUser = o.user; relOld = o.relPath; }
-      if (n.user) { newUser = n.user; relNew = n.relPath; }
-    }
-    const oldAbs = join(ctx.dataDir, 'projects', projectId, resolveTreePath(category, relOld, oldUser));
-    const newAbs = join(ctx.dataDir, 'projects', projectId, resolveTreePath(category, relNew, newUser));
+    const headerUser = resolveUser(req);
+    const from = resolveUserPath(category, rawOld, headerUser);
+    const to = resolveUserPath(category, rawNew, headerUser);
+    if (!from || !to) return res.status(400).json({ error: 'Invalid user' });
+    const oldAbs = join(ctx.dataDir, 'projects', projectId, resolveTreePath(category, from.relPath, from.user));
+    const newAbs = join(ctx.dataDir, 'projects', projectId, resolveTreePath(category, to.relPath, to.user));
     try {
       await mkdir(dirname(newAbs), { recursive: true });
       await rename(oldAbs, newAbs);
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
-      return res.status(code === 'ENOENT' ? 404 : 500).json({ error: (e as Error).message });
+      if (code === 'ENOENT') return res.status(404).json({ error: 'Not found' });
+      console.error('[tree] rename failed:', e);
+      return res.status(500).json({ error: 'Rename failed' });
     }
     return res.json({ category, oldPath: rawOld, newPath: rawNew });
   });
@@ -80,14 +89,9 @@ export function crudRoutes(ctx: ServerContext): Router {
     if (layout === 'v1') return res.status(409).json({ error: 'V1_LAYOUT_UNSUPPORTED', projectId });
     const raw = wildcardPath(req);
     if (!isPathSafe(raw)) return res.status(400).json({ error: 'Path traversal rejected' });
-    const headerUser = resolveUser(req);
-    let user = headerUser;
-    let relPath = raw;
-    if (category === 'contributors') {
-      const parts = splitContributorPath(raw);
-      if (parts.user) user = parts.user;
-      relPath = parts.relPath;
-    }
+    const target = resolveUserPath(category, raw, resolveUser(req));
+    if (!target) return res.status(400).json({ error: 'Invalid user' });
+    const { user, relPath } = target;
     const disk = resolveTreePath(category, relPath, user);
     try {
       const abs = join(ctx.dataDir, 'projects', projectId, disk);
@@ -109,14 +113,9 @@ export function crudRoutes(ctx: ServerContext): Router {
     if (!isPathSafe(raw)) return res.status(400).json({ error: 'Path traversal rejected' });
     const body = typeof req.body === 'string' ? req.body : (req.body?.body ?? '');
     if (typeof body !== 'string') return res.status(400).json({ error: 'Body required' });
-    const headerUser = resolveUser(req);
-    let user = headerUser;
-    let relPath = raw;
-    if (category === 'contributors') {
-      const parts = splitContributorPath(raw);
-      if (parts.user) user = parts.user;
-      relPath = parts.relPath;
-    }
+    const target = resolveUserPath(category, raw, resolveUser(req));
+    if (!target) return res.status(400).json({ error: 'Invalid user' });
+    const { user, relPath } = target;
     const disk = resolveTreePath(category, isSingleFileCategory(category) ? '' : relPath, user);
     const abs = join(ctx.dataDir, 'projects', projectId, disk);
     await mkdir(dirname(abs), { recursive: true });
@@ -132,14 +131,9 @@ export function crudRoutes(ctx: ServerContext): Router {
     if (layout === 'v1') return res.status(409).json({ error: 'V1_LAYOUT_UNSUPPORTED', projectId });
     const raw = wildcardPath(req);
     if (!isPathSafe(raw)) return res.status(400).json({ error: 'Path traversal rejected' });
-    const headerUser = resolveUser(req);
-    let user = headerUser;
-    let relPath = raw;
-    if (category === 'contributors') {
-      const parts = splitContributorPath(raw);
-      if (parts.user) user = parts.user;
-      relPath = parts.relPath;
-    }
+    const target = resolveUserPath(category, raw, resolveUser(req));
+    if (!target) return res.status(400).json({ error: 'Invalid user' });
+    const { user, relPath } = target;
     const disk = resolveTreePath(category, relPath, user);
     const abs = join(ctx.dataDir, 'projects', projectId, disk);
     try { await unlink(abs); return res.status(204).end(); } catch { return res.status(404).json({ error: 'Not found' }); }
