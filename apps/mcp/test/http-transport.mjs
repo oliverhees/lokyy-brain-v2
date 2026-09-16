@@ -72,6 +72,14 @@ async function run() {
   if (weakCode === null) { weak.kill(); fail('server started with a token shorter than 32 chars'); }
   else ok('server refuses a token shorter than 32 chars');
 
+  // 1c. Refuses invalid numeric settings (NaN would disable expiry and the cap)
+  for (const [key, value] of [['MCP_HTTP_SESSION_IDLE_MS', 'abc'], ['MCP_HTTP_SESSION_IDLE_MS', '0'], ['MCP_HTTP_MAX_SESSIONS', 'x'], ['MCP_HTTP_PORT', 'nope']]) {
+    const bad = startServer({ MCP_HTTP_TOKEN: TOKEN, [key]: value });
+    const badCode = await waitForExit(bad, 5000);
+    if (badCode === null || badCode === 0) { bad.kill(); fail(`server started with ${key}=${value}`); }
+    else ok(`server refuses ${key}=${value}`);
+  }
+
   const proc = startServer({
     MCP_HTTP_TOKEN: TOKEN,
     MCP_HTTP_MAX_SESSIONS: '2',

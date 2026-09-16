@@ -9,7 +9,7 @@
 //   MCP_HTTP_PORT             default 4322
 //   MCP_HTTP_HOST             default 0.0.0.0
 //   MCP_HTTP_MAX_SESSIONS     default 32; when full, the least recently used session is evicted
-//   MCP_HTTP_SESSION_IDLE_MS  default 1800000 (30 min); idle sessions are closed
+//   MCP_HTTP_SESSION_IDLE_MS  default 1800000 (30 min), min 1000; idle sessions are closed
 //   MCP_HTTP_ALLOWED_HOSTS    optional comma-separated Host header allow-list (e.g. vault-anna:4322)
 import http from 'node:http';
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
@@ -23,6 +23,18 @@ const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
 function log(msg: string): void {
   process.stderr.write(`[mindbase-mcp-http] ${msg}\n`);
+}
+
+/** Parses an integer env var; exits on garbage so NaN can never silently disable a limit. */
+function intEnv(name: string, fallback: number, min: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min) {
+    log(`fatal: ${name} must be an integer >= ${min} (got "${raw}")`);
+    process.exit(1);
+  }
+  return value;
 }
 
 /** Constant-time token comparison; hashing first equalises lengths. */
@@ -63,16 +75,16 @@ async function main(): Promise<void> {
     log(`fatal: MCP_HTTP_TOKEN must be set and at least ${MIN_TOKEN_LENGTH} characters`);
     process.exit(1);
   }
-  const port = Number(process.env['MCP_HTTP_PORT'] ?? 4322);
+  const port = intEnv('MCP_HTTP_PORT', 4322, 1);
   const host = process.env['MCP_HTTP_HOST'] ?? '0.0.0.0';
-  const maxSessions = Math.max(1, Number(process.env['MCP_HTTP_MAX_SESSIONS'] ?? 32));
-  const idleMs = Number(process.env['MCP_HTTP_SESSION_IDLE_MS'] ?? 30 * 60 * 1000);
+  const maxSessions = intEnv('MCP_HTTP_MAX_SESSIONS', 32, 1);
+  const idleMs = intEnv('MCP_HTTP_SESSION_IDLE_MS', 30 * 60 * 1000, 1000);
   const allowedHosts = (process.env['MCP_HTTP_ALLOWED_HOSTS'] ?? '')
     .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
 
   const ctx = await loadContext({});
 
-  interface Session { transport: StreamableHTTPServerTransport; lastSeen: number }
+  interface Session { transport: StreamableHTTPServerTransport; lastSeen: number; inFlight: number }
   const sessions = new Map<string, Session>();
   // Sessions still initializing count toward the cap so concurrent initializes cannot overshoot it.
   let pending = 0;
@@ -84,20 +96,27 @@ async function main(): Promise<void> {
     void s.transport.close();
   };
 
-  const evictLeastRecentlyUsed = (): void => {
+  /** Evicts the least recently used session with no request in flight; false if none is evictable. */
+  const evictLeastRecentlyUsed = (): boolean => {
     let oldest: [string, Session] | undefined;
     for (const entry of sessions) {
+      if (entry[1].inFlight > 0) continue;
       if (!oldest || entry[1].lastSeen < oldest[1].lastSeen) oldest = entry;
     }
-    if (oldest) {
-      log(`session cap reached, evicting ${oldest[0]}`);
-      closeSession(oldest[0]);
-    }
+    if (!oldest) return false;
+    log(`session cap reached, evicting ${oldest[0]}`);
+    closeSession(oldest[0]);
+    return true;
   };
 
   const sweep = setInterval(() => {
     const cutoff = Date.now() - idleMs;
-    for (const [id, s] of sessions) if (s.lastSeen < cutoff) closeSession(id);
+    for (const [id, s] of sessions) {
+      if (s.inFlight === 0 && s.lastSeen < cutoff) {
+        log(`closing idle session ${id}`);
+        closeSession(id);
+      }
+    }
   }, Math.max(250, Math.min(idleMs / 2, 60_000)));
   sweep.unref();
 
@@ -124,7 +143,15 @@ async function main(): Promise<void> {
         sendJson(res, 404, 'Session not found', -32001);
         return;
       }
-      if (session) session.lastSeen = Date.now();
+      if (session) {
+        session.lastSeen = Date.now();
+        // Only request/response calls pin a session. A GET is the long-lived notification
+        // stream every client keeps open; counting it would make sessions unevictable.
+        if (req.method !== 'GET') {
+          session.inFlight++;
+          res.once('close', () => { session.inFlight--; session.lastSeen = Date.now(); });
+        }
+      }
       const existing = session?.transport;
 
       if (req.method === 'POST') {
@@ -137,9 +164,9 @@ async function main(): Promise<void> {
           sendJson(res, 400, 'Bad Request: no valid session');
           return;
         }
-        while (sessions.size + pending >= maxSessions && sessions.size > 0) evictLeastRecentlyUsed();
+        while (sessions.size + pending >= maxSessions && evictLeastRecentlyUsed()) { /* evict until room */ }
         if (sessions.size + pending >= maxSessions) {
-          sendJson(res, 503, 'Too many sessions initializing');
+          sendJson(res, 503, 'Too many active sessions');
           return;
         }
         pending++;
@@ -149,7 +176,7 @@ async function main(): Promise<void> {
           onsessioninitialized: (id) => {
             pending--;
             registered = true;
-            sessions.set(id, { transport, lastSeen: Date.now() });
+            sessions.set(id, { transport, lastSeen: Date.now(), inFlight: 0 });
           },
         });
         transport.onclose = () => {
@@ -181,7 +208,7 @@ async function main(): Promise<void> {
         res.setHeader('connection', 'close');
         sendJson(res, status, status === 413 ? 'Payload too large' : 'Bad Request');
       }
-      if (status === 413) req.destroy();
+      if (status === 413) res.once('finish', () => req.destroy());
     }
   });
 
