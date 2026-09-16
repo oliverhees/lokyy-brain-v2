@@ -48,8 +48,10 @@ const sha256 = (value: string): Buffer => createHash('sha256').update(value).dig
 
 /** Resolves the bearer token to an access profile; constant-time against every configured token. */
 function profileFor(header: string | undefined, tokens: ReadonlyArray<[Buffer, AccessProfile]>): AccessProfile | null {
-  if (!header?.startsWith('Bearer ')) return null;
-  const given = sha256(header.slice('Bearer '.length));
+  // RFC 7235 §2.1: the auth scheme is case-insensitive.
+  const credentials = header === undefined ? null : /^bearer (.+)$/i.exec(header);
+  if (!credentials?.[1]) return null;
+  const given = sha256(credentials[1]);
   let match: AccessProfile | null = null;
   for (const [want, profile] of tokens) {
     if (timingSafeEqual(given, want)) match = profile;

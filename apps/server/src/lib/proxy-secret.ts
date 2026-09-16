@@ -22,6 +22,11 @@ export function readProxySecret(env: NodeJS.ProcessEnv): string | undefined {
     }
     return undefined;
   }
+  // Node trims header values, so a secret with surrounding whitespace could never match;
+  // an all-whitespace secret would pass the length check while being effectively empty.
+  if (secret.trim() !== secret) {
+    throw new Error('VAULT_PROXY_SECRET must not have leading or trailing whitespace');
+  }
   if (secret.length < MIN_PROXY_SECRET_LENGTH) {
     throw new Error(`VAULT_PROXY_SECRET must be at least ${MIN_PROXY_SECRET_LENGTH} characters`);
   }

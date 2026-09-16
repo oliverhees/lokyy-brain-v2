@@ -50,6 +50,11 @@ describe('proxySecretGuard', () => {
       .set(PROXY_SECRET_HEADER, `${SECRET}, other`);
     expect(res.status).toBe(403);
   });
+
+  it('accepts surrounding whitespace the same way Node trims header values', async () => {
+    const res = await request(appWith(SECRET)).get('/api/config').set(PROXY_SECRET_HEADER, ` ${SECRET} `);
+    expect(res.status).toBe(200);
+  });
 });
 
 describe('readProxySecret', () => {
@@ -67,9 +72,16 @@ describe('readProxySecret', () => {
     expect(() => readProxySecret({ VAULT_REQUIRE_PROXY_SECRET: '1', VAULT_PROXY_SECRET: '' })).toThrow(/required/);
   });
 
-  it('accepts surrounding whitespace the same way Node trims header values', async () => {
-    const res = await request(appWith(SECRET)).get('/api/config').set(PROXY_SECRET_HEADER, ` ${SECRET} `);
-    expect(res.status).toBe(200);
+  it('rejects a secret with leading or trailing whitespace (Node trims header values, so it could never match)', () => {
+    for (const secret of [` ${SECRET}`, `${SECRET} `, `\t${SECRET}`, `${SECRET}\n`]) {
+      expect(() => readProxySecret({ VAULT_PROXY_SECRET: secret })).toThrow(/whitespace/);
+    }
+  });
+
+  it('rejects an all-whitespace secret, also when the guard is required', () => {
+    const blank = ' '.repeat(MIN_PROXY_SECRET_LENGTH + 4);
+    expect(() => readProxySecret({ VAULT_PROXY_SECRET: blank })).toThrow(/whitespace/);
+    expect(() => readProxySecret({ VAULT_PROXY_SECRET: blank, VAULT_REQUIRE_PROXY_SECRET: '1' })).toThrow(/whitespace/);
   });
 
   it('returns a valid secret', () => {

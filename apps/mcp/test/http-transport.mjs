@@ -109,6 +109,15 @@ async function run() {
 
     const auth = { ...jsonHeaders, authorization: `Bearer ${TOKEN}` };
 
+    // 5a. Auth scheme is case-insensitive (RFC 7235 §2.1): "bearer <token>" → 200
+    for (const scheme of ['bearer', 'BEARER']) {
+      const rCase = await fetch(URL_MCP, { method: 'POST', headers: { ...jsonHeaders, authorization: `${scheme} ${TOKEN}` }, body: initBody });
+      const sid = rCase.headers.get('mcp-session-id');
+      await rCase.body?.cancel();
+      rCase.status === 200 ? ok(`"${scheme} <token>" → 200`) : fail(`"${scheme} <token>" → ${rCase.status} (expected 200)`);
+      if (sid) await fetch(URL_MCP, { method: 'DELETE', headers: { ...auth, 'mcp-session-id': sid } }).then((r) => r.body?.cancel());
+    }
+
     // 5b. Host header not in MCP_HTTP_ALLOWED_HOSTS → 403 (DNS rebinding / wrong route)
     const rHost = await new Promise((resolve) => {
       const req = http.request({ host: '127.0.0.1', port: PORT, path: '/mcp', method: 'POST',
