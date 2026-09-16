@@ -129,7 +129,8 @@ const TOOL_CALLS = [
   ['suggest_links', { slug: 'public-page' }], ['suggest_links', { slug: 'internal-page' }], ['suggest_links', { slug: 'default/pii-page' }],
   ['export_subgraph', { slug: 'public-page', depth: 3 }], ['export_subgraph', { slug: 'default/public-page', depth: 3 }],
   ['export_subgraph', { slug: 'default/internal-page' }],
-  ['list_feeds', {}], ['list_review_cards', {}], ['list_review_cards', { due_only: false, limit: 100 }],
+  ['list_feeds', {}], ['list_review_cards', {}],
+  ['ask_wiki', { question: 'shared guide CANARYINT CANARYPII', context_pages: ['internal-page', 'pii-page', 'broken-meta-page', 'flip-page', 'proj-public'] }], ['list_review_cards', { due_only: false, limit: 100 }],
   // F1 traversal attempts (must fail exactly like a missing page)
   ['read_wiki_page', { slug: '../../projects/p1/wiki/notes/pii-page' }], ['read_wiki_page', { slug: '../../projects/p1/wiki/notes/proj-public' }],
   ['read_wiki_page', { slug: '../../projects/p1/context' }], ['read_wiki_page', { slug: '../../raw/dump' }],
@@ -352,7 +353,7 @@ async function allowlistChecks() {
   check(fsTools.every((n) => !mcpIndex.READ_ONLY_TOOL_NAMES.includes(n)), 'allowlist: raw-filesystem tools are not allowlisted');
   // F7: the reader context is built from plain objects and carries no unused raw members.
   const { createReaderView } = mcpIndex;
-  const secret = { apiKey: 'CANARYKEY' };
+  const secret = { provider: 'ollama', model: 'mock-model', apiKey: 'CANARYKEY', baseUrl: 'http://CANARYHOST' };
   const base = { dataDir: '/abs/secret/dir', config: secret, synthesisCache: {}, templates: {}, feeds: { summaries: async () => [] },
     store: {}, searchIndex: { search: () => [] }, wikiIndex: { buildGraph: () => ({ nodes: new Map(), edges: [], incoming: new Map(), outgoing: new Map() }), allPages: () => [], getPage: () => null },
     cards: { list: async () => [] }, getAdapter: () => null, reindex: async () => {}, mcpClient: 'x', allowLocalFilePaths: true };
@@ -360,8 +361,11 @@ async function allowlistChecks() {
   const view = createReaderView(base).ctx;
   const probe = (k) => { try { return view[k]; } catch { return undefined; } };
   const { types } = await import('node:util');
-  check(['config', 'synthesisCache', 'templates', 'dataDir'].every((k) => probe(k) === undefined)
-    && !JSON.stringify(Object.keys(view)).includes('config'), 'reader ctx: config/synthesisCache/templates/dataDir not exposed');
+  check(['synthesisCache', 'templates', 'dataDir'].every((k) => probe(k) === undefined), 'reader ctx: synthesisCache/templates/dataDir not exposed');
+  // LBV2-18: readers may use the LLM (ask_wiki), but the config copy carries only provider and model.
+  const readerConfig = JSON.stringify(probe('config') ?? null);
+  check(!readerConfig.includes('CANARYKEY') && !readerConfig.includes('CANARYHOST') && readerConfig.includes('mock-model'),
+    'reader ctx: config exposes provider/model only (no API key, no base URL)', readerConfig);
   check(!['store', 'searchIndex', 'wikiIndex', 'cards', 'feeds'].some((k) => types.isProxy(view[k])), 'reader ctx: members are plain objects, not proxies');
   // F3/F5: visibility comes from meta on disk keyed by (project, layer, slug), never from index rows.
   const fsp = await import('node:fs/promises');
@@ -381,7 +385,7 @@ async function allowlistChecks() {
   const cardText = JSON.stringify(await rv.ctx.cards.list());
   check(!cardText.includes('CANARYCARD') && cardText.includes('"a"'), 'reader cards: cards without source_slug or with a hidden-layer slug are hidden', cardText);
   const names = mcpIndex.READ_ONLY_TOOL_NAMES;
-  check(Array.isArray(names) && names.length === 12 && Object.isFrozen(names), 'allowlist: READ_ONLY_TOOL_NAMES is a frozen array of 12');
+  check(Array.isArray(names) && names.length === 13 && Object.isFrozen(names), 'allowlist: READ_ONLY_TOOL_NAMES is a frozen array of 13');
   try { names.push('create_note'); } catch { /* frozen */ }
   const allowed = mcpIndex.isToolAllowed;
   check(typeof allowed === 'function' && allowed('readonly', 'create_note') === false && allowed('readonly', 'search_wiki') === true

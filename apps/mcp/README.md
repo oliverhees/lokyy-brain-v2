@@ -319,7 +319,7 @@ These are just composed prompts — they instruct the AI to call the right combi
 
 ## HTTP transport (self-hosted)
 
-Besides stdio, the server can run over Streamable HTTP (`dist/http.js`, endpoint `/mcp`) for self-hosted vault containers that an MCP aggregator such as MetaMCP reaches over an internal network. It requires a bearer token (`MCP_HTTP_TOKEN`, at least 32 characters). An optional second token (`MCP_HTTP_READONLY_TOKEN`) opens read-only sessions: they get a fail-closed allowlist of 12 tools and never see pages with visibility `internal` or `pii`. Local file paths are disabled on this transport.
+Besides stdio, the server can run over Streamable HTTP (`dist/http.js`, endpoint `/mcp`) for self-hosted vault containers that an MCP aggregator such as MetaMCP reaches over an internal network. It requires a bearer token (`MCP_HTTP_TOKEN`, at least 32 characters). An optional second token (`MCP_HTTP_READONLY_TOKEN`) opens read-only sessions: they get a fail-closed allowlist of 13 tools and never see pages with visibility `internal` or `pii`. Local file paths are disabled on this transport.
 
 Configuration, access profiles, visibility rules, security behaviour, known limitations and tests: [docs/self-hosting-mcp-http.md](../../docs/self-hosting-mcp-http.md).
 

@@ -12,7 +12,11 @@ export function isSafeSlug(slug: string): boolean {
  * Tool arguments that denote a page slug, validated centrally by the tool dispatcher for
  * every tool and profile. Matched by argument name so tools added later are covered too.
  */
-export const SLUG_ARGUMENT_NAMES: readonly string[] = Object.freeze(['slug', 'slugs', 'source_slug', 'target_slug', 'root']);
+export const SLUG_ARGUMENT_NAMES: readonly string[] = Object.freeze([
+  'slug', 'slugs', 'source_slug', 'target_slug', 'root',
+  // LBV2-18 (audit N3 residual): ask_wiki context pages and ingest_plan raw ids are store paths too.
+  'context_pages', 'raw_id',
+]);
 
 /** Generic rejection text: echoes neither the slug nor any path. */
 export const UNSAFE_SLUG_ERROR = 'Invalid input: unsafe slug';
