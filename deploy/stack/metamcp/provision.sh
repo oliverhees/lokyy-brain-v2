@@ -7,6 +7,7 @@
 # Usage (from deploy/stack, stack running):
 #   metamcp/provision.sh                 create / reconcile everything
 #   metamcp/provision.sh --rotate anna   additionally replace anna's API key
+#   metamcp/provision.sh --rotate-all    replace every user's API key (see rotate-secrets.sh)
 # Output: secrets/metamcp-clients.json (mode 600, gitignored) with endpoint URL + API key per user.
 # Runs inside the metamcp container (node + pg + better-auth are already there): no host deps
 # besides docker and jq; vault tokens are passed by name (-e VAR), never on a command line.
@@ -19,7 +20,8 @@ rotate=()
 while (($#)); do
   case $1 in
     --rotate) rotate+=("$2"); shift 2 ;;
-    *) echo "usage: $0 [--rotate <username>]..." >&2; exit 2 ;;
+    --rotate-all) rotate+=("*"); shift ;;
+    *) echo "usage: $0 [--rotate <username>]... [--rotate-all]" >&2; exit 2 ;;
   esac
 done
 
@@ -33,9 +35,28 @@ for name in $(compgen -v | grep -E '^MCP_(READONLY_)?TOKEN_[A-Z0-9_]+$'); do env
 
 umask 077
 mkdir -p secrets
+chmod 700 secrets
+# One run at a time: parallel runs could rotate or delete keys under each other.
+exec 9>secrets/.provision.lock
+flock -n 9 || { echo "another provisioning run is in progress" >&2; exit 1; }
+
 out=secrets/metamcp-clients.json
+rm -f "$out.tmp"
+code=0
 docker compose exec -T -w /app/apps/backend "${env_args[@]}" metamcp \
-  node --input-type=module - <metamcp/provision.mjs >"$out.tmp"
-mv "$out.tmp" "$out"
-chmod 600 "$out"
-echo "wrote $out ($(jq '.users | length' "$out") users)" >&2
+  node --input-type=module - <metamcp/provision.mjs >"$out.tmp" || code=$?
+if jq -e '.users' "$out.tmp" >/dev/null 2>&1; then
+  if [[ $code -ne 0 && -f $out ]]; then
+    # Failed run: keep entries of users this run did not reach, flagged as possibly stale.
+    jq -s '.[0] as $new | $new + {users: ($new.users + [.[1].users[] | select(.username as $u | ($new.users | map(.username) | index($u)) | not) | . + {stale: true}])}' \
+      "$out.tmp" "$out" >"$out.merged" && mv "$out.merged" "$out.tmp"
+  fi
+  mv "$out.tmp" "$out"
+  chmod 600 "$out"
+  echo "wrote $out ($(jq '.users | length' "$out") users, status $(jq -r '.status' "$out"))" >&2
+else
+  rm -f "$out.tmp"
+  [[ $code -ne 0 ]] || code=1
+  echo "provisioning produced no client list; $out left unchanged" >&2
+fi
+exit "$code"

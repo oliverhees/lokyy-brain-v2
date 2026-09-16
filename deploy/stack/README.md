@@ -44,12 +44,14 @@ docker compose exec authentik-worker ak apply_blueprint custom/lokyy-vaults.yaml
 | Vaults cannot reach each other | No published ports. Per-vault internal networks: `web-<vault>` (Traefik only) and `mcp-<vault>` (MetaMCP only, alias `mcp.vault-<vault>`). Shared `egress` network with inter-container traffic disabled |
 | MCP access | Per-vault `MCP_HTTP_TOKEN`, known only to MetaMCP; `MCP_HTTP_ALLOWED_HOSTS=mcp.vault-<vault>:4322` |
 | Identity for the vault web server | Traefik forward-auth `authResponseHeaders` delete any client `X-authentik-username` / `X-authentik-groups` and set Authentik's values; the `vault-identity` middleware strips `X-Mindbase-User`. The vault trusts these headers only behind the proxy secret (LBV2-9) |
-| Vault administration (config writes) | `VAULT_ADMIN_GROUPS=vault-<vault>-admin,lokyy-admins`, checked against the proxy-set groups header |
+| Vault administration (config writes) | `VAULT_ADMIN_GROUPS=vault-<vault>-admin,lokyy-admins` is set; the vault-side check against the proxy-set groups header **requires LBV2-9 (identity hardening)** in the vault image. This stack only verifies the headers (Authentik format: groups separated by `\|`) |
 | Readers of the company vault | `MCP_HTTP_READONLY_TOKEN` on `vault-firma`: 13 read tools (incl. rate-limited `ask_wiki`), no `internal`/`pii` pages, enforced inside the vault (fail closed). MetaMCP's own tool deactivation is only a second layer |
-| MCP clients (AI tools) | One MetaMCP endpoint per user, API key only (no OAuth, no key in the query string). Traefik routes only `/metamcp/<endpoint>/mcp` |
+| MCP clients (AI tools) | One MetaMCP endpoint per user, API key only (no OAuth, no key in the query string). Traefik routes only `/metamcp/<endpoint>/mcp`, rate-limits it per client IP (20 req/s, burst 60) and rewrites MetaMCP's `404` for unknown endpoints to `401`, so endpoint names cannot be probed by status code (the response body still differs) |
 | MetaMCP accounts | `metamcp-init` creates the admin and closes self-registration (open by default in MetaMCP 2.4.22) |
 
-Middleware order on each vault router is `authentik@docker,vault-<vault>-secret@docker`: forward-auth runs first, so Authentik never receives the proxy secret.
+Middleware order on each vault router is `authentik@docker,vault-identity@docker,vault-<vault>-secret@docker`: forward-auth runs first, so Authentik never receives the proxy secret.
+
+All vaults mount the shared named volume `models` at `/models` (embedding model cache of the slim image, LBV2-6), so the model is downloaded once. It is a shared writable path between vaults: a compromised vault could tamper with the model files the others load.
 
 Networks use explicit `10.231.x.0/28` subnets because the default Docker address pools can be exhausted on developer machines.
 
@@ -74,7 +76,24 @@ Networks use explicit `10.231.x.0/28` subnets because the default Docker address
 | Endpoint `<user>` | API-key auth only: `http://mcp.localhost:18080/metamcp/<user>/mcp` |
 | API key `lokyy` | written with the URL to `secrets/metamcp-clients.json` (mode 600, gitignored) for handing out |
 
-Users removed from the file lose their account, endpoint and key. `metamcp/provision.sh --rotate <user>` replaces a key; the old key stops working immediately, also on open sessions. `USERS_FILE=… metamcp/provision.sh` uses another file.
+Users removed from the file lose their account, endpoint and key. `metamcp/provision.sh --rotate <user>` replaces a key (`--rotate-all`: every key); the old key stops working immediately, also on open sessions. `USERS_FILE=… metamcp/provision.sh` uses another file.
+
+The users file is validated before anything changes: a personal vault must be named like its user (override per user with `"allowVaultNameMismatch": true`), no vault may belong to two users, and names match `^[a-z][a-z0-9-]*$`. Runs are serialised with `flock` on `secrets/.provision.lock`. If a run fails after keys were already rotated or issued, the clients file is still written with `"status": "failed"`; entries of users the run did not reach are kept and marked `"stale": true`.
+
+### Risk: plaintext secrets in MetaMCP (accepted)
+
+MetaMCP 2.4.22 stores user API keys and the vault bearer tokens (full and read-only) in plain text in `metamcp-db`. Accepted as a known risk with these mitigations:
+
+- `metamcp-db` stays on the internal `metamcp-internal` network only; never publish its port.
+- Backups of `metamcp-db` must be encrypted (and access-controlled like `.env`).
+- On suspected exposure rotate all access secrets at once with `./rotate-secrets.sh`:
+  1. new `MCP_TOKEN_*`, `MCP_READONLY_TOKEN_*`, `PROXY_SECRET_*` in `.env` (backup `.env.bak-<timestamp>`, delete after verification),
+  2. `docker compose up -d` restarts the vaults with the new tokens and Traefik with the new proxy-secret labels,
+  3. `tests/wait-ready.sh`,
+  4. `metamcp/provision.sh --rotate-all` writes the new bearer tokens into MetaMCP and issues new API keys,
+  5. hand out `secrets/metamcp-clients.json` again.
+
+  MCP clients are down between steps 2 and 4. Authentik secrets, database passwords and `METAMCP_AUTH_SECRET` are rotated separately.
 
 Why one MetaMCP account per user: MetaMCP 2.4.22 only checks that an API key and an endpoint have the same owner. With admin-owned endpoints and keys, anna's key would open ben's endpoint, and any key opens a public endpoint.
 
@@ -82,18 +101,27 @@ Second layer for readers: MetaMCP's tool deactivation is a denylist that fails o
 
 ## LLM via EUrouter (LBV2-5)
 
-Put `EUROUTER_API_KEY` and `EUROUTER_MODEL` (an id from `https://api.eurouter.ai/api/v1/models`, e.g. `qwen3.6-27b`) into `.env`, then:
+Put `EUROUTER_MODEL` (an id from `https://api.eurouter.ai/api/v1/models`, e.g. `qwen3.6-27b`) and the key(s) into `.env`. Two key modes, combinable:
+
+| Variable | Used for |
+|---|---|
+| `EUROUTER_API_KEY_<VAULT>` (e.g. `EUROUTER_API_KEY_ANNA`) | only that vault; overrides the shared key |
+| `EUROUTER_API_KEY` | every vault without its own key |
+
+A vault with neither is skipped with a warning and nothing is written. **Recommended: per-vault keys with a spend limit each**, so one vault's usage (or a leaked key, see below) cannot exhaust the whole budget, and a key can be revoked for one vault.
 
 ```bash
-llm/configure-eurouter.sh          # all vaults; or: llm/configure-eurouter.sh anna firma
+llm/configure-eurouter.sh --dry-run   # which vault uses which key source (never values)
+llm/configure-eurouter.sh             # all vaults; or: llm/configure-eurouter.sh anna firma
+tests/eurouter-keys.sh                # checks key selection (dry run)
 ```
 
-It merges `provider: openai`, `baseUrl: https://api.eurouter.ai/api/v1`, model and key into `/data/mindbase.config.json` of each vault (mode 600) and restarts vaults whose file changed. The key is passed by variable name, never printed. `https://www.eurouter.ai/api/v1` is the website and answers 404.
+It merges `provider: openai`, `baseUrl: https://api.eurouter.ai/api/v1`, model and key into `/data/mindbase.config.json` of each vault (mode 600) and restarts vaults whose file changed. If an existing config file is not valid JSON the vault is reported and left untouched. Keys are passed by variable name, never printed. `https://www.eurouter.ai/api/v1` is the website and answers 404.
 
 Risks:
 - The OpenAI adapter uses `/v1/responses` instead of chat completions whenever a message carries a document block (PDF chat). EUrouter answers `400` (not `404`) on `/api/v1/responses`, so the route exists, but PDF chat through EUrouter is untested without a real key.
 - `GET /api/config` returns the whole config including `apiKey` to every user who can open the vault web UI.
-- Embeddings do not use EUrouter: BGE-M3 runs locally in the vault (`/transformers`, ~570 MB download from Hugging Face on first use into the container home, so again after every container re-creation).
+- Embeddings do not use EUrouter: BGE-M3 runs locally in the vault (`@xenova/transformers`, ~570 MB download from Hugging Face on first use, cached in the shared `models` volume).
 
 ### Memory per vault (measured 2026-09-16, `docker stats`, 5 s sampling)
 
@@ -132,7 +160,7 @@ The embedding model does not work in the image: `@xenova/transformers` tries to 
 
 - MetaMCP must reach the vaults, so a vault can reach MetaMCP back (compose has no one-way rules). Its surface stays authenticated.
 - MetaMCP 2.4.22's tool deactivation is a fail-open denylist — never rely on it alone (see LBV2-4).
-- MetaMCP stores API keys and vault bearer tokens in plain text in its database.
+- MetaMCP stores API keys and vault bearer tokens in plain text in its database (accepted, see "Risk: plaintext secrets in MetaMCP").
 - Guarded-mode identity and admin checks inside the vault (LBV2-9) are verified here at header level only.
 - Vaults can reach services published on the Docker host through the egress gateway (and cloud metadata endpoints, if any). Harmless on a developer machine, relevant for the Coolify template (LBV2-16).
 - The stack suite does not re-test the `internal`/`pii` visibility rules; those are covered by `apps/mcp/test/http-readonly-visibility.mjs`.

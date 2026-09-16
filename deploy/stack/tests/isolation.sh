@@ -29,7 +29,13 @@ access() {
 V=http://%s.vault.localhost:18080
 
 jar_anna=$(mktemp) jar_ben=$(mktemp)
-trap 'rm -f "$jar_anna" "$jar_ben"' EXIT
+hdir=$(mktemp -d)
+hfile() { local f; f=$(mktemp "$hdir/h.XXXXXX"); printf '%s\n' "$1" >"$f"; echo "$f"; }  # secret headers via file, not argv
+cleanup() {
+  rm -rf "$jar_anna" "$jar_ben" "$hdir"
+  docker compose -f compose.yml -f tests/echo.override.yml rm -sf echo >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
 echo "== 1. Unauthenticated access is redirected to the login"
 for v in anna ben firma; do
@@ -55,7 +61,7 @@ expect "anna → ben with forged X-authentik-username: ben" \
 expect "anna → own vault with wrong X-Vault-Proxy-Secret (Traefik must overwrite)" \
   "$(code -b "$jar_anna" -H 'X-Vault-Proxy-Secret: wrong-wrong-wrong-wrong-wrong-wrong' "$(printf $V anna)/api/config")" "200"
 expect "anon → ben with ben's real proxy secret (secret alone is not a login)" \
-  "$(code -H "X-Vault-Proxy-Secret: $PROXY_SECRET_BEN" "$(printf $V ben)/api/config")" "302"
+  "$(code -H @"$(hfile "X-Vault-Proxy-Secret: $PROXY_SECRET_BEN")" "$(printf $V ben)/api/config")" "302"
 
 echo "== 3b. Identity headers as the vault receives them (test-only echo behind anna's router chain)"
 # The vault trusts x-authentik-username (identity) and x-authentik-groups (VAULT_ADMIN_GROUPS) when
@@ -94,19 +100,21 @@ docker compose -f compose.yml -f tests/echo.override.yml rm -sf echo >/dev/null 
 
 echo "== 4. Direct container access bypassing Traefik"
 in_c() { docker compose exec -T "$1" sh -c "$2" 2>/dev/null; }
+# in_ct <container> <token> <command>: the bearer header reaches the container via stdin (file $h), never argv
+in_ct() { printf 'authorization: Bearer %s\n' "$2" | docker compose exec -T "$1" sh -c "umask 077; h=\$(mktemp); cat >\"\$h\"; $3; rm -f \"\$h\"" 2>/dev/null; }
 expect "metamcp → vault-anna:4321 (no proxy secret)" \
   "$(in_c metamcp "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://mcp.vault-anna:4321/api/config")" "403"
 expect "metamcp → vault-anna:4322 without token" \
   "$(in_c metamcp "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST http://mcp.vault-anna:4322/mcp")" "401"
 init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}'
 expect "metamcp → vault-anna:4322 with anna's token (intended path)" \
-  "$(in_c metamcp "curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H 'authorization: Bearer $MCP_TOKEN_ANNA' -d '$init' http://mcp.vault-anna:4322/mcp")" "200"
+  "$(in_ct metamcp "$MCP_TOKEN_ANNA" "curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H @\$h -d '$init' http://mcp.vault-anna:4322/mcp")" "200"
 expect "metamcp → vault-ben:4322 with anna's token" \
-  "$(in_c metamcp "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST -H 'authorization: Bearer $MCP_TOKEN_ANNA' http://mcp.vault-ben:4322/mcp")" "401"
+  "$(in_ct metamcp "$MCP_TOKEN_ANNA" "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST -H @\$h http://mcp.vault-ben:4322/mcp")" "401"
 
 echo "== 4b. Company vault read-only profile (fail-closed, enforced in the vault)"
 mcp_post() { # mcp_post <token> <json> [session] -> writes headers+body to stdout
-  in_c metamcp "curl -s -i --max-time 10 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H 'authorization: Bearer $1' ${3:+-H 'mcp-session-id: $3'} -d '$2' http://mcp.vault-firma:4322/mcp"
+  in_ct metamcp "$1" "curl -s -i --max-time 10 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H @\$h ${3:+-H 'mcp-session-id: $3'} -d '$2' http://mcp.vault-firma:4322/mcp"
 }
 ro_init=$(mcp_post "$MCP_READONLY_TOKEN_FIRMA" "$init")
 ro_sid=$(grep -i '^mcp-session-id:' <<<"$ro_init" | awk '{print $2}' | tr -d '\r')
@@ -117,8 +125,8 @@ expect "firma read-only tools/list has exactly 13 tools" "$ro_tools" "13"
 ro_write=$(mcp_post "$MCP_READONLY_TOKEN_FIRMA" '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_note","arguments":{"title":"reader-attack"}}}' "$ro_sid" | grep -o 'Tool not available' | head -1)
 expect "firma read-only create_note rejected" "$ro_write" "Tool not available"
 expect "firma read-only session refuses full token (403)" \
-  "$(in_c metamcp "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H 'authorization: Bearer $MCP_TOKEN_FIRMA' -H 'mcp-session-id: $ro_sid' -d '{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/list\"}' http://mcp.vault-firma:4322/mcp")" "403"
-full_tools=$(in_c metamcp "curl -s --max-time 10 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H 'authorization: Bearer $MCP_TOKEN_FIRMA' -D /tmp/h -d '$init' http://mcp.vault-firma:4322/mcp >/dev/null; sid=\$(grep -i '^mcp-session-id:' /tmp/h | awk '{print \$2}' | tr -d '\r'); curl -s --max-time 10 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H 'authorization: Bearer $MCP_TOKEN_FIRMA' -H \"mcp-session-id: \$sid\" -d '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}' http://mcp.vault-firma:4322/mcp" | grep -o '"name":"[a-z_]*"' | sort -u | wc -l)
+  "$(in_ct metamcp "$MCP_TOKEN_FIRMA" "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H @\$h -H 'mcp-session-id: $ro_sid' -d '{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/list\"}' http://mcp.vault-firma:4322/mcp")" "403"
+full_tools=$(in_ct metamcp "$MCP_TOKEN_FIRMA" "curl -s --max-time 10 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H @\$h -D /tmp/h -d '$init' http://mcp.vault-firma:4322/mcp >/dev/null; sid=\$(grep -i '^mcp-session-id:' /tmp/h | awk '{print \$2}' | tr -d '\r'); curl -s --max-time 10 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H @\$h -H \"mcp-session-id: \$sid\" -d '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}' http://mcp.vault-firma:4322/mcp" | grep -o '"name":"[a-z_]*"' | sort -u | wc -l)
 expect "firma full token tools/list has all 50 tools" "$full_tools" "50"
 
 echo "== 5. Lateral movement from a vault container (e.g. via SSRF)"

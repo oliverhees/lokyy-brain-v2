@@ -18,6 +18,7 @@ expect() { # expect <name> <actual> <allowed-regex>
 CLIENTS=secrets/metamcp-clients.json
 BASE=http://mcp.localhost:18080/metamcp
 key() { jq -r --arg u "$1" '.users[] | select(.username == $u) | .apiKey' "$CLIENTS"; }
+umask 077
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
 provision() { metamcp/provision.sh "$@" >"$tmp/provision.log" 2>&1 || { cat "$tmp/provision.log" >&2; return 1; }; }
@@ -26,16 +27,19 @@ provision() { metamcp/provision.sh "$@" >"$tmp/provision.log" 2>&1 || { cat "$tm
 # rpc <endpoint-user> <auth-mode:key|bearer|query|none> <key> <session> <json>
 # Sets STATUS, SID (response mcp-session-id), BODY (JSON-RPC message, SSE unwrapped).
 rpc() {
-  local ep=$1 mode=$2 k=$3 sid=$4 json=$5 url="$BASE/$1/mcp" args=()
+  local ep=$1 mode=$2 k=$3 sid=$4 json=$5 url="$BASE/$1/mcp"
+  # Keys go into a curl config file (mode 600), never into curl's argv.
+  : >"$tmp/req.cfg"
   case $mode in
-    key)    args+=(-H "x-api-key: $k") ;;
-    bearer) args+=(-H "authorization: Bearer $k") ;;
+    key)    printf 'header = "x-api-key: %s"\n' "$k" >>"$tmp/req.cfg" ;;
+    bearer) printf 'header = "authorization: Bearer %s"\n' "$k" >>"$tmp/req.cfg" ;;
     query)  url="$url?api_key=$k" ;;
   esac
-  [[ -n $sid ]] && args+=(-H "mcp-session-id: $sid")
+  [[ -n $sid ]] && printf 'header = "mcp-session-id: %s"\n' "$sid" >>"$tmp/req.cfg"
+  printf 'url = "%s"\n' "$url" >>"$tmp/req.cfg"
   STATUS=$(curl -s --max-time 60 -D "$tmp/h" -o "$tmp/b" -w '%{http_code}' -X POST \
     -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
-    "${args[@]}" -d "$json" "$url")
+    -K "$tmp/req.cfg" -d "$json")
   SID=$(grep -i '^mcp-session-id:' "$tmp/h" | awk '{print $2}' | tr -d '\r')
   if grep -q '^data: ' "$tmp/b"; then BODY=$(sed -n 's/^data: //p' "$tmp/b" | tail -1); else BODY=$(cat "$tmp/b"); fi
 }
@@ -77,6 +81,14 @@ expect "provisioned objects are private (no public server/namespace/endpoint/key
 expect "provisioned users keep no login method or session after the run" \
   "$(count "select (select count(*) from accounts where user_id like 'lokyy-%')+(select count(*) from sessions where user_id like 'lokyy-%')")" "0"
 
+sum_before=$(sha256sum "$CLIENTS")
+bad_users() { jq "$1" users.json >"$tmp/bad-users.json"; USERS_FILE="$tmp/bad-users.json" metamcp/provision.sh >/dev/null 2>&1 && echo accepted || echo refused; }
+expect "users file: two users on one vault refused" "$(bad_users '.users[1].vault = "anna" | .users[1].allowVaultNameMismatch = true')" "refused"
+expect "users file: vault name != username refused" "$(bad_users '.users[0].vault = "ben" | .users[1].vault = "anna"')" "refused"
+expect "users file: invalid companyVault refused" "$(bad_users '.companyVault = "../firma"')" "refused"
+expect "refused runs leave the clients file unchanged" "$([[ $(sha256sum "$CLIENTS") == "$sum_before" ]] && echo same || echo changed)" "same"
+expect "refused runs change no MetaMCP objects" "$(state)" "$state1"
+
 ANNA=$(key anna) BEN=$(key ben)
 echo "== 1. Endpoint authentication through Traefik"
 rpc anna none "" "" "$INIT";        expect "anna endpoint without key" "$STATUS" "401"
@@ -85,11 +97,12 @@ rpc ben key "$ANNA" "" "$INIT";     expect "anna's key on ben's endpoint (x-api-
 rpc ben bearer "$ANNA" "" "$INIT";  expect "anna's key on ben's endpoint (Bearer)" "$STATUS" "403"
 rpc ben query "$ANNA" "" "$INIT";   expect "anna's key on ben's endpoint (query param, disabled)" "$STATUS" "401"
 rpc ben none "" "" "$INIT";         expect "ben's endpoint without key" "$STATUS" "401"
+rpc nosuchuser key "$ANNA" "" "$INIT"; expect "unknown endpoint answers like a wrong key (no enumeration)" "$STATUS" "401"
 rpc anna key "$BEN" "" "$INIT";     expect "ben's key on anna's endpoint" "$STATUS" "403"
 # Anything but /metamcp/<name>/mcp falls through to the Authentik-protected admin router (302 to login).
 expect "endpoint catalogue GET /metamcp/ not routed to MetaMCP" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")" "302"
 for p in sse message api/openapi.json api/tools/x; do
-  expect "only /mcp is routed: /metamcp/anna/$p" "$(curl -s -o /dev/null -w '%{http_code}' -H "x-api-key: $ANNA" "$BASE/anna/$p")" "302"
+  expect "only /mcp is routed: /metamcp/anna/$p" "$(curl -s -o /dev/null -w '%{http_code}' -K <(printf 'header = "x-api-key: %s"\n' "$ANNA") "$BASE/anna/$p")" "302"
 done
 
 echo "== 2. Tool visibility per user"

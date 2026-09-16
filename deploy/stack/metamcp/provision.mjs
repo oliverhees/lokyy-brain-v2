@@ -29,24 +29,34 @@ const fail = (msg) => { throw new Error(msg); };
 
 // ------------------------------------------------------------------ input
 const spec = JSON.parse(process.env.LOKYY_USERS ?? fail('LOKYY_USERS missing'));
-const rotate = new Set(JSON.parse(process.env.LOKYY_ROTATE ?? '[]'));
+const rotateList = JSON.parse(process.env.LOKYY_ROTATE ?? "[]");
+const rotateAll = rotateList.includes("*");
+const rotate = { has: (u) => rotateAll || rotateList.includes(u) };
 const publicBase = process.env.LOKYY_PUBLIC_BASE;
+const VAULT_RE = /^[a-z][a-z0-9-]{0,30}$/;
 const company = spec.companyVault ?? fail('companyVault missing');
+if (typeof company !== 'string' || !VAULT_RE.test(company)) fail('invalid companyVault');
 const token = (vault, readonly = false) => {
-  const name = `MCP_${readonly ? 'READONLY_' : ''}TOKEN_${vault.toUpperCase()}`;
+  const name = `MCP_${readonly ? 'READONLY_' : ''}TOKEN_${vault.toUpperCase().replace(/-/g, '_')}`;
   return process.env[name] || fail(`${name} not set`);
 };
+if (!Array.isArray(spec.users)) fail('users must be an array');
 const seen = new Set();
-for (const u of spec.users ?? []) {
-  if (!/^[a-z][a-z0-9-]{1,30}$/.test(u.username) || u.username.includes('--')) fail(`invalid username: ${u.username}`);
-  if (!/^[a-z][a-z0-9-]{0,30}$/.test(u.vault)) fail(`invalid vault for ${u.username}`);
+const vaultsSeen = new Set();
+for (const u of spec.users) {
+  if (typeof u.username !== 'string' || !/^[a-z][a-z0-9-]{1,30}$/.test(u.username) || u.username.includes('--')) fail(`invalid username: ${u.username}`);
+  if (typeof u.vault !== 'string' || !VAULT_RE.test(u.vault)) fail(`invalid vault for ${u.username}`);
+  // A personal vault belongs to exactly one user and carries that user's name, unless explicitly allowed.
+  if (u.vault !== u.username && u.allowVaultNameMismatch !== true) fail(`${u.username}: vault must equal username (set "allowVaultNameMismatch": true to override)`);
+  if (vaultsSeen.has(u.vault)) fail(`vault ${u.vault} assigned to more than one user`);
+  vaultsSeen.add(u.vault);
   if (u.vault === company) fail(`${u.username}: own vault must not be the company vault`);
   if (!['reader', 'writer'].includes(u.role)) fail(`${u.username}: role must be reader or writer`);
   if (seen.has(u.username)) fail(`duplicate user ${u.username}`);
   seen.add(u.username);
   token(u.vault); token(company, u.role === 'reader');
 }
-for (const r of rotate) if (!seen.has(r)) fail(`--rotate ${r}: not in users file`);
+for (const r of rotateList) if (r !== "*" && !seen.has(r)) fail(`--rotate ${r}: not in users file`);
 
 // ------------------------------------------------------------------ db + session
 const db = new Client({ connectionString: process.env.DATABASE_URL });
@@ -76,7 +86,7 @@ async function withLogin(username, fn) {
         ? { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(input ?? {}) }
         : { headers: { cookie } });
       const body = await r.json();
-      if (!r.ok || body.error) fail(`${proc}: ${r.status} ${JSON.stringify(body.error?.message ?? body).slice(0, 200)}`);
+      if (!r.ok || body.error) fail(`${proc}: HTTP ${r.status} ${String(body.error?.message ?? 'error').slice(0, 200)}`);
       const data = body.result.data;
       if (data && data.success === false) fail(`${proc}: ${data.message}`);
       return data;
@@ -207,8 +217,8 @@ async function tripwire(client) {
 }
 
 // ------------------------------------------------------------------ main
+const clients = [];
 try {
-  const clients = [];
   for (const u of spec.users) clients.push(await reconcile(u));
 
   const listed = new Set(spec.users.map((u) => `${ID_PREFIX}${u.username}`));
@@ -227,8 +237,14 @@ try {
 
   for (const c of clients) await tripwire(c);
   for (const c of clients) delete c.namespaceUuid;
-  console.log(JSON.stringify({ generatedAt: new Date().toISOString(), users: clients }, null, 2));
+  console.log(JSON.stringify({ generatedAt: new Date().toISOString(), status: "ok", users: clients }, null, 2));
   log(`ok: ${clients.map((c) => `${c.username}(${c.role}) tools ${c.tools.total}, company ${c.tools.company}`).join('; ')}`);
+} catch (e) {
+  // Keys may already be rotated or issued: always hand back what exists now, marked as failed.
+  for (const c of clients) delete c.namespaceUuid;
+  console.log(JSON.stringify({ generatedAt: new Date().toISOString(), status: "failed", error: e.message, users: clients }, null, 2));
+  log(`FAILED: ${e.message}`);
+  process.exitCode = 1;
 } finally {
   await db.end();
 }

@@ -236,6 +236,14 @@ services:
       - traefik.http.routers.metamcp-endpoints.rule=Host(`mcp.localhost`) && PathRegexp(`^/metamcp/[a-z0-9-]+/mcp$`)
       - traefik.http.routers.metamcp-endpoints.entrypoints=web
       - traefik.http.routers.metamcp-endpoints.priority=100
+      # Throttle key guessing / endpoint enumeration per client IP; unknown endpoints answer 401 like a wrong key
+      - traefik.http.routers.metamcp-endpoints.middlewares=metamcp-ratelimit@docker,metamcp-unknown-endpoint@docker
+      - traefik.http.middlewares.metamcp-ratelimit.ratelimit.average=20
+      - traefik.http.middlewares.metamcp-ratelimit.ratelimit.burst=60
+      - traefik.http.middlewares.metamcp-unknown-endpoint.errors.status=404
+      - traefik.http.middlewares.metamcp-unknown-endpoint.errors.service=metamcp
+      - traefik.http.middlewares.metamcp-unknown-endpoint.errors.query=/metamcp/health
+      - traefik.http.middlewares.metamcp-unknown-endpoint.errors.statusRewrites.404=401
       - traefik.http.routers.metamcp-endpoints.service=metamcp
       - traefik.http.services.metamcp.loadbalancer.server.port=12008
     # No egress: MetaMCP only talks to vaults over HTTP, never runs stdio servers or fetches packages
