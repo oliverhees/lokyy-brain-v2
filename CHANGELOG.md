@@ -5,6 +5,7 @@
 ### Added
 - MCP over Streamable HTTP (`apps/mcp/dist/http.js`) with bearer token, session limits and Host allow-list; optional read-only token profile with a fail-closed allowlist of 12 tools and a reader view that hides `internal`/`pii` pages. See `docs/self-hosting-mcp-http.md`.
 - Source-built vault Docker image (`deploy/Dockerfile`).
+- Slim vault image (LBV2-6): multi-stage build with production-only dependencies and a compiled web server (`deploy/build-server.mjs`, no `tsx` at runtime). Image disk usage 1.82 GB -> 800 MB. Embedding models are cached in `/models` (mount a volume to keep them); `MINDBASE_PLUGIN_ROOT` is set in the image. See `docs/self-hosting-mcp-http.md#image-contents-and-size`.
 - Web server proxy shared-secret guard (`VAULT_PROXY_SECRET`, header `X-Vault-Proxy-Secret`); required by the Docker image (`VAULT_REQUIRE_PROXY_SECRET=1`). Unset outside the image = previous behaviour.
 
 ### Changed — may affect existing (stdio / single-user) setups
