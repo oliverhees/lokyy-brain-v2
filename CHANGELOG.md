@@ -5,6 +5,7 @@
 ### Added
 - MCP over Streamable HTTP (`apps/mcp/dist/http.js`) with bearer token, session limits and Host allow-list; optional read-only token profile with a fail-closed allowlist of 12 tools and a reader view that hides `internal`/`pii` pages. See `docs/self-hosting-mcp-http.md`.
 - Source-built vault Docker image (`deploy/Dockerfile`).
+- Web server proxy shared-secret guard (`VAULT_PROXY_SECRET`, header `X-Vault-Proxy-Secret`); required by the Docker image (`VAULT_REQUIRE_PROXY_SECRET=1`). Unset outside the image = previous behaviour.
 
 ### Changed — may affect existing (stdio / single-user) setups
 - **Slugs are validated for every MCP tool** (`slug`, `slugs`, `source_slug`, `target_slug`, `root`): a leading `/`, backslash, NUL, or a `.`/`..` path segment is rejected with `Invalid input: unsafe slug`. Previously e.g. `read_wiki_page {slug: "/flip"}` resolved to the page.

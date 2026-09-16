@@ -13,7 +13,8 @@ stop_children() {
 trap 'stop_children; exit 143' TERM INT
 
 if [[ -n "${MCP_HTTP_PORT:-}" ]]; then
-  node /app/apps/mcp/dist/http.js &
+  # The MCP process never needs the web proxy secret (least privilege).
+  env -u VAULT_PROXY_SECRET node /app/apps/mcp/dist/http.js &
   pids+=($!)
 fi
 

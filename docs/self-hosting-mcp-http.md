@@ -2,7 +2,7 @@
 
 This guide is for operators who run Lokyy Brain vaults as containers, one per company or team, and connect them to an MCP aggregator.
 
-> **Warning — the web UI port has no authentication.** Port `4321` (`PORT`) serves the web UI and the full HTTP API (`/api/*`, see `apps/server/src/index.ts`) without any login or token. Anyone who can reach it has full read and write access to the vault, including `internal`/`pii` pages and `PUT /api/config` (LLM API key). This bypasses both MCP token profiles described below. Never publish this port. Reach it only through an authenticating reverse proxy (for example Traefik with Authentik forward-auth), and keep it off every network the MCP aggregator or other services share. The proxy shared-secret guard (`VAULT_PROXY_SECRET`, work item LBV2-8) is developed on a separate branch and is not part of this revision.
+> **Warning — the web UI port has no user authentication.** Port `4321` (`PORT`) serves the web UI and the full HTTP API (`/api/*`, see `apps/server/src/index.ts`) without any login. The only built-in check is the proxy shared secret (see below): requests without the `X-Vault-Proxy-Secret` header get `403`. Anyone who can reach the port with the secret — normally only your reverse proxy — has full read and write access to the vault, including `internal`/`pii` pages and `PUT /api/config` (LLM API key). This bypasses both MCP token profiles described below. Never publish this port. Reach it only through an authenticating reverse proxy (for example Traefik with Authentik forward-auth), and keep it off every network the MCP aggregator or other services share. Configure the proxy to inject `X-Vault-Proxy-Secret` (overwriting any client-supplied value) only on that vault's route.
 
 It covers configuration, the two access profiles, what read-only sessions can see, the security behaviour of the HTTP transport, known limitations, and how to run the tests.
 
@@ -36,10 +36,11 @@ docker run -d --name vault-acme --network mcp-acme \
   -e MCP_HTTP_TOKEN="$(openssl rand -hex 32)" \
   -e MCP_HTTP_READONLY_TOKEN="$(openssl rand -hex 32)" \
   -e MCP_HTTP_ALLOWED_HOSTS=vault-acme:4322 \
+  -e VAULT_PROXY_SECRET="$(openssl rand -hex 32)" \
   lokyy-brain-vault
 ```
 
-No `-p` flag: the ports stay on the internal `mcp-acme` network, which only the vault and the aggregator join (one such network per vault). The aggregator connects to `http://vault-acme:4322/mcp`. Because port 4321 is reachable on every network the container joins, the aggregator can reach the unauthenticated web API too — for real deployments put the web UI on a separate network shared only with the authenticating reverse proxy, and use the proxy secret guard once LBV2-8 is merged. A complete reference setup (Traefik, Authentik, per-vault networks, egress) is developed in LBV2-2. In a real deployment, pass the tokens from your secret store instead of generating them inline, so you can also configure them in the aggregator.
+No `-p` flag: the ports stay on the internal `mcp-acme` network, which only the vault and the aggregator join (one such network per vault). The aggregator connects to `http://vault-acme:4322/mcp`. Because port 4321 is reachable on every network the container joins, the aggregator can reach the web port too; the proxy secret guard answers `403` to it, but for real deployments also put the web UI on a separate network shared only with the authenticating reverse proxy. A complete reference setup (Traefik, Authentik, per-vault networks, egress) is developed in LBV2-2. In a real deployment, pass the tokens from your secret store instead of generating them inline, so you can also configure them in the aggregator.
 
 The container runs as the non-root user `vault` (uid 10001) under `tini`.
 
@@ -68,6 +69,8 @@ The server validates every integer variable at startup. A value that is not an i
 | `PORT` | `4321` | Web server port. The healthcheck assumes `4321`. |
 | `MINDBASE_MDNS` | `off` | Any value other than `off` makes the web server advertise itself via mDNS (`_mindbase._tcp`). Keep `off` in containers. |
 | `NODE_ENV` | `production` | Standard Node.js setting. |
+| `VAULT_PROXY_SECRET` | unset — **required** in the image | At least 32 characters, otherwise the web server exits. Every web request must carry header `X-Vault-Proxy-Secret` with this value (constant-time compare), otherwise `403`; the header is stripped before handlers. Not passed to the MCP process. The healthcheck sends it via stdin. Generate with `openssl rand -hex 32`, one per vault. |
+| `VAULT_REQUIRE_PROXY_SECRET` | `1` | When set (any non-empty value), a missing or empty `VAULT_PROXY_SECRET` aborts web server startup instead of disabling the guard. An empty value turns the requirement off. |
 
 ### Generating tokens
 
@@ -218,7 +221,7 @@ The items below are **limitations, not features**. They came out of the security
 | 5 | `ask_wiki.context_pages` and `ingest_plan.raw_id` bypass the central slug check | full token only | These argument names are not in `SLUG_ARGUMENT_NAMES`. `FileStore` containment still keeps reads inside the data directory. Neither tool is available to read-only sessions. |
 | 6 | Upstream server e2e tests are broken | development | The `apps/server/test/*-e2e.test.ts` suites failed before the LBV2 changes as well (commit `b78f97c`). They do not currently give regression signal. |
 | 7 | Upstream typecheck error | development | `pnpm -F mindbase-mcp typecheck` reports an error in `apps/mcp/src/tools/get-pulse.ts` (line 94). It is inherited from upstream and does not affect the build (`tsup`). |
-| 8 | Web UI / HTTP API on port 4321 is unauthenticated | all deployments | See the warning at the top. Isolation depends entirely on the network and the reverse proxy. |
+| 8 | Web UI / HTTP API on port 4321 has no user authentication | all deployments | Protection is the reverse proxy plus the proxy shared secret. Anyone holding the secret and reaching the port has full access; isolation still depends on the network. See the warning at the top. |
 
 ## Testing
 

@@ -6,6 +6,7 @@ dotenv.config({ path: path.resolve(import.meta.dirname, '../../../.env') });
 
 import express from 'express';
 import { createContext } from './context';
+import { proxySecretGuard, readProxySecret } from './lib/proxy-secret';
 import { resolveDataDirAsync } from './config';
 import { ingestRoutes } from './routes/ingest';
 import { compileRoutes } from './routes/compile';
@@ -135,6 +136,8 @@ async function main() {
 
   const app = express();
 
+  // Must be the first middleware: rejects requests that did not come through the auth proxy.
+  app.use(proxySecretGuard(readProxySecret(process.env)));
   app.use(express.json({ limit: '80mb' }));
 
   // API routes

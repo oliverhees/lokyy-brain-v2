@@ -19,14 +19,15 @@ COPY --from=build /src /app
 ENV NODE_ENV=production \
     PORT=4321 \
     MINDBASE_DATA_DIR=/data \
-    MINDBASE_MDNS=off
+    MINDBASE_MDNS=off \
+    VAULT_REQUIRE_PROXY_SECRET=1
 RUN useradd -r -u 10001 -m vault && mkdir -p /data && chown vault /data
 USER vault
 VOLUME ["/data"]
 EXPOSE 4321 4322
-# Web must answer 200; if MCP is enabled it must answer 401 without a token (alive, auth on).
+# Secret is piped via stdin so it never appears in the process list. Web must answer 200; if MCP is enabled it must answer 401 without a token (alive, auth on).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -fsS -o /dev/null http://127.0.0.1:4321/ \
+  CMD printf 'X-Vault-Proxy-Secret: %s\n' "$VAULT_PROXY_SECRET" | curl -fsS -o /dev/null -H @- http://127.0.0.1:4321/ \
    && { [ -z "$MCP_HTTP_PORT" ] || [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:${MCP_HTTP_PORT}/mcp)" = "401" ]; } \
    || exit 1
 ENTRYPOINT ["tini", "-g", "--"]
