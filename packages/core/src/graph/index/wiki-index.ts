@@ -541,6 +541,7 @@ export class WikiIndex {
         broken,
         edgeType: l.edge_type as EdgeType,
         inferenceRule: l.inference_rule,
+        origin: l.origin,
         crossProject,
         sourceProjectId: l.source_project_id,
         targetProjectId,

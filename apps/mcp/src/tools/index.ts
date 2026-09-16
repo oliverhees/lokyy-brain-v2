@@ -4,6 +4,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import type { Context } from '../context.js';
 import { errorResult } from '../lib/error.js';
 import { isToolAllowed, type AccessProfile } from '../access.js';
+import { slugArgumentsAreSafe, UNSAFE_SLUG_ERROR } from '../lib/slug.js';
 
 import { register as registerSearchWiki } from './search-wiki.js';
 import { register as registerSearchAllProjects } from './search-all-projects.js';
@@ -131,7 +132,10 @@ export function registerTools(
     }
     const handler = handlers.get(req.params.name);
     if (!handler) return errorResult(`Unknown tool: ${req.params.name}`, 'Use list_tools to see available tools.');
+    const args = req.params.arguments ?? {};
+    // Central page-slug validation for every tool and profile (LBV2-12 N3).
+    if (!slugArgumentsAreSafe(args)) return errorResult(UNSAFE_SLUG_ERROR);
     await beforeCall();
-    return handler(req.params.arguments ?? {});
+    return handler(args);
   });
 }

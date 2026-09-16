@@ -31,6 +31,12 @@ export interface PageEdge {
   edgeType: EdgeType;
   /** Phase 2: which rule inferred this type, or null for pure fallback. */
   inferenceRule: string | null;
+  /**
+   * Where the edge came from: 'markdown' = wikilink extracted from the source page body,
+   * 'llm' = inferred edge stored via WikiIndex.insertLink (not visible in any page body).
+   * Absent for graphs built directly from the store.
+   */
+  origin?: string;
   /** Multi-project graph: source and target live in different projects. */
   crossProject?: boolean;
   sourceProjectId?: string;

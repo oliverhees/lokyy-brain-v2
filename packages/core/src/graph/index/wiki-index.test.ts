@@ -208,6 +208,16 @@ describe('WikiIndex', () => {
     const out = index.outgoingFrom('a').filter((l) => l.target_slug === 'b' && l.edge_type === 'mentions');
     expect(out).toHaveLength(1); // unique constraint dedupes
   });
+
+  it('buildGraph edges carry the link origin (markdown body link vs llm insertLink)', () => {
+    index.upsertPage({ slug: 'a', path: 'wiki/notes/a.md', title: 'A', type: 'concept', kind: null, contentHash: 'h', wordCount: 0, tags: [], visibility: null, project: null, summary: null, meta: null }, [
+      mentionLink('b', 'inferred'),
+    ]);
+    index.insertLink({ from: 'a', to: 'c', edgeType: 'elaborates', reason: 'llm' });
+    const edges = index.buildGraph().edges;
+    expect(edges.find((e) => e.target === 'default/b')?.origin).toBe('markdown');
+    expect(edges.find((e) => e.target === 'default/c')?.origin).toBe('llm');
+  });
 });
 
 import { MemoryStore } from '../../storage/memory_store';

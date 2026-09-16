@@ -234,11 +234,19 @@ async function visibilityChecks() {
       const m = norm(await call(ro, tool, { slug: missingSlug }), missingSlug);
       check(h === m, `readonly: ${tool}(${hiddenSlug}) indistinguishable from missing page`, `${h.slice(0, 160)} vs ${m.slice(0, 160)}`);
     }
-    for (const traversal of ['../../projects/p1/wiki/notes/pii-page', '../../projects/p1/context', '../../raw/dump', 'flip-page']) {
-      const t = norm(await call(ro, 'read_wiki_page', { slug: traversal }), traversal);
+    {
+      const t = norm(await call(ro, 'read_wiki_page', { slug: 'flip-page' }), 'flip-page');
       const m = norm(await call(ro, 'read_wiki_page', { slug: 'nothere-page' }), 'nothere-page');
-      check(t === m, `readonly: read_wiki_page(${traversal}) indistinguishable from missing page`, `${t.slice(0, 160)} vs ${m.slice(0, 160)}`);
+      check(t === m, 'readonly: read_wiki_page(flip-page) indistinguishable from missing page', `${t.slice(0, 160)} vs ${m.slice(0, 160)}`);
     }
+    // N3: traversal slugs are rejected syntactically, before any lookup, with one generic error
+    // that is identical whether the traversal target exists or not (no existence oracle).
+    const traversalReplies = new Set();
+    for (const traversal of ['../../projects/p1/wiki/notes/pii-page', '../../projects/p1/context', '../../raw/dump', '../../raw/nothere']) {
+      traversalReplies.add(await call(ro, 'read_wiki_page', { slug: traversal }));
+    }
+    check(traversalReplies.size === 1 && [...traversalReplies][0].includes('unsafe slug'),
+      'readonly: traversal slugs rejected with one identical generic error', [...traversalReplies].join(' | ').slice(0, 300));
     const dup = await call(ro, 'read_wiki_page', { slug: 'dup-page' });
     check(dup.includes('Dup Public') && !dup.includes('CANARYCONCEPT'), 'readonly: public note readable despite hidden concept with same slug', dup.slice(0, 160));
     // F4: reader search results carry rank only, no index statistics.

@@ -21,8 +21,11 @@
 //   never trusted for visibility: they can be stale and do not record the layer.
 //   Index-derived views (graph, page rows, cards) show a slug only if it exists
 //   in the root wiki and no layer holds a hidden page with that slug.
-// - Links to hidden pages stay in the graph as broken links, exactly like links
-//   to pages that do not exist, so link lists are no existence oracle.
+// - Body wikilinks to hidden pages stay in the graph as broken links, exactly like
+//   links to pages that do not exist, so link lists are no existence oracle.
+//   LLM-inferred edges (not in any page body) to non-visible targets are dropped,
+//   whether the target is hidden or missing (LBV2-12 N1).
+// - Community ids are computed over all pages and are stripped from rows and nodes (N2).
 // - Search returns rank only; raw scores would reveal statistics of hidden pages.
 import type { CardStore, DirEntry, FeedStore, PageGraph, PageNode, PageRow, ReviewCard, SearchIndex, Store, WikiIndex } from '@mindbase/core';
 import type { Context } from './context.js';
@@ -78,16 +81,31 @@ async function loadVisibleSet(store: Store): Promise<VisibleSet> {
   return { files, slugs: new Set([...publicSlugs].filter((s) => !hiddenSlugs.has(s))) };
 }
 
+/** Reader copy of a node: community ids are computed over ALL pages, so they are never exposed. */
+function readerNode(node: PageNode): PageNode {
+  const { community_id: _community, ...rest } = node;
+  return rest;
+}
+
+/** Reader copy of an index row, without the all-pages community id. */
+function readerRow(row: PageRow): PageRow {
+  const { community_id: _community, ...rest } = row;
+  return rest as PageRow;
+}
+
 /**
- * Keeps the visible nodes. Edges from hidden sources are dropped; edges into
- * pages that are not visible are kept as broken links, exactly like links to
- * pages that do not exist.
+ * Keeps the visible nodes (without community ids). Edges from hidden sources are dropped.
+ * An edge into a page that is not visible survives only as a broken link when it is a
+ * wikilink extracted from the (visible) source page body — the target slug is then public
+ * content anyway, and hidden and missing targets look identical. Every other edge into a
+ * non-visible target (LLM-inferred via insertLink, or of unknown origin) is dropped, so
+ * hidden and missing targets are equally absent.
  */
 export function filterGraph(graph: PageGraph, isVisible: (node: PageNode) => boolean): PageGraph {
   const nodes = new Map<string, PageNode>();
-  for (const [id, node] of graph.nodes) if (isVisible(node)) nodes.set(id, node);
+  for (const [id, node] of graph.nodes) if (isVisible(node)) nodes.set(id, readerNode(node));
   const edges = graph.edges
-    .filter((e) => nodes.has(e.source))
+    .filter((e) => nodes.has(e.source) && (nodes.has(e.target) || e.origin === 'markdown'))
     .map((e) => (nodes.has(e.target) ? e : { ...e, broken: true }));
   const incoming = new Map<string, string[]>();
   const outgoing = new Map<string, string[]>();
@@ -153,10 +171,10 @@ export function createReaderView(base: Context): ReaderView {
 
   const wikiIndex: Pick<WikiIndex, 'buildGraph' | 'allPages' | 'getPage'> = {
     buildGraph: (opts) => filterGraph(base.wikiIndex.buildGraph(opts), nodeVisible),
-    allPages: () => base.wikiIndex.allPages().filter(rowVisible),
+    allPages: () => base.wikiIndex.allPages().filter(rowVisible).map(readerRow),
     getPage: (slug) => {
       const row = base.wikiIndex.getPage(slug);
-      return row && rowVisible(row) ? row : null;
+      return row && rowVisible(row) ? readerRow(row) : null;
     },
   };
 
