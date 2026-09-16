@@ -113,7 +113,8 @@ export async function handle(ctx: Context, rawInput: unknown) {
     return textResult({
       answer: answer.trim(),
       citations,
-      pages_read: slugs,
+      // Only pages that were actually read and sent as context; never unreadable or hidden slugs.
+      pages_read: citations.map((c) => c.slug),
       tokens_used: usage,
     });
   } catch (e) {

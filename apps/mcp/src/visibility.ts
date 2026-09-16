@@ -27,7 +27,7 @@
 //   whether the target is hidden or missing (LBV2-12 N1).
 // - Community ids are computed over all pages and are stripped from rows and nodes (N2).
 // - Search returns rank only; raw scores would reveal statistics of hidden pages.
-import type { CardStore, DirEntry, FeedStore, PageGraph, PageNode, PageRow, ReviewCard, SearchIndex, Store, WikiIndex } from '@mindbase/core';
+import type { CardStore, ChatChunk, ChatRequest, LLMAdapter, DirEntry, FeedStore, PageGraph, PageNode, PageRow, ReviewCard, SearchIndex, Store, WikiIndex } from '@mindbase/core';
 import type { Context } from './context.js';
 
 const WIKI_LAYERS = ['notes', 'concepts'] as const;
@@ -116,6 +116,32 @@ export function filterGraph(graph: PageGraph, isVisible: (node: PageNode) => boo
   return { nodes, edges, incoming, outgoing };
 }
 
+/** Generic text for every LLM failure a reader sees. */
+export const READER_LLM_ERROR = 'LLM request failed';
+
+/**
+ * Reader copy of the LLM adapter: provider error texts (HTTP bodies, host names, possibly
+ * echoed prompt fragments) are replaced by one generic message before any tool sees them.
+ */
+function readerAdapter(adapter: LLMAdapter): LLMAdapter {
+  return {
+    name: adapter.name,
+    supportsTools: adapter.supportsTools,
+    supportsPDFs: adapter.supportsPDFs,
+    estimateTokens: (text) => adapter.estimateTokens(text),
+    testConnection: async () => ({ ok: false, error: READER_LLM_ERROR }),
+    chat: async function* (request: ChatRequest): AsyncIterable<ChatChunk> {
+      try {
+        for await (const chunk of adapter.chat(request)) {
+          yield chunk.kind === 'error' ? { kind: 'error', error: READER_LLM_ERROR } : chunk;
+        }
+      } catch {
+        yield { kind: 'error', error: READER_LLM_ERROR };
+      }
+    },
+  };
+}
+
 export function createReaderView(base: Context): ReaderView {
   let visible: VisibleSet = { files: new Set(), slugs: new Set() }; // empty until refreshed → fail closed
 
@@ -188,15 +214,21 @@ export function createReaderView(base: Context): ReaderView {
 
   const feeds: Pick<FeedStore, 'summaries'> = { summaries: () => base.feeds.summaries() };
 
-  // Deliberately absent: dataDir (absolute path), config (API key), synthesisCache,
-  // templates. Tools needing them are not allowlisted; a missing member fails loudly.
+  // Deliberately absent: dataDir (absolute path), synthesisCache, templates. Tools needing
+  // them are not allowlisted; a missing member fails loudly.
+  // LLM (LBV2-18): readers get the configured adapter for allowlisted, rate-limited tools
+  // (ask_wiki). Everything such a tool can put into a prompt comes from this filtered
+  // context, so only visible pages reach the provider. The config copy carries only
+  // provider and model: no API key, no base URL.
+  const readerConfig = base.config ? { provider: base.config.provider, model: base.config.model } : null;
   const readerCtx = {
     store,
     searchIndex,
     wikiIndex,
     cards,
     feeds,
-    getAdapter: (): never => { throw new Error('LLM access is not available to read-only sessions'); },
+    config: readerConfig,
+    getAdapter: () => readerAdapter(base.getAdapter()),
     reindex: readOnly,
     mcpClient: base.mcpClient,
     allowLocalFilePaths: false,

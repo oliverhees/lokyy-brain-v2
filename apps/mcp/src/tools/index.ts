@@ -3,7 +3,7 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { Context } from '../context.js';
 import { errorResult } from '../lib/error.js';
-import { isToolAllowed, type AccessProfile } from '../access.js';
+import { isRateLimitedTool, isToolAllowed, type AccessProfile } from '../access.js';
 import { slugArgumentsAreSafe, UNSAFE_SLUG_ERROR } from '../lib/slug.js';
 
 import { register as registerSearchWiki } from './search-wiki.js';
@@ -62,12 +62,15 @@ type ToolHandler = (input: unknown) => Promise<{ content: Array<{ type: 'text'; 
 /**
  * @param beforeCall runs before every permitted tool call; read-only sessions use it to
  *   refresh the page visibility snapshot of their filtered context.
+ * @param acquireLlmCall takes one call from the reader LLM rate limit; false = limit reached.
+ *   Without it, rate-limited tools are refused (fail closed).
  */
 export function registerTools(
   server: Server,
   ctx: Context,
   profile: AccessProfile = 'full',
   beforeCall: () => Promise<void> = async () => {},
+  acquireLlmCall: () => boolean = () => false,
 ): void {
   const handlers = new Map<string, ToolHandler>();
   const definitions: object[] = [];
@@ -135,6 +138,10 @@ export function registerTools(
     const args = req.params.arguments ?? {};
     // Central page-slug validation for every tool and profile (LBV2-12 N3).
     if (!slugArgumentsAreSafe(args)) return errorResult(UNSAFE_SLUG_ERROR);
+    // Reader LLM budget (LBV2-18): checked before any work, so an exceeded limit never reaches the LLM.
+    if (isRateLimitedTool(profile, req.params.name) && !acquireLlmCall()) {
+      return errorResult('Rate limit exceeded for LLM-backed tools', 'Wait a few minutes, or use search_wiki and read_wiki_page instead.');
+    }
     await beforeCall();
     return handler(args);
   });
