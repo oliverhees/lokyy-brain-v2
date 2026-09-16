@@ -4,9 +4,18 @@ import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
 import type { MetaJson } from '@mindbase/core';
 
+/** Input and prompt bounds (LBV2-18 M1), for every profile. */
+export const MAX_QUESTION_CHARS = 2000;
+export const MAX_CONTEXT_PAGES = 20;
+/** Per-page body cap; longer bodies are cut at this length. */
+export const MAX_PAGE_BODY_CHARS = 8000;
+/** Cap for the whole context block; pages are added in order until it is reached. */
+export const MAX_CONTEXT_CHARS = 40000;
+const TRUNCATION_MARK = '\n\n[… truncated]';
+
 const inputSchema = z.object({
-  question: z.string().min(1),
-  context_pages: z.array(z.string()).optional(),
+  question: z.string().min(1).max(MAX_QUESTION_CHARS),
+  context_pages: z.array(z.string()).max(MAX_CONTEXT_PAGES).optional(),
   max_pages: z.number().int().min(1).max(20).optional().default(8),
 });
 
@@ -16,13 +25,40 @@ export const definition = {
   inputSchema: {
     type: 'object',
     properties: {
-      question: { type: 'string', description: 'The natural-language question' },
-      context_pages: { type: 'array', items: { type: 'string' }, description: 'Optional: explicit page slugs to include as context' },
+      question: { type: 'string', description: `The natural-language question (max ${MAX_QUESTION_CHARS} characters)` },
+      context_pages: { type: 'array', items: { type: 'string' }, description: `Optional: explicit page slugs to include as context (max ${MAX_CONTEXT_PAGES})` },
       max_pages: { type: 'number', description: 'Cap on total pages read (default 8, max 20)' },
     },
     required: ['question'],
   },
 };
+
+const WIKI_LAYERS = ['notes', 'concepts'] as const;
+
+/** Slug of a search hit path in the root wiki (`wiki/notes/<slug>.md` or `wiki/concepts/<slug>.md`). */
+function hitSlug(path: string): string {
+  return path
+    .replace(/^projects\/[^/]+\/(sources\/(?:contributors\/[^/]+|research)|context\.md)\/?/, '')
+    .replace(/^wiki\/(notes|concepts)\//, '')
+    .replace(/\.md$/, '');
+}
+
+/** Reads a page from the first layer that has it (notes, then concepts); null when none is readable. */
+async function readPage(ctx: Context, slug: string): Promise<{ body: string; title: string; one_liner?: string } | null> {
+  for (const layer of WIKI_LAYERS) {
+    let body: string;
+    try { body = await ctx.store.readText(`wiki/${layer}/${slug}.md`); } catch { continue; }
+    let title = slug;
+    let one_liner: string | undefined;
+    try {
+      const m = await ctx.store.readJSON<MetaJson>(`wiki/${layer}/${slug}.meta.json`);
+      title = m.title;
+      one_liner = m.one_liner;
+    } catch { /* ok */ }
+    return { body, title, one_liner };
+  }
+  return null;
+}
 
 export async function handle(ctx: Context, rawInput: unknown) {
   const parsed = inputSchema.safeParse(rawInput);
@@ -37,13 +73,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
     // Seed: explicit context pages + top search hits
     if (context_pages) for (const s of context_pages) seedSlugs.add(s);
     const hits = ctx.searchIndex.search(question).slice(0, 5);
-    for (const h of hits) {
-      const slug = h.path
-        .replace(/^projects\/[^/]+\/(sources\/(?:contributors\/[^/]+|research)|context\.md)\/?/, '')
-        .replace(/^wiki\/notes\//, '')
-        .replace(/\.md$/, '');
-      seedSlugs.add(slug);
-    }
+    for (const h of hits) seedSlugs.add(hitSlug(h.path));
 
     // Expand: each seed gets 1-hop wikilinks added
     const expanded = new Set(seedSlugs);
@@ -55,7 +85,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
     // Cap
     const slugs = [...expanded].slice(0, max_pages);
 
-    // Build context document
+    // Build context document; bodies and the whole block are cut deterministically (M1).
     let contextBlock = '';
     const citations: Array<{
       n: number;
@@ -67,26 +97,23 @@ export async function handle(ctx: Context, rawInput: unknown) {
     }> = [];
     let i = 1;
     for (const slug of slugs) {
-      try {
-        const body = await ctx.store.readText(`wiki/notes/${slug}.md`);
-        let title = slug;
-        let one_liner: string | undefined;
-        try {
-          const m = await ctx.store.readJSON<MetaJson>(`wiki/notes/${slug}.meta.json`);
-          title = m.title;
-          one_liner = m.one_liner;
-        } catch { /* ok */ }
-        contextBlock += `\n\n## [${i}] ${title} (slug: ${slug})\n\n${body}`;
-        citations.push({
-          n: i,
-          slug,
-          title,
-          one_liner,
-          mindbase_uri: `mindbase://wiki/${slug}`,
-          relevance: seedSlugs.has(slug) ? 1.0 : 0.5,
-        });
-        i++;
-      } catch { /* skip */ }
+      const remaining = MAX_CONTEXT_CHARS - contextBlock.length;
+      if (remaining <= 0) break;
+      const page = await readPage(ctx, slug);
+      if (!page) continue;
+      const body = page.body.length > MAX_PAGE_BODY_CHARS ? `${page.body.slice(0, MAX_PAGE_BODY_CHARS)}${TRUNCATION_MARK}` : page.body;
+      let section = `\n\n## [${i}] ${page.title} (slug: ${slug})\n\n${body}`;
+      if (section.length > remaining) section = `${section.slice(0, remaining)}${TRUNCATION_MARK}`;
+      contextBlock += section;
+      citations.push({
+        n: i,
+        slug,
+        title: page.title,
+        one_liner: page.one_liner,
+        mindbase_uri: `mindbase://wiki/${slug}`,
+        relevance: seedSlugs.has(slug) ? 1.0 : 0.5,
+      });
+      i++;
     }
 
     if (citations.length === 0) {
@@ -118,7 +145,9 @@ export async function handle(ctx: Context, rawInput: unknown) {
       tokens_used: usage,
     });
   } catch (e) {
-    return errorResult(`ask_wiki failed: ${(e as Error).message}`);
+    // Detail stays in the server log (L2): it may name internal hosts, paths or provider state.
+    process.stderr.write(`[mindbase-mcp] ask_wiki failed: ${(e as Error).message}\n`);
+    return errorResult('ask_wiki failed', 'See the server log for details.');
   }
 }
 

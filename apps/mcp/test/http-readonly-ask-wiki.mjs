@@ -4,10 +4,13 @@
  *  2. In reader sessions only visible root-wiki pages ever reach the LLM prompt, even when
  *     context_pages names hidden pages; the response echoes no hidden content or slug.
  *  3. ask_wiki persists nothing (data dir unchanged).
- *  4. LLM-calling tools are rate limited for readers per session and per token; an exceeded
- *     limit is a tool error without an LLM call. Full sessions are not limited.
+ *  4. Reader provider requests are rate limited per session and per token; an exceeded limit is
+ *     a tool error without an LLM call. Calls without a provider request (invalid input, no
+ *     visible page) consume no budget. Full sessions are not limited.
  *  5. Invalid rate-limit env values stop the server at startup.
  *  6. context_pages and ingest_plan.raw_id go through the central slug check.
+ *  7. Bounds: question <= 2000 chars, <= 20 context_pages, context block truncated deterministically.
+ *  8. Concept-layer pages are used as context; unexpected failures return a generic error.
  *
  * The LLM is a local mock of the Ollama chat API (provider "ollama", baseUrl on 127.0.0.1)
  * that records every request body. No test-only code path exists in the server.
@@ -28,8 +31,8 @@ const PORT = 21000 + Math.floor(Math.random() * 1000);
 const URL_MCP = `http://127.0.0.1:${PORT}/mcp`;
 const UNSAFE_SLUG_ERROR = 'Invalid input: unsafe slug';
 
-const CANARIES = ['CANARYINT', 'CANARYPII', 'CANARYMETA', 'CANARYPROJ', 'CANARYCONCEPT', 'CANARYRAW', 'CANARYCHAT', 'CANARYFLIP'];
-const HIDDEN_SLUGS = ['internal-page', 'pii-page', 'broken-meta-page', 'flip-page', 'proj-only'];
+const CANARIES = ['CANARYHCON', 'CANARYINT', 'CANARYPII', 'CANARYMETA', 'CANARYPROJ', 'CANARYCONCEPT', 'CANARYRAW', 'CANARYCHAT', 'CANARYFLIP'];
+const HIDDEN_SLUGS = ['hidden-concept', 'internal-page', 'pii-page', 'broken-meta-page', 'flip-page', 'proj-only'];
 
 // --- mock LLM (Ollama /api/chat, NDJSON stream) ---------------------------------------
 const llmRequests = [];
@@ -71,6 +74,13 @@ page('flip-page', 'Flip', '# Flip\n\nCANARYFLIP shared guide [[public-page]].');
 writeFileSync(join(notesDir, 'broken-meta-page.md'), '# Broken\n\nCANARYMETA shared guide [[public-page]].');
 writeFileSync(join(notesDir, 'broken-meta-page.meta.json'), '{ nope CANARYMETA');
 mkdirSync(join(dataDir, 'wiki', 'concepts'), { recursive: true });
+writeFileSync(join(dataDir, 'wiki', 'concepts', 'concept-public.md'), '# Concept public\n\nCONCEPTMARKER shared guide');
+writeFileSync(join(dataDir, 'wiki', 'concepts', 'concept-public.meta.json'), meta('concept-public', 'Concept Public'));
+writeFileSync(join(dataDir, 'wiki', 'concepts', 'hidden-concept.md'), '# Hidden concept\n\nCANARYHCON shared guide');
+writeFileSync(join(dataDir, 'wiki', 'concepts', 'hidden-concept.meta.json'), meta('hidden-concept', 'CANARYHCON', { visibility: 'internal' }));
+// M1 fixtures: huge public pages, not matched by any search in this test.
+const BIG_SLUGS = Array.from({ length: 6 }, (_, i) => `big-${i}`);
+BIG_SLUGS.forEach((slug, i) => page(slug, `Big ${i}`, `BIGSTART${i} ${'lorem ipsum '.repeat(5000)} BIGEND${i}`));
 writeFileSync(join(dataDir, 'wiki', 'concepts', 'second-public.md'), '# Concept\n\nCANARYCONCEPT shared guide');
 writeFileSync(join(dataDir, 'wiki', 'concepts', 'second-public.meta.json'), meta('second-public', 'CANARYCONCEPT', { visibility: 'pii' }));
 const projNotes = join(dataDir, 'projects', 'p1', 'wiki', 'notes');
@@ -150,7 +160,7 @@ async function run() {
   check(READ_ONLY_TOOL_NAMES.length === 13 && READ_ONLY_TOOL_NAMES.includes('ask_wiki'), 'allowlist: 13 tools incl. ask_wiki');
   await startupValidation();
 
-  const proc = startServer({ MCP_HTTP_READONLY_LLM_RATE: '4', MCP_HTTP_READONLY_LLM_RATE_TOTAL: '5' });
+  const proc = startServer({ MCP_HTTP_READONLY_LLM_RATE: '3', MCP_HTTP_READONLY_LLM_RATE_TOTAL: '4' });
   let stderr = '';
   proc.stderr.on('data', (c) => { stderr += c.toString(); });
   try {
@@ -173,11 +183,12 @@ async function run() {
     let n = llmRequests.length;
     const roAnswer = await call(ro, 'ask_wiki', {
       // The question is the reader's own text and is sent as-is, so it carries no canary.
-      question: 'shared guide internal pii', context_pages: [...HIDDEN_SLUGS, 'second-public'], max_pages: 20,
+      question: 'shared guide internal pii', context_pages: [...HIDDEN_SLUGS, 'second-public', 'concept-public'], max_pages: 20,
     });
     const prompt = llmRequests.slice(n).join('\n');
     check(llmRequests.length === n + 1, 'readonly: ask_wiki called the LLM once', roAnswer.slice(0, 300));
     check(prompt.includes('PUBLICMARKER') && prompt.includes('SECONDMARKER'), 'readonly: visible pages are sent as context', prompt.slice(0, 300));
+    check(prompt.includes('CONCEPTMARKER'), 'readonly: visible concept-layer page is used as context', prompt.slice(0, 300));
     check(leaks(prompt).length === 0, 'readonly: prompt contains no canary from hidden pages', leaks(prompt).join(','));
     check(leaks(roAnswer).length === 0, 'readonly: response contains no canary', leaks(roAnswer).join(','));
     const hiddenInAnswer = HIDDEN_SLUGS.filter((s) => roAnswer.includes(s));
@@ -197,13 +208,26 @@ async function run() {
 
     check(snapshot(dataDir) === snap, 'readonly: ask_wiki wrote nothing to the data dir');
 
-    // Rate limit: per session 4 (three calls used above), per token 5.
+    // M2: calls that make no provider request never consume the budget.
+    n = llmRequests.length;
+    const freeCalls = [
+      { question: '' }, { question: 'x'.repeat(2001) }, { question: 'CANARYINT', context_pages: ['internal-page'] },
+      { question: 'q', context_pages: Array.from({ length: 21 }, () => 'public-page') },
+    ];
+    for (let i = 0; i < 100; i++) await call(ro, 'ask_wiki', freeCalls[i % freeCalls.length]);
+    check(llmRequests.length === n, 'readonly: 100 failing calls made no LLM request');
+
+    // M1: oversized question rejected without LLM call.
+    const longQ = await call(ro, 'ask_wiki', { question: 'shared guide '.repeat(200) });
+    check(llmRequests.length === n && /invalid input/i.test(longQ), 'readonly: question over 2000 chars rejected, no LLM call', longQ.slice(0, 200));
+
+    // Rate limit: per session 3 (two provider requests above), per token 4.
     n = llmRequests.length;
     const third = await call(ro, 'ask_wiki', { question: 'shared guide' });
-    check(third.includes('Mock answer') && llmRequests.length === n + 1, 'readonly: 4th call within session limit', third.slice(0, 200));
+    check(third.includes('Mock answer') && llmRequests.length === n + 1, 'readonly: 3rd provider request within session limit (failing calls did not count)', third.slice(0, 200));
     n = llmRequests.length;
     const fourth = await call(ro, 'ask_wiki', { question: 'shared guide' });
-    check(/rate limit/i.test(fourth) && llmRequests.length === n, 'readonly: 5th call in session → rate limit error, no LLM call', fourth.slice(0, 200));
+    check(/rate limit/i.test(fourth) && llmRequests.length === n, 'readonly: 4th provider request in session → rate limit error, no LLM call', fourth.slice(0, 200));
     const ro2 = await connect(RO);
     n = llmRequests.length;
     const other = await call(ro2, 'ask_wiki', { question: 'shared guide' });
@@ -216,6 +240,21 @@ async function run() {
     n = llmRequests.length;
     for (let i = 0; i < 5; i++) await call(full, 'ask_wiki', { question: 'shared guide' });
     check(llmRequests.length === n + 5, 'full: ask_wiki not rate limited');
+
+    // M1: caps for the full profile too.
+    n = llmRequests.length;
+    const fullLongQ = await call(full, 'ask_wiki', { question: 'q'.repeat(2001) });
+    check(llmRequests.length === n && /invalid input/i.test(fullLongQ), 'full: question over 2000 chars rejected, no LLM call', fullLongQ.slice(0, 200));
+    const fullManyPages = await call(full, 'ask_wiki', { question: 'q', context_pages: Array.from({ length: 21 }, (_, i) => `p${i}`) });
+    check(llmRequests.length === n && /invalid input/i.test(fullManyPages), 'full: more than 20 context_pages rejected, no LLM call', fullManyPages.slice(0, 200));
+    const bigAnswer = await call(full, 'ask_wiki', { question: 'zzqq', context_pages: BIG_SLUGS, max_pages: 20 });
+    const bigBody = llmRequests.length === n + 1 ? JSON.parse(llmRequests.at(-1)) : null;
+    const bigContent = bigBody?.messages?.[0]?.content ?? '';
+    check(bigAnswer.includes('Mock answer') && bigContent.length > 0 && bigContent.length <= 42000 && bigContent.includes('BIGSTART0'),
+      'full: oversized page bodies truncated to a bounded prompt', `len=${bigContent.length}`);
+    const bigAgain = await call(full, 'ask_wiki', { question: 'zzqq', context_pages: BIG_SLUGS, max_pages: 20 });
+    check(bigAgain.includes('Mock answer') && JSON.parse(llmRequests.at(-1)).messages[0].content === bigContent, 'full: truncation is deterministic');
+    check(llmRequests.at(-1).length < 60000, 'readonly/full: request body bounded');
 
     // Central slug check for context_pages and ingest_plan.raw_id (all profiles).
     n = llmRequests.length;
@@ -235,6 +274,28 @@ async function run() {
     for (const c of [full, ro, ro2]) await c.close().catch(() => {});
   } catch (e) {
     fail(`${e.message}\n${stderr}`);
+  } finally {
+    proc.kill('SIGTERM');
+    await waitForExit(proc, 5000);
+  }
+  await unexpectedErrorIsGeneric();
+}
+
+/** L2: an exception inside ask_wiki (here: unavailable provider) yields a generic error; detail goes to the server log. */
+async function unexpectedErrorIsGeneric() {
+  writeFileSync(join(dataDir, 'mindbase.config.json'), JSON.stringify({ provider: 'atlas', model: 'mock-model', apiKey: 'unused', baseUrl: MOCK_URL }));
+  const proc = startServer({});
+  let stderr = '';
+  proc.stderr.on('data', (c) => { stderr += c.toString(); });
+  try {
+    if (!(await waitForPort(20000))) { fail(`server did not listen\n${stderr}`); return; }
+    for (const [token, label] of [[RO, 'readonly'], [FULL, 'full']]) {
+      const client = await connect(token);
+      const text = await call(client, 'ask_wiki', { question: 'shared guide' });
+      check(/ask_wiki failed/.test(text) && !/atlas/i.test(text), `${label}: unexpected ask_wiki failure returns a generic error`, text.slice(0, 200));
+      await client.close().catch(() => {});
+    }
+    check(/atlas/i.test(stderr), 'unexpected ask_wiki failure detail is logged server-side', stderr.slice(-300));
   } finally {
     proc.kill('SIGTERM');
     await waitForExit(proc, 5000);

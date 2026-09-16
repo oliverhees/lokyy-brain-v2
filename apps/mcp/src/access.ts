@@ -5,8 +5,8 @@
 //
 // Review rule for this list: no persistent writes to the data dir, no outbound
 // network / URL fetching. An LLM call is allowed only after review against the reader
-// view (only visible pages may reach the provider) and only for tools listed in
-// LLM_TOOL_NAMES, which puts every reader call under the LLM rate limit.
+// view (only visible pages may reach the provider). Every reader provider request goes
+// through the reader adapter in visibility.ts, which enforces the LLM rate limit.
 
 export type AccessProfile = 'full' | 'readonly';
 
@@ -35,26 +35,9 @@ export const READ_ONLY_TOOL_NAMES: readonly string[] = Object.freeze([
   'ask_wiki',
 ]);
 
-/** Tools that call the LLM or embedding API; reader calls of these are rate limited (LBV2-18). */
-export const LLM_TOOL_NAMES: readonly string[] = Object.freeze([
-  'ask_wiki',
-  'semantic_search',
-  'synthesize_topic',
-  'find_contradictions',
-  'find_gaps',
-  'get_pulse',
-  'generate_daily_brief',
-]);
-
-// Module-private lookup sets: nothing outside this module can add names at runtime.
+// Module-private lookup set: nothing outside this module can add names at runtime.
 const READ_ONLY_TOOLS: ReadonlySet<string> = new Set<string>(READ_ONLY_TOOL_NAMES);
-const LLM_TOOLS: ReadonlySet<string> = new Set<string>(LLM_TOOL_NAMES);
 
 export function isToolAllowed(profile: AccessProfile, toolName: string): boolean {
   return profile === 'full' || READ_ONLY_TOOLS.has(toolName);
-}
-
-/** True when a call of this tool in this profile must pass the reader LLM rate limit. */
-export function isRateLimitedTool(profile: AccessProfile, toolName: string): boolean {
-  return profile === 'readonly' && LLM_TOOLS.has(toolName);
 }

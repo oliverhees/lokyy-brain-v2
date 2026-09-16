@@ -118,12 +118,16 @@ export function filterGraph(graph: PageGraph, isVisible: (node: PageNode) => boo
 
 /** Generic text for every LLM failure a reader sees. */
 export const READER_LLM_ERROR = 'LLM request failed';
+export const READER_LLM_RATE_ERROR = 'Rate limit exceeded for LLM-backed tools';
 
 /**
- * Reader copy of the LLM adapter: provider error texts (HTTP bodies, host names, possibly
- * echoed prompt fragments) are replaced by one generic message before any tool sees them.
+ * Reader copy of the LLM adapter:
+ * - the rate limit is taken synchronously right before the provider request, so only calls
+ *   that really reach the provider consume budget (invalid input, no visible page: free);
+ * - provider error texts (HTTP bodies, host names, possibly echoed prompt fragments) are
+ *   replaced by one generic message before any tool sees them.
  */
-function readerAdapter(adapter: LLMAdapter): LLMAdapter {
+function readerAdapter(adapter: LLMAdapter, acquireLlmCall: () => boolean): LLMAdapter {
   return {
     name: adapter.name,
     supportsTools: adapter.supportsTools,
@@ -131,6 +135,10 @@ function readerAdapter(adapter: LLMAdapter): LLMAdapter {
     estimateTokens: (text) => adapter.estimateTokens(text),
     testConnection: async () => ({ ok: false, error: READER_LLM_ERROR }),
     chat: async function* (request: ChatRequest): AsyncIterable<ChatChunk> {
+      if (!acquireLlmCall()) {
+        yield { kind: 'error', error: READER_LLM_RATE_ERROR };
+        return;
+      }
       try {
         for await (const chunk of adapter.chat(request)) {
           yield chunk.kind === 'error' ? { kind: 'error', error: READER_LLM_ERROR } : chunk;
@@ -142,7 +150,11 @@ function readerAdapter(adapter: LLMAdapter): LLMAdapter {
   };
 }
 
-export function createReaderView(base: Context): ReaderView {
+/**
+ * @param acquireLlmCall takes one provider request from the reader LLM rate limit; false =
+ *   limit reached. Defaults to always false, so a view without a limiter never calls the LLM.
+ */
+export function createReaderView(base: Context, acquireLlmCall: () => boolean = () => false): ReaderView {
   let visible: VisibleSet = { files: new Set(), slugs: new Set() }; // empty until refreshed → fail closed
 
   const slugVisible = (projectId: string | undefined, slug: string): boolean =>
@@ -228,7 +240,7 @@ export function createReaderView(base: Context): ReaderView {
     cards,
     feeds,
     config: readerConfig,
-    getAdapter: () => readerAdapter(base.getAdapter()),
+    getAdapter: () => readerAdapter(base.getAdapter(), acquireLlmCall),
     reindex: readOnly,
     mcpClient: base.mcpClient,
     allowLocalFilePaths: false,

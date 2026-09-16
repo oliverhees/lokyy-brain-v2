@@ -117,9 +117,9 @@ export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>, pr
     registerResources(server, ctx, profile);
   } else {
     // Readers get a context that hides internal/pii pages; visibility is re-read per request.
-    const view = createReaderView(ctx);
     const sessionLlmWindow = new SlidingWindow(READER_LLM_RATE.perSession, READER_LLM_RATE.windowMs);
-    registerTools(server, view.ctx, profile, view.refresh, () => acquireAll([sessionLlmWindow, readerTokenLlmWindow]));
+    const view = createReaderView(ctx, () => acquireAll([sessionLlmWindow, readerTokenLlmWindow]));
+    registerTools(server, view.ctx, profile, view.refresh);
     registerResources(server, view.ctx, profile, view.refresh);
   }
   registerPrompts(server, profile);

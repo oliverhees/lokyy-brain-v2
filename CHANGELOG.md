@@ -4,7 +4,7 @@
 
 ### Added
 - MCP over Streamable HTTP (`apps/mcp/dist/http.js`) with bearer token, session limits and Host allow-list; optional read-only token profile with a fail-closed allowlist of 13 tools and a reader view that hides `internal`/`pii` pages. See `docs/self-hosting-mcp-http.md`.
-- Readers may use `ask_wiki` (LBV2-18): retrieval runs only through the reader view, so only visible root-wiki pages are sent to the configured LLM provider; provider errors are generic; nothing is written. Rate limited per read-only session (`MCP_HTTP_READONLY_LLM_RATE`, default 20) and for all read-only sessions together (`MCP_HTTP_READONLY_LLM_RATE_TOTAL`, default 60) per `MCP_HTTP_READONLY_LLM_WINDOW_MS` (default 10 min).
+- Readers may use `ask_wiki` (LBV2-18): retrieval runs only through the reader view, so only visible root-wiki pages are sent to the configured LLM provider; provider errors are generic; nothing is written. Only real provider requests count against the rate limit (failing calls are free). Rate limited per read-only session (`MCP_HTTP_READONLY_LLM_RATE`, default 20) and for all read-only sessions together (`MCP_HTTP_READONLY_LLM_RATE_TOTAL`, default 60) per `MCP_HTTP_READONLY_LLM_WINDOW_MS` (default 10 min).
 - Source-built vault Docker image (`deploy/Dockerfile`).
 - Web server proxy shared-secret guard (`VAULT_PROXY_SECRET`, header `X-Vault-Proxy-Secret`); required by the Docker image (`VAULT_REQUIRE_PROXY_SECRET=1`). Unset outside the image = previous behaviour.
 
@@ -14,7 +14,11 @@
 - **File store paths** that would leave the data directory are refused; leading slashes stay relative to the data directory.
 - **Web API**: `POST /api/tree/research` accepts only plain slugs (`[a-z0-9-]`); an invalid `X-Mindbase-User` header returns 400; contributor usernames must be letters, digits, `_`, `-`, `.` (an OS username with `@` or spaces now fails for quick capture / contributor files); trash restore/delete reject ids not in the generated format and error messages no longer include ids or paths.
 - `mindbase_ingest_file` no longer accepts local file paths over the HTTP transport (stdio unchanged).
-- `ask_wiki` `pages_read` lists only the pages actually read and sent as context (previously also unreadable candidate slugs), for all profiles.
+- **`ask_wiki` for all profiles (LBV2-18):**
+  - `pages_read` now means "pages actually read and sent as context". Full clients previously also got candidate slugs that could not be read (missing pages, graph neighbours).
+  - `question` is limited to 2000 characters and `context_pages` to 20 entries (`Invalid input` otherwise); page bodies are cut at 8000 characters and the context block at 40000 characters.
+  - Slugs are also looked up in `wiki/concepts` (previously only `wiki/notes`, so concept pages were never used as context).
+  - Unexpected failures return `ask_wiki failed` without detail; the detail goes to the server log.
 
 ### Licensing
 - Fork modifications after `7aa8fcd` are licensed under PolyForm Noncommercial 1.0.0; upstream code remains MIT. See `NOTICE.md`.
