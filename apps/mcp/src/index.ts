@@ -6,8 +6,10 @@ import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { registerPrompts } from './prompts/index.js';
 import type { AccessProfile } from './access.js';
+import { createReaderView } from './visibility.js';
 
-export { READ_ONLY_TOOLS } from './access.js';
+export { READ_ONLY_TOOL_NAMES, isToolAllowed } from './access.js';
+export { createReaderView } from './visibility.js';
 export type { AccessProfile } from './access.js';
 
 export interface RunOptions {
@@ -60,6 +62,27 @@ When the user asks for an audit, cleanup, or "what should I improve":
 Treat MindBase as a living thing the user cares about. Be useful but precise; this is their second brain, not a scratchpad.`;
 
 
+/** Instructions for read-only sessions: only allowlisted tools are named (LBV2-12). */
+const READER_INSTRUCTIONS = `You have read-only access to a MindBase — a curated knowledge base of wiki pages. Use it as the authoritative source for the knowledge it contains. This session cannot create, edit, or delete anything.
+
+WHEN TO READ FROM MINDBASE
+Reach for MindBase first when the user asks about topics, decisions, research, or notes it is likely to contain, or refers to "the wiki", "the notes", or "the knowledge base".
+
+Default playbook:
+1. \`search_wiki\` — fast keyword search; use first when you have specific terms
+2. \`search_all_projects\` / \`search_in_project\` — widen or narrow the search scope
+3. \`read_wiki_page\` — once you have a slug, pull the full page (body + wikilinks + frontmatter)
+4. \`find_related\` / \`export_subgraph\` — expand from a known page into its cluster
+5. \`list_recent\` — for "what's new" / "this week" questions
+
+Structure checks: \`find_orphans\`, \`suggest_links\`, \`get_graph_insights\` report on the wiki without modifying it.
+
+WHEN TO SKIP MINDBASE
+Don't burn tool calls when the user clearly wants generic help that the knowledge base cannot inform.
+
+ACCESS NOTES
+Some pages are restricted and are not visible to this session; do not speculate about their existence. If the user wants to save or change something, tell them this connection is read-only.`;
+
 /** Build a fully registered MindBase MCP server bound to an already-loaded context. */
 export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>, profile: AccessProfile = 'full'): Server {
   const server = new Server(
@@ -70,13 +93,20 @@ export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>, pr
         resources: {},
         prompts: {},
       },
-      instructions: SERVER_INSTRUCTIONS,
+      instructions: profile === 'full' ? SERVER_INSTRUCTIONS : READER_INSTRUCTIONS,
     },
   );
 
-  registerTools(server, ctx, profile);
-  registerResources(server, ctx, profile);
-  registerPrompts(server);
+  if (profile === 'full') {
+    registerTools(server, ctx, profile);
+    registerResources(server, ctx, profile);
+  } else {
+    // Readers get a context that hides internal/pii pages; visibility is re-read per request.
+    const view = createReaderView(ctx);
+    registerTools(server, view.ctx, profile, view.refresh);
+    registerResources(server, view.ctx, profile, view.refresh);
+  }
+  registerPrompts(server, profile);
   return server;
 }
 

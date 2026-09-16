@@ -11,7 +11,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { READ_ONLY_TOOLS } from '../dist/index.js';
+import { READ_ONLY_TOOL_NAMES } from '../dist/index.js';
+
+const READ_ONLY_TOOLS = new Set(READ_ONLY_TOOL_NAMES);
 
 const FULL = 'full-token-0123456789abcdef-0123456789';
 const RO = 'read-token-0123456789abcdef-0123456789';
@@ -84,9 +86,9 @@ async function callRejected(client, name, args) {
 
 async function run() {
   // 0. The allowlist itself is exported and non-empty
-  READ_ONLY_TOOLS instanceof Set && READ_ONLY_TOOLS.size > 0
-    ? ok(`READ_ONLY_TOOLS exported (${READ_ONLY_TOOLS.size} tools)`)
-    : fail('READ_ONLY_TOOLS missing or empty');
+  Array.isArray(READ_ONLY_TOOL_NAMES) && READ_ONLY_TOOL_NAMES.length > 0
+    ? ok(`READ_ONLY_TOOL_NAMES exported (${READ_ONLY_TOOL_NAMES.length} tools)`)
+    : fail('READ_ONLY_TOOL_NAMES missing or empty');
 
   // 1. Startup validation
   const same = startServer({ MCP_HTTP_TOKEN: FULL, MCP_HTTP_READONLY_TOKEN: FULL });
