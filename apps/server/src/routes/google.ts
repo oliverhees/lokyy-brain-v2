@@ -4,9 +4,24 @@ import type { ServerContext } from '../context';
 import { makeHybridSearchClosure } from '../lib/compile-deps';
 import { getAuthUrl, exchangeCode, listFiles, downloadFileContent, isSupported } from '../google-drive';
 import { loadManifest, contentHash, isDuplicate } from '../manifest';
+import { OAuthStateStore } from '../lib/oauth-state';
 
-export function googleRoutes(ctx: ServerContext): Router {
+export interface GoogleOAuthDeps {
+  stateStore: OAuthStateStore;
+  getAuthUrl: (params: { state: string; codeChallenge: string }) => string;
+  exchangeCode: typeof exchangeCode;
+}
+
+export function googleRoutes(
+  ctx: ServerContext,
+  deps: GoogleOAuthDeps = { stateStore: new OAuthStateStore(), getAuthUrl, exchangeCode },
+): Router {
   const router = Router();
+
+  function newAuthUrl(): string {
+    const { state, codeChallenge } = deps.stateStore.issue();
+    return deps.getAuthUrl({ state, codeChallenge });
+  }
 
   // --- Auth routes ---
 
@@ -18,8 +33,7 @@ export function googleRoutes(ctx: ServerContext): Router {
 
   router.get('/auth/url', (_req, res) => {
     try {
-      const url = getAuthUrl();
-      res.json({ url });
+      res.json({ url: newAuthUrl() });
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });
     }
@@ -29,17 +43,21 @@ export function googleRoutes(ctx: ServerContext): Router {
    *  preserving the user-gesture chain so popups aren't blocked. */
   router.get('/auth/start', (_req, res) => {
     try {
-      res.redirect(getAuthUrl());
+      res.redirect(newAuthUrl());
     } catch (e) {
       res.status(500).send(`OAuth start failed: ${(e as Error).message}`);
     }
   });
 
   router.get('/auth/callback', async (req, res) => {
-    const code = req.query['code'] as string | undefined;
-    if (!code) { res.status(400).send('Missing code'); return; }
+    const code = req.query['code'];
+    // Verify state before anything else: a missing, unknown, expired or replayed
+    // state must never reach the token exchange (login CSRF).
+    const codeVerifier = deps.stateStore.consume(req.query['state']);
+    if (!codeVerifier) { res.status(400).send('Invalid OAuth state'); return; }
+    if (typeof code !== 'string' || !code) { res.status(400).send('Missing code'); return; }
     try {
-      const tokens = await exchangeCode(code);
+      const tokens = await deps.exchangeCode(code, codeVerifier);
       const updated = { ...ctx.config, googleTokens: tokens };
       await ctx.saveConfig(updated);
       // Redirect back to app

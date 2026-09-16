@@ -13,22 +13,28 @@ export function createOAuth2Client(): InstanceType<typeof google.auth.OAuth2> {
   return new google.auth.OAuth2(clientId, clientSecret, REDIRECT_URI);
 }
 
-export function getAuthUrl(): string {
+type AuthUrlOptions = NonNullable<Parameters<InstanceType<typeof google.auth.OAuth2>['generateAuthUrl']>[0]>;
+
+/** Auth URL bound to a single-use `state` and a PKCE S256 challenge (see lib/oauth-state.ts). */
+export function getAuthUrl(params: { state: string; codeChallenge: string }): string {
   const client = createOAuth2Client();
   return client.generateAuthUrl({
     access_type: 'offline',
     scope: SCOPES,
     prompt: 'consent',
+    state: params.state,
+    code_challenge: params.codeChallenge,
+    code_challenge_method: 'S256' as AuthUrlOptions['code_challenge_method'],
   });
 }
 
-export async function exchangeCode(code: string): Promise<{
+export async function exchangeCode(code: string, codeVerifier: string): Promise<{
   access_token: string;
   refresh_token: string;
   expiry: string;
 }> {
   const client = createOAuth2Client();
-  const { tokens } = await client.getToken(code);
+  const { tokens } = await client.getToken({ code, codeVerifier });
   if (!tokens.access_token || !tokens.refresh_token) {
     throw new Error('Failed to get tokens from Google');
   }
