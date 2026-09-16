@@ -212,17 +212,41 @@ The server checks each request in this order:
 
 Contributor files and quick-capture entries are attributed to a username that becomes a directory under `sources/contributors/`.
 
-When the proxy guard is active (`VAULT_PROXY_SECRET` set), attribution comes only from the identity header that the reverse proxy sets. The header name is `VAULT_IDENTITY_HEADER` (default `x-authentik-username`, compared case-insensitively). A client-sent `X-Mindbase-User` header is ignored in this mode. Configure Traefik's forward-auth middleware with `authResponseHeaders: X-authentik-username` so the proxy overwrites any value the client sends. If the header is missing, writes are attributed to the fixed user `unknown` and the server logs one warning. A value that is not a valid username (letters, digits, `_`, `-`, `.`; no `@`, spaces, or `..`) gets `400 Invalid identity header`. Authentik usernames that are e-mail addresses therefore need a username without `@`.
+When the proxy guard is active (`VAULT_PROXY_SECRET` set), attribution comes only from the identity header that the reverse proxy sets. The header name is `VAULT_IDENTITY_HEADER` (default `x-authentik-username`, compared case-insensitively). A client-sent `X-Mindbase-User` header is ignored in this mode. Configure Traefik's forward-auth middleware with `authResponseHeaders: X-authentik-username` so the proxy overwrites any value the client sends. If the header is missing or empty, every route that needs attribution (all `/api/tree` and `/api/ops` routes, including reads) answers `401 Unauthenticated`, and the server logs a warning at most once per minute with the number of occurrences. A missing header means the proxy is misconfigured, so the failure is deliberately loud. A value that is not a valid username (letters, digits, `_`, `-`, `.`; no `@`, spaces, or `..`) or is the reserved name `unknown` (any case) gets `400 Invalid identity header`. Authentik usernames that are e-mail addresses therefore need a username without `@`.
 
 Without the guard (local, single-user), `X-Mindbase-User` is used as before. If it is absent, the OS username is mapped to a valid name: invalid characters become `_`, leading `.`/`-` are removed, `..` is collapsed, and the result is cut to 64 characters (`oliver@corp` → `oliver_corp`). An invalid explicit header still gets `400`.
 
 | Variable | Default | Effect |
 |---|---|---|
 | `VAULT_IDENTITY_HEADER` | `x-authentik-username` | Name of the proxy-set identity header. Only read when `VAULT_PROXY_SECRET` is set. |
+| `VAULT_GROUPS_HEADER` | `x-authentik-groups` | Name of the proxy-set groups header. Authentik separates groups with `\|`; `,` is accepted too. A duplicated header grants no groups. Only read when `VAULT_PROXY_SECRET` is set. |
+| `VAULT_ADMIN_GROUPS` | unset | Comma-separated group names (exact match), for example `lokyy-admins,vault-firma-admin`. In guarded mode only members may change server configuration. **Unset or empty = nobody may** (fail closed). |
+
+The web server refuses to start if `VAULT_IDENTITY_HEADER` or `VAULT_GROUPS_HEADER` names a header the client controls or the server uses for something else (`x-mindbase-user`, `x-vault-proxy-secret`, `authorization`, `cookie`, `host`, `content-type`, `content-length`, `origin`, `referer`, `user-agent`), or if both variables name the same header. Add the groups header to Traefik's `authResponseHeaders` as well.
+
+### Configuration changes (admin groups)
+
+In guarded mode, these requests need membership in a `VAULT_ADMIN_GROUPS` group, otherwise they get `403 Forbidden`:
+
+- every non-GET request under `/api/config` (`PUT /api/config`, `POST /api/config/test`)
+- every non-GET request under `/api/server` (`PUT /api/server/data-dir`)
+- `/api/google/auth/callback`, `/api/google/auth/disconnect` and `/api/google/set-sync-folder`, for any method
+
+`GET /api/config` stays open to every signed-in user and returns the masked view. Without the guard, nothing changes.
 
 ### API key masking
 
-`GET /api/config` never returns stored secrets. `apiKey`, `braveApiKey` and `dailyBrief.smtp.pass` come back as `********` when set (empty when not), `hasApiKey` reports whether an LLM key is stored, and `googleTokens` is left out. `PUT /api/config` keeps a stored secret when the request sends `********` or leaves the field out, and replaces it when the request sends any other value (an empty string clears it). `POST /api/config/test` uses the stored key when it receives `********`.
+`GET /api/config` never returns stored secrets. `apiKey`, `braveApiKey` and `dailyBrief.smtp.pass` come back as `********` when set (empty when not), `hasApiKey` reports whether an LLM key is stored, and `googleTokens` is left out. In `baseUrl`, a user name, a password and the values of query parameters whose name contains `key`, `token`, `secret`, `pass`, `auth`, `sig` or `credential` are replaced by `********`.
+
+`PUT /api/config` merges the request onto the stored configuration, so a partial request does not remove other settings. The sections `dailyBrief`, `rss` and `srs` are merged field by field. `googleTokens` in the request is ignored; only the Google OAuth callback sets them. A stored secret is kept when the request sends `********` or leaves the field out, and replaced when the request sends any other value (an empty string clears it). A masked `baseUrl` sent back unchanged keeps the stored `baseUrl`.
+
+**Re-entering the key when the destination changes:** the stored LLM key is kept only if `provider` and `baseUrl` stay the same (surrounding spaces and trailing `/` do not count as a change). If either changes and the request does not contain a new key, `PUT /api/config` answers `400 Re-enter the API key when changing provider or endpoint` and saves nothing. The SMTP password follows the same rule when `dailyBrief.smtp.host` changes. `POST /api/config/test` uses the stored key for `********` only for the stored provider and `baseUrl`; otherwise it answers the same `400` without contacting the endpoint. This stops a user from sending the stored key to a server of their choice.
+
+`POST /api/config/test` returns only `Connection test failed` when the test fails; the upstream error text is written to the server log.
+
+A key whose literal value is `********` cannot be saved, because it is indistinguishable from the mask (accepted limitation).
+
+`GET /api/health` no longer returns the data directory.
 
 ## Capture disabled
 

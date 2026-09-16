@@ -7,7 +7,8 @@
 - Source-built vault Docker image (`deploy/Dockerfile`).
 - Web server proxy shared-secret guard (`VAULT_PROXY_SECRET`, header `X-Vault-Proxy-Secret`); required by the Docker image (`VAULT_REQUIRE_PROXY_SECRET=1`). Unset outside the image = previous behaviour.
 
-- Trusted user attribution behind the proxy: with `VAULT_PROXY_SECRET` set, the contributor username comes only from the proxy identity header (`VAULT_IDENTITY_HEADER`, default `x-authentik-username`); a client `X-Mindbase-User` is ignored; a missing identity is attributed to `unknown`.
+- Trusted user attribution behind the proxy: with `VAULT_PROXY_SECRET` set, the contributor username comes only from the proxy identity header (`VAULT_IDENTITY_HEADER`, default `x-authentik-username`); a client `X-Mindbase-User` is ignored; a missing identity answers 401 on attributed routes; the name `unknown` is reserved.
+- Admin groups for configuration changes in guarded mode: `VAULT_ADMIN_GROUPS` (fail closed when unset) matched against `VAULT_GROUPS_HEADER` (default `x-authentik-groups`, `|` or `,` separated). Applies to non-GET `/api/config` and `/api/server` and to the Google OAuth callback, disconnect and sync-folder routes. Startup is refused if a trusted header is set to a client-controlled or reserved name.
 - `MINDBASE_DISABLE_CAPTURE=1`: `/api/capture` and `/api/devices` return 404, the capture worker and mDNS do not start, `/api/health` reports `features.capture`, and the Devices page shows a disabled notice.
 
 ### Changed — may affect existing (stdio / single-user) setups
@@ -17,7 +18,10 @@
 - **Web API**: `POST /api/tree/research` accepts only plain slugs (`[a-z0-9-]`); an invalid `X-Mindbase-User` header returns 400; contributor usernames must be letters, digits, `_`, `-`, `.` (an OS username with `@` or spaces now fails for quick capture / contributor files); trash restore/delete reject ids not in the generated format and error messages no longer include ids or paths.
 - `mindbase_ingest_file` no longer accepts local file paths over the HTTP transport (stdio unchanged).
 
-- **`GET /api/config` masks secrets**: `apiKey`, `braveApiKey` and `dailyBrief.smtp.pass` are returned as `********` (plus `hasApiKey`), `googleTokens` is omitted. `PUT /api/config` keeps a stored secret when it receives the mask or no value. Scripts that read the key from this endpoint no longer get it.
+- **`GET /api/config` masks secrets**: `apiKey`, `braveApiKey` and `dailyBrief.smtp.pass` are returned as `********` (plus `hasApiKey`), `googleTokens` is omitted. `PUT /api/config` keeps a stored secret when it receives the mask or no value. Scripts that read the key from this endpoint no longer get it. Credentials in `baseUrl` are masked too.
+- **Changing provider or `baseUrl` (or the SMTP host) requires re-entering the key**: otherwise `PUT /api/config` and `POST /api/config/test` answer 400, so a kept key can no longer be sent to a new endpoint.
+- **`PUT /api/config` merges** onto the stored config instead of replacing it (partial saves no longer drop `dailyBrief`, `rss`, `srs`, Google sync settings); client-sent `googleTokens` are ignored.
+- `POST /api/config/test` returns a generic error message (details in the server log); `GET /api/health` no longer returns `dataDir`.
 - **OS username fallback is sanitized**: an OS account like `oliver@corp` is attributed as `oliver_corp` instead of failing with 500.
 
 ### Licensing
