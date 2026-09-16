@@ -264,6 +264,64 @@ The server checks each request in this order:
   - `GET http://127.0.0.1:4321/` must succeed.
   - If `MCP_HTTP_PORT` is set, `POST http://127.0.0.1:$MCP_HTTP_PORT/mcp` without a token must return `401`. That shows the MCP process is alive and authentication is on.
 
+## Identity and attribution
+
+Contributor files and quick-capture entries are attributed to a username that becomes a directory under `sources/contributors/`.
+
+When the proxy guard is active (`VAULT_PROXY_SECRET` set), attribution comes only from the identity header that the reverse proxy sets. The header name is `VAULT_IDENTITY_HEADER` (default `x-authentik-username`, compared case-insensitively). A client-sent `X-Mindbase-User` header is ignored in this mode. Configure Traefik's forward-auth middleware with `authResponseHeaders: X-authentik-username` so the proxy overwrites any value the client sends. If the header is missing or empty, every route that needs attribution (all `/api/tree` and `/api/ops` routes, including reads) answers `401 Unauthenticated`, and the server logs a warning at most once per minute with the number of occurrences. A missing header means the proxy is misconfigured, so the failure is deliberately loud. A value that is not a valid username (letters, digits, `_`, `-`, `.`; no `@`, spaces, or `..`) or is the reserved name `unknown` (any case) gets `400 Invalid identity header`. Authentik usernames that are e-mail addresses therefore need a username without `@`.
+
+Without the guard (local, single-user), `X-Mindbase-User` is used as before. If it is absent, the OS username is mapped to a valid name: invalid characters become `_`, leading `.`/`-` are removed, `..` is collapsed, and the result is cut to 64 characters (`oliver@corp` → `oliver_corp`). An invalid explicit header still gets `400`.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `VAULT_IDENTITY_HEADER` | `x-authentik-username` | Name of the proxy-set identity header. Only read when `VAULT_PROXY_SECRET` is set. |
+| `VAULT_GROUPS_HEADER` | `x-authentik-groups` | Name of the proxy-set groups header. Groups are split on `\|` only (Authentik format); a comma is part of the group name. A duplicated header (sent twice, which Node joins with `, `) or any value containing `, ` grants no groups. Group names must not contain `|`: how Authentik escapes it has not been verified, so such a group could be split into names you did not intend. Only read when `VAULT_PROXY_SECRET` is set. |
+| `VAULT_ADMIN_GROUPS` | unset | Comma-separated group names (exact match), for example `lokyy-admins,vault-firma-admin`. In guarded mode only members may change server configuration. **Unset or empty = nobody may** (fail closed). |
+
+The web server refuses to start if `VAULT_IDENTITY_HEADER` or `VAULT_GROUPS_HEADER` names a header the client controls or the server uses for something else (`x-mindbase-user`, `x-vault-proxy-secret`, `authorization`, `cookie`, `host`, `content-type`, `content-length`, `origin`, `referer`, `user-agent`), or if both variables name the same header.
+
+**Both trusted headers must be listed in Traefik's `authResponseHeaders`** (for example `X-authentik-username` and `X-authentik-groups`). Traefik then overwrites whatever the client sent. A header that is missing from the list is passed through from the client unchanged and can be forged.
+
+### Configuration changes (admin groups)
+
+In guarded mode, these requests need membership in a `VAULT_ADMIN_GROUPS` group, otherwise they get `403 Forbidden`:
+
+- every non-GET request under `/api/config` (`PUT /api/config`, `POST /api/config/test`)
+- every non-GET request under `/api/server` (`PUT /api/server/data-dir`)
+- `/api/google/auth/url`, `/api/google/auth/start`, `/api/google/auth/callback`, `/api/google/auth/disconnect` and `/api/google/set-sync-folder`, for any method
+
+`GET /api/config` stays open to every signed-in user and returns the masked view. Without the guard, nothing changes.
+
+### API key masking
+
+`GET /api/config` never returns stored secrets. `apiKey`, `braveApiKey` and `dailyBrief.smtp.pass` come back as `********` when set (empty when not), `hasApiKey` reports whether an LLM key is stored, and `googleTokens` is left out. In `baseUrl`, a user name, a password and the values of query parameters whose name contains `key`, `token`, `secret`, `pass`, `auth`, `sig` or `credential` are replaced by `********`.
+
+`PUT /api/config` merges the request onto the stored configuration, so a partial request does not remove other settings. The sections `dailyBrief`, `rss` and `srs` are merged field by field. `googleTokens` in the request is ignored; only the Google OAuth callback sets them. A stored secret is kept when the request sends `********` or leaves the field out, and replaced when the request sends any other value (an empty string clears it). A masked `baseUrl` sent back unchanged keeps the stored `baseUrl`.
+
+**Re-entering the key when the destination changes:** the stored LLM key is kept only if `provider` and `baseUrl` stay the same (surrounding spaces and trailing `/` do not count as a change). If either changes and the request does not contain a new key, `PUT /api/config` answers `400 Re-enter the API key when changing provider or endpoint` and saves nothing. The SMTP password follows the same rule when `dailyBrief.smtp.host`, `port` or `secure` changes. A non-object value (for example `null`) for `dailyBrief`, `rss` or `srs` is ignored and the stored section is kept. `POST /api/config/test` calls the stored `baseUrl` when it receives the masked form of it. `POST /api/config/test` uses the stored key for `********` only for the stored provider and `baseUrl`; otherwise it answers the same `400` without contacting the endpoint. This stops a user from sending the stored key to a server of their choice.
+
+`POST /api/config/test` returns only `Connection test failed` when the test fails; the upstream error text is written to the server log.
+
+**Keyless providers:** if the new `provider` is `ollama` (which uses no API key) and the request contains no new key, the stored LLM key is cleared instead of answering `400`. The key is not needed there, and keeping it would let the semantic search send it to the new `baseUrl`. The chat model picker sends only `{provider, model}`. Switching back to a cloud provider requires entering the key again.
+
+A key whose literal value is `********` cannot be saved, because it is indistinguishable from the mask (accepted limitation). Any other new secret that contains `********` (for example `********abc`, typed into the masked field) gets `400`. The settings dialog clears a masked key when you change provider or `baseUrl`, and removes the mask when you type into the field. The web UI shows the server's `error` text for failed saves and connection tests (for example `Forbidden (403)`).
+
+`GET /api/health` no longer returns the data directory.
+
+### Google Drive connect (OAuth)
+
+In guarded mode, `/api/google/auth/url`, `/api/google/auth/start` and `/api/google/auth/callback` require a `VAULT_ADMIN_GROUPS` member (otherwise `403`). Without an identity header, `auth/url` and `auth/start` answer `401`; `auth/callback` answers `400 Invalid OAuth state`. If `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are not set, `auth/url` and `auth/start` answer `503` with a generic message before any state or cookie is created.
+
+`/api/google/auth/start` and `/api/google/auth/url` create a random, single-use `state` (256 bit) and a PKCE `code_verifier` with an S256 `code_challenge`. Each state is bound to whoever started the flow: the proxy identity (guarded mode) and a random browser nonce in the cookie `mindbase_oauth` (`HttpOnly`, `SameSite=Lax`, path `/api/google/auth`, 10 minutes, `Secure` in guarded mode). Pending states are kept in server memory for 10 minutes, at most 3 per identity (or per browser locally) and 100 in total; the oldest are dropped. `/api/google/auth/callback` answers `400 Invalid OAuth state` and does not exchange the code when the `state` is missing, unknown, expired or already used, or when the identity or cookie differs from the one that started the flow. A mismatched attempt also invalidates the state. So a callback URL passed to another user, including another admin, is useless. This blocks login CSRF, where an attacker's authorization code would link the vault to the attacker's Drive. A server restart invalidates pending logins; start the connection again.
+
+## Capture disabled
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MINDBASE_DISABLE_CAPTURE` | unset | `1`, `true` or `yes` turns off capture and device pairing: `/api/capture` and `/api/devices` (including `pair-code` and `pair`) return `404`, the background capture worker does not start, and mDNS advertising stays off regardless of `MINDBASE_MDNS`. `GET /api/health` reports `features.capture: false`, and the web UI's Devices page shows a "disabled" notice instead of the pairing QR code. |
+
+`/api/inbox` stays available because RSS feeds write into the inbox. With capture disabled, queued inbox entries (including RSS items) are no longer compiled automatically; use the Compile button in the inbox.
+
 ## Known limitations and residual risks
 
 The items below are **limitations, not features**. They came out of the security audits of LBV2-7, LBV2-10, LBV2-11, and LBV2-12, and they are tracked. Decide whether they are acceptable for your deployment.
