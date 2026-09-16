@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(import.meta.dirname, '../../../.env') });
 
 import express from 'express';
+import { readFetchConcurrency } from '@mindbase/core';
 import { createContext } from './context';
 import { proxySecretGuard, readProxySecret } from './lib/proxy-secret';
 import { resolveDataDirAsync } from './config';
@@ -96,6 +97,8 @@ function installSearchIndexCrashGuard(dataDir: string): void {
 }
 
 async function main() {
+  // Fail fast on invalid fetch settings instead of failing every later URL fetch (LBV2-13).
+  readFetchConcurrency(process.env);
   const dataDir = await resolveDataDirAsync();
 
   const layoutAudit = await auditProjectLayouts(dataDir);

@@ -274,6 +274,50 @@ describe('fetch concurrency limit (audit LBV2-13)', () => {
     expect(maxInFlight).toBe(2);
   });
 
+  it('a queued fetch fails at its own timeout and leaves the queue (re-audit V11.1.4)', async () => {
+    process.env['MINDBASE_FETCH_CONCURRENCY'] = '1';
+    const { resolve } = resolver({ 'start.test': ['127.0.0.1'] });
+    const trustedHosts = ['start.test'];
+    const holder = safeFetch(`http://start.test:${port}/hang`, { resolve, trustedHosts, timeoutMs: 800 });
+    const started = Date.now();
+    await expectCode(safeFetch(`http://start.test:${port}/hello`, { resolve, trustedHosts, timeoutMs: 100 }), 'timeout');
+    expect(Date.now() - started).toBeLessThan(400);
+    await expectCode(holder, 'timeout');
+    // The timed-out waiter did not keep a slot or a queue entry: the next fetch runs at once.
+    const res = await safeFetch(`http://start.test:${port}/hello`, { resolve, trustedHosts, timeoutMs: 500 });
+    expect(res.status).toBe(200);
+  });
+
+  it('a queued fetch fails immediately when its caller aborts', async () => {
+    process.env['MINDBASE_FETCH_CONCURRENCY'] = '1';
+    const { resolve } = resolver({ 'start.test': ['127.0.0.1'] });
+    const trustedHosts = ['start.test'];
+    const holder = safeFetch(`http://start.test:${port}/hang`, { resolve, trustedHosts, timeoutMs: 600 });
+    const ctrl = new AbortController();
+    const queued = safeFetch(`http://start.test:${port}/hello`, { resolve, trustedHosts, signal: ctrl.signal });
+    const started = Date.now();
+    setTimeout(() => ctrl.abort(), 50);
+    await expectCode(queued, 'network');
+    expect(Date.now() - started).toBeLessThan(300);
+    await expectCode(holder, 'timeout');
+  });
+
+  it('caps the wait queue at 64 and rejects the overflow right away', async () => {
+    process.env['MINDBASE_FETCH_CONCURRENCY'] = '1';
+    const { resolve } = resolver({ 'start.test': ['127.0.0.1'] });
+    const trustedHosts = ['start.test'];
+    const holder = safeFetch(`http://start.test:${port}/hang`, { resolve, trustedHosts, timeoutMs: 700 });
+    const queued = Array.from({ length: 64 }, () =>
+      safeFetch(`http://start.test:${port}/hello`, { resolve, trustedHosts, timeoutMs: 300 }).then(() => 'ok', (e: SafeFetchError) => e.code),
+    );
+    const started = Date.now();
+    const overflow = await expectCode(safeFetch(`http://start.test:${port}/hello`, { resolve, trustedHosts }), 'network');
+    expect(overflow.message).toMatch(/queue/i);
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(new Set(await Promise.all(queued))).toEqual(new Set(['timeout']));
+    await expectCode(holder, 'timeout');
+  });
+
   it('releases the slot when a fetch fails', async () => {
     process.env['MINDBASE_FETCH_CONCURRENCY'] = '1';
     for (let i = 0; i < 3; i++) await expectCode(safeFetch(`http://127.0.0.1:${port}/hello`), 'blocked');

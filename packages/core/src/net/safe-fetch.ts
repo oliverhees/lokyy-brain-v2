@@ -333,7 +333,7 @@ export async function safeFetch(input: string | URL, opts: SafeFetchOptions = {}
   let acquired = false;
   try {
     let url = parseTarget(input, httpsOnly);
-    await acquireSlot(readFetchConcurrency(process.env));
+    await acquireSlot(readFetchConcurrency(process.env), controller.signal);
     acquired = true;
     for (let redirects = 0; ; redirects++) {
       const pinned = await resolveTarget(url, opts);
@@ -418,15 +418,46 @@ export function readFetchConcurrency(env: Record<string, string | undefined>): n
   return Number(raw);
 }
 
-let activeFetches = 0;
-const waiting: Array<{ limit: number; start: () => void }> = [];
+/** Maximum number of fetches waiting for a slot; further fetches are rejected at once. */
+export const MAX_FETCH_QUEUE = 64;
 
-function acquireSlot(limit: number): Promise<void> {
+interface Waiter {
+  limit: number;
+  start: () => void;
+}
+
+let activeFetches = 0;
+const waiting: Waiter[] = [];
+
+/**
+ * Takes a concurrency slot. A waiter leaves the queue and rejects as soon as `signal`
+ * aborts (timeout or caller abort), so bursts cannot pile up stale entries.
+ */
+function acquireSlot(limit: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new SafeFetchError('network', 'Request aborted'));
   if (activeFetches < limit) {
     activeFetches++;
     return Promise.resolve();
   }
-  return new Promise((start) => waiting.push({ limit, start }));
+  if (waiting.length >= MAX_FETCH_QUEUE) {
+    return Promise.reject(new SafeFetchError('network', `Fetch queue full (${MAX_FETCH_QUEUE} waiting)`));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      const index = waiting.indexOf(waiter);
+      if (index !== -1) waiting.splice(index, 1);
+      reject(new SafeFetchError('network', 'Request aborted while waiting for a fetch slot'));
+    };
+    const waiter: Waiter = {
+      limit,
+      start: () => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      },
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    waiting.push(waiter);
+  });
 }
 
 function releaseSlot(): void {
