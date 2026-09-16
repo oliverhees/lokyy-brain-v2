@@ -87,7 +87,10 @@ services:
       # Forward-auth middleware used by every vault router
       - traefik.http.middlewares.authentik.forwardauth.address=http://authentik-server:9000/outpost.goauthentik.io/auth/traefik
       - traefik.http.middlewares.authentik.forwardauth.trustForwardHeader=true
+      # authResponseHeaders are deleted from the client request and replaced by Authentik's values
       - traefik.http.middlewares.authentik.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-uid
+      # Defence in depth: legacy attribution header never reaches a vault from a client
+      - traefik.http.middlewares.vault-identity.headers.customrequestheaders.X-Mindbase-User=
     networks: [edge, authentik-internal]
 
   authentik-worker:
@@ -110,13 +113,14 @@ services:
       MCP_HTTP_TOKEN: ${MCP_TOKEN_ANNA:?set in .env}
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-anna:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_ANNA:?set in .env}
+      VAULT_ADMIN_GROUPS: vault-anna-admin,lokyy-admins
     volumes: [vault-anna:/data]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-anna
       - traefik.http.routers.vault-anna.rule=Host(`anna.vault.localhost`)
       - traefik.http.routers.vault-anna.entrypoints=web
-      - traefik.http.routers.vault-anna.middlewares=authentik@docker,vault-anna-secret@docker
+      - traefik.http.routers.vault-anna.middlewares=authentik@docker,vault-identity@docker,vault-anna-secret@docker
       # Overwrites any client-supplied value; only this router carries this vault's secret
       - traefik.http.middlewares.vault-anna-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_ANNA}
       - traefik.http.services.vault-anna.loadbalancer.server.port=4321
@@ -137,13 +141,14 @@ services:
       MCP_HTTP_TOKEN: ${MCP_TOKEN_BEN:?set in .env}
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-ben:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_BEN:?set in .env}
+      VAULT_ADMIN_GROUPS: vault-ben-admin,lokyy-admins
     volumes: [vault-ben:/data]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-ben
       - traefik.http.routers.vault-ben.rule=Host(`ben.vault.localhost`)
       - traefik.http.routers.vault-ben.entrypoints=web
-      - traefik.http.routers.vault-ben.middlewares=authentik@docker,vault-ben-secret@docker
+      - traefik.http.routers.vault-ben.middlewares=authentik@docker,vault-identity@docker,vault-ben-secret@docker
       # Overwrites any client-supplied value; only this router carries this vault's secret
       - traefik.http.middlewares.vault-ben-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_BEN}
       - traefik.http.services.vault-ben.loadbalancer.server.port=4321
@@ -165,13 +170,14 @@ services:
       MCP_HTTP_READONLY_TOKEN: ${MCP_READONLY_TOKEN_FIRMA:?set in .env}
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-firma:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_FIRMA:?set in .env}
+      VAULT_ADMIN_GROUPS: vault-firma-admin,lokyy-admins
     volumes: [vault-firma:/data]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-firma
       - traefik.http.routers.vault-firma.rule=Host(`firma.vault.localhost`)
       - traefik.http.routers.vault-firma.entrypoints=web
-      - traefik.http.routers.vault-firma.middlewares=authentik@docker,vault-firma-secret@docker
+      - traefik.http.routers.vault-firma.middlewares=authentik@docker,vault-identity@docker,vault-firma-secret@docker
       # Overwrites any client-supplied value; only this router carries this vault's secret
       - traefik.http.middlewares.vault-firma-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_FIRMA}
       - traefik.http.services.vault-firma.loadbalancer.server.port=4321

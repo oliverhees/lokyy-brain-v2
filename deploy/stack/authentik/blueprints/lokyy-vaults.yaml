@@ -16,6 +16,19 @@ entries:
     id: group-firma-read
     identifiers: { name: vault-firma-read }
     attrs: { name: vault-firma-read }
+  # Vault administrators (may change vault config, VAULT_ADMIN_GROUPS). Usernames stay plain: no "@".
+  - model: authentik_core.group
+    id: group-anna-admin
+    identifiers: { name: vault-anna-admin }
+    attrs: { name: vault-anna-admin }
+  - model: authentik_core.group
+    id: group-ben-admin
+    identifiers: { name: vault-ben-admin }
+    attrs: { name: vault-ben-admin }
+  - model: authentik_core.group
+    id: group-firma-admin
+    identifiers: { name: vault-firma-admin }
+    attrs: { name: vault-firma-admin }
   - model: authentik_core.group
     id: group-admins
     identifiers: { name: lokyy-admins }
@@ -31,7 +44,7 @@ entries:
       name: Anna Demo
       email: anna@example.local
       password: !Env DEMO_PASS_ANNA
-      groups: [!KeyOf group-firma-read]
+      groups: [!KeyOf group-firma-read, !KeyOf group-anna-admin]
   - model: authentik_core.user
     id: user-ben
     identifiers: { username: ben }
@@ -40,7 +53,7 @@ entries:
       name: Ben Demo
       email: ben@example.local
       password: !Env DEMO_PASS_BEN
-      groups: [!KeyOf group-firma-write]
+      groups: [!KeyOf group-firma-write, !KeyOf group-ben-admin, !KeyOf group-firma-admin]
   - model: authentik_core.user
     identifiers: { username: akadmin }
     state: present

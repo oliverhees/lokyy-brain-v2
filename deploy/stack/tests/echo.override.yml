@@ -1,0 +1,17 @@
+# TEST ONLY (tests/isolation.sh section 3b) — never part of compose.yml.
+# A request-echo container behind anna's vault router chain (same host, same middlewares),
+# so the tests can see exactly which identity headers a vault would receive.
+# isolation.sh starts it, probes, and removes it again before the topology checks.
+services:
+  echo:
+    image: traefik/whoami:v1.11.0
+    restart: "no"
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-anna
+      - traefik.http.routers.echo-anna.rule=Host(`anna.vault.localhost`) && PathPrefix(`/__echo`)
+      - traefik.http.routers.echo-anna.priority=1000
+      - traefik.http.routers.echo-anna.entrypoints=web
+      - traefik.http.routers.echo-anna.middlewares=authentik@docker,vault-identity@docker,vault-anna-secret@docker
+      - traefik.http.services.echo-anna.loadbalancer.server.port=80
+    networks: [web-anna]

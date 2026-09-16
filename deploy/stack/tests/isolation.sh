@@ -49,14 +49,48 @@ expect "ben (writer) → firma web"  "$(access "$jar_ben"  "$(printf $V firma)/a
 expect "anna → metamcp admin" "$(access "$jar_anna" http://mcp.localhost:18080/api/health)" "DENIED"
 
 echo "== 3. Header forgery through Traefik"
-# Note: vaults do not read X-authentik-username yet (LBV2-9); this guards against a future
-# change that trusts identity headers without Traefik overwriting them.
+# Vaults trust X-authentik-username in guarded mode (LBV2-9); section 3b checks what they receive.
 expect "anna → ben with forged X-authentik-username: ben" \
   "$(access "$jar_anna" "$(printf $V ben)/api/config" -H 'X-authentik-username: ben')" "DENIED"
 expect "anna → own vault with wrong X-Vault-Proxy-Secret (Traefik must overwrite)" \
   "$(code -b "$jar_anna" -H 'X-Vault-Proxy-Secret: wrong-wrong-wrong-wrong-wrong-wrong' "$(printf $V anna)/api/config")" "200"
 expect "anon → ben with ben's real proxy secret (secret alone is not a login)" \
   "$(code -H "X-Vault-Proxy-Secret: $PROXY_SECRET_BEN" "$(printf $V ben)/api/config")" "302"
+
+echo "== 3b. Identity headers as the vault receives them (test-only echo behind anna's router chain)"
+# The vault trusts x-authentik-username (identity) and x-authentik-groups (VAULT_ADMIN_GROUPS) when
+# VAULT_PROXY_SECRET is set (LBV2-9). Traefik must replace client values with Authentik's.
+docker compose -f compose.yml -f tests/echo.override.yml up -d --no-deps echo >/dev/null 2>&1
+echo_get() { # echo_get [curl header args] → lower-cased request headers seen by the backend
+  local out
+  for _ in $(seq 1 20); do
+    out=$(curl -s -b "$jar_anna" "$@" "$(printf $V anna)/__echo")
+    [[ $out == *"GET /__echo"* ]] && { tr 'A-Z' 'a-z' <<<"$out" | tr -d '\r'; return; }
+    sleep 1
+  done
+  echo "NO-ECHO"
+}
+hdr() { grep -E "^$1:" | sed -E "s/^$1: ?//" | tr '\n' ';' | sed 's/;$//'; }
+base=$(echo_get)
+expect "echo baseline: username from Authentik" "$(hdr x-authentik-username <<<"$base")" "anna"
+anna_groups=$(hdr x-authentik-groups <<<"$base")
+expect "echo baseline: anna's groups (no lokyy-admins, no firma admin)" \
+  "$([[ -n $anna_groups && $anna_groups != *lokyy-admins* && $anna_groups != *vault-firma-admin* ]] && echo ok || echo "$anna_groups")" "ok"
+for variant in 'X-authentik-username: ben' 'x-authentik-username: ben' 'X-AUTHENTIK-USERNAME: ben'; do
+  expect "client '$variant' is replaced" "$(echo_get -H "$variant" | hdr x-authentik-username)" "anna"
+done
+expect "two client X-authentik-username headers are replaced by one" \
+  "$(echo_get -H 'X-authentik-username: ben' -H 'X-authentik-username: akadmin' | hdr x-authentik-username)" "anna"
+expect "underscore variant X_authentik_username does not change the identity header" \
+  "$(echo_get -H 'X_authentik_username: ben' | hdr x-authentik-username)" "anna"
+expect "client X-Mindbase-User is stripped" "$(echo_get -H 'X-Mindbase-User: ben' | grep -c '^x-mindbase-user:')" "0"
+expect "client X-authentik-groups cannot grant admin" \
+  "$(echo_get -H 'X-authentik-groups: lokyy-admins|vault-firma-admin' | hdr x-authentik-groups)" "$(sed 's/[|.]/\\&/g' <<<"$anna_groups")"
+expect "client X-authentik-groups: lokyy-admins never reaches the vault" \
+  "$(echo_get -H 'X-authentik-groups: lokyy-admins' | grep -c 'lokyy-admins')" "0"
+expect "unauthenticated request with forged identity headers never reaches the vault" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-authentik-username: anna' -H 'X-authentik-groups: lokyy-admins' "$(printf $V anna)/__echo")" "302"
+docker compose -f compose.yml -f tests/echo.override.yml rm -sf echo >/dev/null 2>&1
 
 echo "== 4. Direct container access bypassing Traefik"
 in_c() { docker compose exec -T "$1" sh -c "$2" 2>/dev/null; }
