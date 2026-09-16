@@ -6,7 +6,7 @@ import { userInfo } from 'node:os';
 import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
 import { resolveProjectId } from '../lib/resolve-project.js';
-import { projectPaths, isoToday } from '@mindbase/core';
+import { projectPaths, isoToday, isValidUsername } from '@mindbase/core';
 
 export const inputSchema = z.object({
   text: z.string().min(1),
@@ -40,6 +40,10 @@ export async function handle(ctx: Context, rawInput: unknown) {
   const projectId = resolved.projectId;
 
   const user = parsed.data.user ?? userInfo().username;
+  // `user` names a directory under sources/contributors/.
+  if (!isValidUsername(user)) {
+    return errorResult('Invalid user: use letters, digits, "_", "-" or "." (not leading, no ".."), max 64 characters.');
+  }
   const today = isoToday();
   const root = join(ctx.dataDir, 'projects', projectId);
   const p = projectPaths();

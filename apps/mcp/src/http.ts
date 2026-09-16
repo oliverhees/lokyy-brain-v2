@@ -101,7 +101,8 @@ async function main(): Promise<void> {
   const allowedHosts = (process.env['MCP_HTTP_ALLOWED_HOSTS'] ?? '')
     .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
 
-  const ctx = await loadContext({});
+  // Remote clients must not make the server read its own filesystem.
+  const ctx = { ...(await loadContext({})), allowLocalFilePaths: false };
 
   interface Session { transport: StreamableHTTPServerTransport; lastSeen: number; inFlight: number; profile: AccessProfile }
   const sessions = new Map<string, Session>();

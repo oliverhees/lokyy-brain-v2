@@ -40,7 +40,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
   // Refuse if project already exists.
   try {
     await readFile(join(projectRoot, paths.readme), 'utf-8');
-    return errorResult(`Project '${projectId}' already exists at ${projectRoot}. Use a different name or remove it first.`);
+    return errorResult(`Project '${projectId}' already exists. Use a different name or remove it first.`);
   } catch { /* good — does not exist */ }
 
   // Create directory structure.

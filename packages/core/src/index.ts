@@ -8,6 +8,15 @@ export { OPFSStore } from './storage/opfs';
 export { newShortId } from './storage/ids';
 export * as paths from './storage/paths';
 export { slugify } from './storage/paths';
+export {
+  isValidTrashEntryId,
+  isValidUsername,
+  isValidIsoDate,
+  isSafePathSegment,
+  isPlainSlug,
+  resolveInside,
+  USERNAME_MAX_LENGTH,
+} from './storage/safe-names';
 
 /** Regex to detect LLM auto-save markers in responses: [AUTO_SAVE: title] */
 export const AUTO_SAVE_REGEX = /\[AUTO_SAVE:\s*(.+?)\]\s*$/;
