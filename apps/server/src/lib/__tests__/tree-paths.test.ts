@@ -12,6 +12,10 @@ describe('resolveTreePath', () => {
     expect(resolveTreePath('contributors', '2026-06-09.md', 'haobing')).toBe('sources/contributors/haobing/2026-06-09.md');
   });
 
+  it.each(['../../../../tmp', '..', '.', 'a/b'])('refuses contributor user %j', (user) => {
+    expect(() => resolveTreePath('contributors', 'x.md', user)).toThrow('Invalid username');
+  });
+
   it('resolves research files flat', () => {
     expect(resolveTreePath('research', 'rag-notes.md', 'alice')).toBe('sources/research/rag-notes.md');
   });

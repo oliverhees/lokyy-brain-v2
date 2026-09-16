@@ -67,4 +67,4 @@ artifacts/                             Generated outputs (briefs, exports)
 
 ## License
 
-MIT
+Mixed. The plugin itself is upstream MindBase code (MIT, [LICENSE-MIT](../../LICENSE-MIT)), but it bundles `apps/mcp`, which contains Lokyy Brain v2 changes licensed under PolyForm Noncommercial 1.0.0 ([LICENSE](../../LICENSE)). See [NOTICE.md](../../NOTICE.md).

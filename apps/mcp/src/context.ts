@@ -29,6 +29,12 @@ export interface Context {
   reindex: () => Promise<void>;
   /** Identifies the calling client if detectable (from MCP_CLIENT env var). */
   mcpClient: string;
+  /**
+   * Whether tools may read arbitrary local file paths (mindbase_ingest_file).
+   * True for stdio, where the client already runs on this machine; the HTTP
+   * transport turns it off because remote clients must not read server files.
+   */
+  allowLocalFilePaths: boolean;
 }
 
 function expandHome(p: string): string {
@@ -120,6 +126,7 @@ export async function loadContext(opts: { dataDir?: string }): Promise<Context> 
       Object.assign(searchIndex, fresh);
     },
     mcpClient: process.env['MCP_CLIENT'] ?? 'unknown',
+    allowLocalFilePaths: true,
   };
 }
 

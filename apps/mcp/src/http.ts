@@ -6,9 +6,15 @@
 //
 // Env:
 //   MCP_HTTP_TOKEN            required, >= 32 chars; clients send `Authorization: Bearer <token>`
+//   MCP_HTTP_READONLY_TOKEN   optional, >= 32 chars, different from MCP_HTTP_TOKEN; sessions opened
+//                             with it only see and call tools on the READ_ONLY_TOOL_NAMES allowlist
+//                             and never see pages with visibility internal/pii
 //   MCP_HTTP_PORT             default 4322
 //   MCP_HTTP_HOST             default 0.0.0.0
-//   MCP_HTTP_MAX_SESSIONS     default 32; when full, the least recently used session is evicted
+//   MCP_HTTP_MAX_SESSIONS     default 32; cap for full-profile sessions; when full, the least recently
+//                             used full session is evicted
+//   MCP_HTTP_MAX_READONLY_SESSIONS  default = MCP_HTTP_MAX_SESSIONS; separate cap for read-only sessions,
+//                             so the two profiles can never evict each other
 //   MCP_HTTP_SESSION_IDLE_MS  default 1800000 (30 min), min 1000; idle sessions are closed
 //   MCP_HTTP_ALLOWED_HOSTS    optional comma-separated Host header allow-list (e.g. vault-anna:4322)
 import http from 'node:http';
@@ -17,6 +23,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { loadContext } from './context.js';
 import { createMcpServer } from './index.js';
+import type { AccessProfile } from './access.js';
 
 const MIN_TOKEN_LENGTH = 32;
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -37,12 +44,17 @@ function intEnv(name: string, fallback: number, min: number): number {
   return value;
 }
 
-/** Constant-time token comparison; hashing first equalises lengths. */
-function tokenMatches(header: string | undefined, expected: string): boolean {
-  if (!header?.startsWith('Bearer ')) return false;
-  const given = createHash('sha256').update(header.slice('Bearer '.length)).digest();
-  const want = createHash('sha256').update(expected).digest();
-  return timingSafeEqual(given, want);
+const sha256 = (value: string): Buffer => createHash('sha256').update(value).digest();
+
+/** Resolves the bearer token to an access profile; constant-time against every configured token. */
+function profileFor(header: string | undefined, tokens: ReadonlyArray<[Buffer, AccessProfile]>): AccessProfile | null {
+  if (!header?.startsWith('Bearer ')) return null;
+  const given = sha256(header.slice('Bearer '.length));
+  let match: AccessProfile | null = null;
+  for (const [want, profile] of tokens) {
+    if (timingSafeEqual(given, want)) match = profile;
+  }
+  return match;
 }
 
 class HttpError extends Error {
@@ -75,19 +87,38 @@ async function main(): Promise<void> {
     log(`fatal: MCP_HTTP_TOKEN must be set and at least ${MIN_TOKEN_LENGTH} characters`);
     process.exit(1);
   }
+  const readonlyToken = process.env['MCP_HTTP_READONLY_TOKEN'] ?? '';
+  if (readonlyToken && readonlyToken.length < MIN_TOKEN_LENGTH) {
+    log(`fatal: MCP_HTTP_READONLY_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters`);
+    process.exit(1);
+  }
+  if (readonlyToken && readonlyToken === token) {
+    log('fatal: MCP_HTTP_READONLY_TOKEN must differ from MCP_HTTP_TOKEN');
+    process.exit(1);
+  }
+  const tokens: Array<[Buffer, AccessProfile]> = [[sha256(token), 'full']];
+  if (readonlyToken) tokens.push([sha256(readonlyToken), 'readonly']);
   const port = intEnv('MCP_HTTP_PORT', 4322, 1);
   const host = process.env['MCP_HTTP_HOST'] ?? '0.0.0.0';
   const maxSessions = intEnv('MCP_HTTP_MAX_SESSIONS', 32, 1);
+  const maxReadonlySessions = intEnv('MCP_HTTP_MAX_READONLY_SESSIONS', maxSessions, 1);
+  const capFor = (p: AccessProfile): number => (p === 'full' ? maxSessions : maxReadonlySessions);
   const idleMs = intEnv('MCP_HTTP_SESSION_IDLE_MS', 30 * 60 * 1000, 1000);
   const allowedHosts = (process.env['MCP_HTTP_ALLOWED_HOSTS'] ?? '')
     .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
 
-  const ctx = await loadContext({});
+  // Remote clients must not make the server read its own filesystem.
+  const ctx = { ...(await loadContext({})), allowLocalFilePaths: false };
 
-  interface Session { transport: StreamableHTTPServerTransport; lastSeen: number; inFlight: number }
+  interface Session { transport: StreamableHTTPServerTransport; lastSeen: number; inFlight: number; profile: AccessProfile }
   const sessions = new Map<string, Session>();
-  // Sessions still initializing count toward the cap so concurrent initializes cannot overshoot it.
-  let pending = 0;
+  // Sessions still initializing count toward their profile's cap so concurrent initializes cannot overshoot it.
+  const pending: Record<AccessProfile, number> = { full: 0, readonly: 0 };
+  const countFor = (p: AccessProfile): number => {
+    let n = pending[p];
+    for (const s of sessions.values()) if (s.profile === p) n++;
+    return n;
+  };
 
   const closeSession = (id: string): void => {
     const s = sessions.get(id);
@@ -96,11 +127,11 @@ async function main(): Promise<void> {
     void s.transport.close();
   };
 
-  /** Evicts the least recently used session with no request in flight; false if none is evictable. */
-  const evictLeastRecentlyUsed = (): boolean => {
+  /** Evicts the profile's least recently used session with no request in flight; false if none is evictable. */
+  const evictLeastRecentlyUsed = (p: AccessProfile): boolean => {
     let oldest: [string, Session] | undefined;
     for (const entry of sessions) {
-      if (entry[1].inFlight > 0) continue;
+      if (entry[1].profile !== p || entry[1].inFlight > 0) continue;
       if (!oldest || entry[1].lastSeen < oldest[1].lastSeen) oldest = entry;
     }
     if (!oldest) return false;
@@ -123,7 +154,8 @@ async function main(): Promise<void> {
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
-      if (!tokenMatches(req.headers.authorization, token)) {
+      const profile = profileFor(req.headers.authorization, tokens);
+      if (!profile) {
         sendJson(res, 401, 'Unauthorized');
         return;
       }
@@ -141,6 +173,11 @@ async function main(): Promise<void> {
       if (sessionId !== undefined && !session) {
         // Spec: an unknown session must answer 404 so the client re-initializes.
         sendJson(res, 404, 'Session not found', -32001);
+        return;
+      }
+      if (session && session.profile !== profile) {
+        // A session keeps the access profile of the token that opened it.
+        sendJson(res, 403, 'Forbidden: token does not match session');
         return;
       }
       if (session) {
@@ -164,29 +201,29 @@ async function main(): Promise<void> {
           sendJson(res, 400, 'Bad Request: no valid session');
           return;
         }
-        while (sessions.size + pending >= maxSessions && evictLeastRecentlyUsed()) { /* evict until room */ }
-        if (sessions.size + pending >= maxSessions) {
+        while (countFor(profile) >= capFor(profile) && evictLeastRecentlyUsed(profile)) { /* evict until room */ }
+        if (countFor(profile) >= capFor(profile)) {
           sendJson(res, 503, 'Too many active sessions');
           return;
         }
-        pending++;
+        pending[profile]++;
         let registered = false;
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (id) => {
-            pending--;
+            pending[profile]--;
             registered = true;
-            sessions.set(id, { transport, lastSeen: Date.now(), inFlight: 0 });
+            sessions.set(id, { transport, lastSeen: Date.now(), inFlight: 0, profile });
           },
         });
         transport.onclose = () => {
           if (transport.sessionId) sessions.delete(transport.sessionId);
         };
         try {
-          await createMcpServer(ctx).connect(transport);
+          await createMcpServer(ctx, profile).connect(transport);
           await transport.handleRequest(req, res, body);
         } finally {
-          if (!registered) pending--;
+          if (!registered) pending[profile]--;
         }
         return;
       }

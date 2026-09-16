@@ -114,4 +114,4 @@ See [mindbase.app](https://mindbase.app) (coming soon).
 
 ## License
 
-MIT.
+Mixed. The CLI is upstream MindBase code (MIT, [LICENSE-MIT](../../LICENSE-MIT)), but its build bundles `@mindbase/core`, which contains Lokyy Brain v2 changes licensed under PolyForm Noncommercial 1.0.0 ([LICENSE](../../LICENSE)). See [NOTICE.md](../../NOTICE.md).

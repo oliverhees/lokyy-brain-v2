@@ -61,4 +61,56 @@ describe('tree crud routes', () => {
     const gone = await readFile(join(dataDir, 'projects', 'p', 'sources', 'contributors', 'haobing', '2026-06-09.md'), 'utf-8').catch(() => null);
     expect(gone).toBeNull();
   });
+
+  describe('contributor username validation (LBV2-11)', () => {
+    // sources/contributors/<user> → dataDir's parent is 5 levels up.
+    const up = '../../../../..';
+    const secret = () => join(dataDir, '..', 'crud-trav-secret.md');
+    const evilDir = () => join(dataDir, '..', 'crud-trav-evil');
+    beforeEach(async () => { await writeFile(secret(), 'CRUD-CANARY'); });
+    afterEach(async () => { await rm(secret(), { force: true }); await rm(evilDir(), { recursive: true, force: true }); });
+
+    it('GET with a traversal header is rejected', async () => {
+      const res = await request(app).get('/api/tree/contributors/crud-trav-secret.md').set('x-mindbase-user', up);
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(res.body)).not.toContain('CRUD-CANARY');
+    });
+
+    it('PUT with a traversal header is rejected and writes nothing', async () => {
+      const res = await request(app)
+        .put('/api/tree/contributors/x.md')
+        .set('x-mindbase-user', `${up}/crud-trav-evil`)
+        .send({ body: 'pwn' });
+      expect(res.status).toBe(400);
+      expect(await readFile(join(evilDir(), 'x.md'), 'utf-8').catch(() => null)).toBeNull();
+    });
+
+    it('DELETE with a traversal header is rejected', async () => {
+      const res = await request(app).delete('/api/tree/contributors/crud-trav-secret.md').set('x-mindbase-user', up);
+      expect(res.status).toBe(400);
+      expect(await readFile(secret(), 'utf-8')).toBe('CRUD-CANARY');
+    });
+
+    it('rename into a traversal header user is rejected', async () => {
+      const res = await request(app)
+        .patch('/api/tree/contributors/haobing/2026-06-09.md/rename')
+        .set('x-mindbase-user', `${up}/crud-trav-evil`)
+        .send({ newPath: 'moved.md' });
+      expect(res.status).toBe(400);
+      expect(await readFile(join(evilDir(), 'moved.md'), 'utf-8').catch(() => null)).toBeNull();
+    });
+
+    it.each(['-lead/x.md', '.hidden/x.md'])('path user segment %j is rejected', async (p) => {
+      const res = await request(app).put(`/api/tree/contributors/${p}`).send({ body: 'pwn' });
+      expect(res.status).toBe(400);
+    });
+
+    it('rename of a missing file returns 404 without an absolute path', async () => {
+      const res = await request(app)
+        .patch('/api/tree/contributors/haobing/missing.md/rename')
+        .send({ newPath: 'haobing/other.md' });
+      expect(res.status).toBe(404);
+      expect(JSON.stringify(res.body)).not.toContain(dataDir);
+    });
+  });
 });

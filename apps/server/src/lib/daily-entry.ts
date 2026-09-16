@@ -9,8 +9,11 @@
 // core `projectPaths` dependency) so it stays trivially portable.
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { isValidUsername } from '@mindbase/core';
 
 export async function appendDailyEntry(projectRoot: string, user: string, text: string): Promise<{ file: string }> {
+  // `user` names a directory; callers (HTTP header, ops ctx) must not escape it.
+  if (!isValidUsername(user)) throw new Error('Invalid username');
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   const hhmm = now.toISOString().slice(11, 16);

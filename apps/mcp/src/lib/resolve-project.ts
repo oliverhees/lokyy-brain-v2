@@ -9,17 +9,33 @@ import type { Context } from '../context.js';
  * calling LLM, so they spell out exactly which tool to call next instead of
  * just stating the failure.
  */
+/** Project ids are directory names under projects/ — never paths (LBV2-11). */
+const PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+export function isValidProjectId(id: string): boolean {
+  return PROJECT_ID.test(id);
+}
+
+const INVALID_ID_ERROR =
+  'Invalid projectId: use the project directory name (letters, digits, "-" or "_"), not a path.';
+
 export async function resolveProjectId(
   ctx: Context,
   requested?: string,
 ): Promise<{ ok: true; projectId: string } | { ok: false; error: string }> {
-  if (requested) return { ok: true, projectId: requested };
+  if (requested) {
+    return isValidProjectId(requested) ? { ok: true, projectId: requested } : { ok: false, error: INVALID_ID_ERROR };
+  }
 
   try {
     const cfg = JSON.parse(
       await readFile(join(ctx.dataDir, 'config.json'), 'utf-8'),
     ) as { currentProjectId?: string };
-    if (cfg.currentProjectId) return { ok: true, projectId: cfg.currentProjectId };
+    if (cfg.currentProjectId) {
+      return isValidProjectId(cfg.currentProjectId)
+        ? { ok: true, projectId: cfg.currentProjectId }
+        : { ok: false, error: INVALID_ID_ERROR };
+    }
   } catch { /* no config yet */ }
 
   let available: string[] = [];

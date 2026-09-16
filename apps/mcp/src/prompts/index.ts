@@ -8,9 +8,21 @@ import * as connect from './connect.js';
 import * as explain from './explain.js';
 import * as quiz from './quiz.js';
 import * as write from './write.js';
+import { isToolAllowed, type AccessProfile } from '../access.js';
 
-export function registerPrompts(server: Server): void {
-  const prompts = [
+/** Tools each prompt tells the model to call; a prompt is hidden when any of them is not allowed. */
+const PROMPT_TOOLS: Readonly<Record<string, readonly string[]>> = {
+  'daily-digest': ['list_recent'],
+  brainstorm: ['search_wiki', 'find_related', 'read_wiki_page'],
+  audit: ['run_wiki_health'],
+  connect: ['list_recent', 'find_related'],
+  explain: ['read_wiki_page'],
+  quiz: ['list_recent'],
+  write: ['search_wiki', 'semantic_search', 'find_related', 'read_wiki_page'],
+};
+
+export function registerPrompts(server: Server, profile: AccessProfile = 'full'): void {
+  const allPrompts = [
     dailyDigest.definition,
     brainstorm.definition,
     audit.definition,
@@ -19,12 +31,18 @@ export function registerPrompts(server: Server): void {
     quiz.definition,
     write.definition,
   ];
+  // Fail closed: a prompt missing from PROMPT_TOOLS is only offered to full sessions.
+  const prompts = allPrompts.filter((p) => {
+    const tools = PROMPT_TOOLS[p.name];
+    return profile === 'full' || (tools !== undefined && tools.every((t) => isToolAllowed(profile, t)));
+  });
 
   server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts }));
 
   server.setRequestHandler(GetPromptRequestSchema, async (req) => {
     const name = req.params.name;
     const args = (req.params.arguments ?? {}) as Record<string, string>;
+    if (!prompts.some((p) => p.name === name)) throw new Error(`Unknown prompt: ${name}`);
 
     const renderText = (): string => {
       switch (name) {
