@@ -3,11 +3,18 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { ListResourcesRequestSchema, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { Context } from '../context.js';
 import type { MetaJson } from '@mindbase/core';
-import { getHubs, getOrphans } from '@mindbase/core';
+import { getHubs, getOrphans, generateInsights, renderInsightsMarkdown } from '@mindbase/core';
 import type { AccessProfile } from '../access.js';
 
-export function registerResources(server: Server, ctx: Context, profile: AccessProfile = 'full'): void {
+/** @param beforeRequest refreshes the read-only visibility snapshot before each request. */
+export function registerResources(
+  server: Server,
+  ctx: Context,
+  profile: AccessProfile = 'full',
+  beforeRequest: () => Promise<void> = async () => {},
+): void {
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    await beforeRequest();
     const resources: Array<{ uri: string; name: string; description: string; mimeType: string }> = [];
 
     // Static well-known resources
@@ -54,6 +61,7 @@ export function registerResources(server: Server, ctx: Context, profile: AccessP
     if (profile !== 'full' && uri.startsWith('mindbase://chats/')) {
       throw new Error('Resource not available: this session has read-only access');
     }
+    await beforeRequest();
 
     // mindbase://wiki/<slug>
     const wikiMatch = uri.match(/^mindbase:\/\/wiki\/(.+)$/);
@@ -120,6 +128,12 @@ export function registerResources(server: Server, ctx: Context, profile: AccessP
 
     // mindbase://insights
     if (uri === 'mindbase://insights') {
+      if (profile !== 'full') {
+        // The stored report may name restricted pages; readers get a live report over their filtered graph.
+        const graph = ctx.wikiIndex.buildGraph();
+        const text = renderInsightsMarkdown(await generateInsights(graph, ctx.store), graph);
+        return { contents: [{ uri, mimeType: 'text/markdown', text }] };
+      }
       try {
         const text = await ctx.store.readText('wiki/_insights.md');
         return { contents: [{ uri, mimeType: 'text/markdown', text }] };

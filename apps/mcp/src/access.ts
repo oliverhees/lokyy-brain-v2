@@ -12,7 +12,7 @@ export type AccessProfile = 'full' | 'readonly';
 // list_chats, recall_chat (other users' chat history). Excluded because they call the
 // LLM/embedding API or write shared caches: ask_wiki, semantic_search, synthesize_topic,
 // find_contradictions, find_gaps, get_pulse, generate_daily_brief.
-export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set<string>([
+export const READ_ONLY_TOOL_NAMES: readonly string[] = Object.freeze([
   'search_wiki',
   'search_all_projects',
   'search_in_project',
@@ -29,6 +29,9 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set<string>([
   'mindbase_gather_sources',
   'mindbase_validate_structure',
 ]);
+
+// Module-private lookup set: nothing outside this module can add names at runtime.
+const READ_ONLY_TOOLS: ReadonlySet<string> = new Set<string>(READ_ONLY_TOOL_NAMES);
 
 export function isToolAllowed(profile: AccessProfile, toolName: string): boolean {
   return profile === 'full' || READ_ONLY_TOOLS.has(toolName);

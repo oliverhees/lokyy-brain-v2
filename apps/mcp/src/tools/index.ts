@@ -58,7 +58,16 @@ import { register as registerExportProject } from './export-project.js';
 
 type ToolHandler = (input: unknown) => Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }>;
 
-export function registerTools(server: Server, ctx: Context, profile: AccessProfile = 'full'): void {
+/**
+ * @param beforeCall runs before every permitted tool call; read-only sessions use it to
+ *   refresh the page visibility snapshot of their filtered context.
+ */
+export function registerTools(
+  server: Server,
+  ctx: Context,
+  profile: AccessProfile = 'full',
+  beforeCall: () => Promise<void> = async () => {},
+): void {
   const handlers = new Map<string, ToolHandler>();
   const definitions: object[] = [];
 
@@ -122,6 +131,7 @@ export function registerTools(server: Server, ctx: Context, profile: AccessProfi
     }
     const handler = handlers.get(req.params.name);
     if (!handler) return errorResult(`Unknown tool: ${req.params.name}`, 'Use list_tools to see available tools.');
+    await beforeCall();
     return handler(req.params.arguments ?? {});
   });
 }
