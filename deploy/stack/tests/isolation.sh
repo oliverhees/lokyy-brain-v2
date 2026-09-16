@@ -33,7 +33,9 @@ trap 'rm -f "$jar_anna" "$jar_ben"' EXIT
 
 echo "== 1. Unauthenticated access is redirected to the login"
 for v in anna ben firma; do
-  expect "anon → $v /api/config" "$(code "$(printf $V $v)/api/config")" "302"
+  expect "anon → $v /api/config" "$(code "$(printf $V $v)/api/config")" "302expect "vault-anna → EUrouter API host (LLM base URL)" \
+  "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://api.eurouter.ai/api/v1/models")" "200"
+"
 done
 expect "anon → metamcp admin" "$(code http://mcp.localhost:18080/)" "302"
 
