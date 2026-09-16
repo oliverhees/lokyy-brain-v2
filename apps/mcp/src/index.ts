@@ -5,6 +5,10 @@ import { loadContext } from './context.js';
 import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { registerPrompts } from './prompts/index.js';
+import type { AccessProfile } from './access.js';
+
+export { READ_ONLY_TOOLS } from './access.js';
+export type { AccessProfile } from './access.js';
 
 export interface RunOptions {
   dataDir?: string;
@@ -57,7 +61,7 @@ Treat MindBase as a living thing the user cares about. Be useful but precise; th
 
 
 /** Build a fully registered MindBase MCP server bound to an already-loaded context. */
-export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>): Server {
+export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>, profile: AccessProfile = 'full'): Server {
   const server = new Server(
     { name: 'mindbase-mcp', version: '0.1.3' },
     {
@@ -70,8 +74,8 @@ export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>): S
     },
   );
 
-  registerTools(server, ctx);
-  registerResources(server, ctx);
+  registerTools(server, ctx, profile);
+  registerResources(server, ctx, profile);
   registerPrompts(server);
   return server;
 }

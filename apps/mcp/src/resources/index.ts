@@ -4,8 +4,9 @@ import { ListResourcesRequestSchema, ReadResourceRequestSchema } from '@modelcon
 import type { Context } from '../context.js';
 import type { MetaJson } from '@mindbase/core';
 import { getHubs, getOrphans } from '@mindbase/core';
+import type { AccessProfile } from '../access.js';
 
-export function registerResources(server: Server, ctx: Context): void {
+export function registerResources(server: Server, ctx: Context, profile: AccessProfile = 'full'): void {
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     const resources: Array<{ uri: string; name: string; description: string; mimeType: string }> = [];
 
@@ -32,8 +33,8 @@ export function registerResources(server: Server, ctx: Context): void {
       }
     } catch { /* ok */ }
 
-    // All chats
-    try {
+    // All chats — never exposed to read-only sessions (other users' conversations)
+    if (profile === 'full') try {
       const entries = await ctx.store.listDir('chats');
       for (const entry of entries) {
         if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue;
@@ -50,6 +51,9 @@ export function registerResources(server: Server, ctx: Context): void {
 
   server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
     const uri = req.params.uri;
+    if (profile !== 'full' && uri.startsWith('mindbase://chats/')) {
+      throw new Error('Resource not available: this session has read-only access');
+    }
 
     // mindbase://wiki/<slug>
     const wikiMatch = uri.match(/^mindbase:\/\/wiki\/(.+)$/);
