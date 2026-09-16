@@ -5,7 +5,7 @@
  * Run from apps/mcp/ directory: node test/path-traversal.mjs
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -83,6 +83,38 @@ async function run() {
 
   const valid = await client.callTool({ name: 'mindbase_status', arguments: { projectId: 'demo' } });
   !valid.isError ? ok('valid projectId still works') : fail(`valid projectId rejected: ${JSON.stringify(valid).slice(0, 200)}`);
+
+  // mindbase_contribute: `user` names sources/contributors/<user>/ — 5 levels below `outer`.
+  const today = new Date().toISOString().slice(0, 10);
+  for (const user of ['../../../../../evil-user', '..', 'a/b', '.hidden']) {
+    const res = await client.callTool({ name: 'mindbase_contribute', arguments: { projectId: 'demo', text: 'pwn', user } })
+      .catch((e) => ({ isError: true, content: [{ text: String(e) }] }));
+    const text = JSON.stringify(res);
+    if (existsSync(join(outer, 'evil-user', `${today}.md`))) fail(`mindbase_contribute user=${user} wrote outside the vault`);
+    else if (!res.isError) fail(`mindbase_contribute user=${user} was accepted`);
+    else if (text.includes(outer)) fail(`mindbase_contribute user=${user} leaked a path`);
+    else ok(`mindbase_contribute user=${user} rejected`);
+  }
+  const contributed = await client.callTool({ name: 'mindbase_contribute', arguments: { projectId: 'demo', text: 'ok', user: 'alice' } });
+  !contributed.isError ? ok('mindbase_contribute with a valid user still works') : fail(`valid user rejected: ${JSON.stringify(contributed).slice(0, 200)}`);
+
+  // mindbase_ingest_file: local paths are disabled over HTTP (would read any server file).
+  for (const path of [join(outer, 'outside.md'), join(outer, 'does-not-exist.md'), join(dataDir, 'mindbase.config.json')]) {
+    const res = await client.callTool({ name: 'mindbase_ingest_file', arguments: { projectId: 'demo', path } })
+      .catch((e) => ({ isError: true, content: [{ text: String(e) }] }));
+    const text = JSON.stringify(res);
+    if (text.includes(CANARY)) fail(`mindbase_ingest_file path=${path} leaked the canary`);
+    else if (!res.isError) fail(`mindbase_ingest_file local path ${path} was accepted over HTTP`);
+    else if (text.includes(outer)) fail(`mindbase_ingest_file path=${path} echoed the path`);
+    else ok(`mindbase_ingest_file local path rejected over HTTP (${path.slice(outer.length)})`);
+  }
+
+  // mindbase_init_project: the "already exists" error must not reveal the vault location.
+  await client.callTool({ name: 'mindbase_init_project', arguments: { name: 'dup-project' } });
+  const dup = await client.callTool({ name: 'mindbase_init_project', arguments: { name: 'dup-project' } });
+  if (!dup.isError) fail('mindbase_init_project duplicate was accepted');
+  else if (JSON.stringify(dup).includes(outer)) fail('mindbase_init_project duplicate error leaked the project root');
+  else ok('mindbase_init_project duplicate error has no absolute path');
 
   await client.close().catch(() => {});
 }

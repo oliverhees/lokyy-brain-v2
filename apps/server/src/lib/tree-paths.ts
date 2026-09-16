@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { projectPaths } from '@mindbase/core';
+import { projectPaths, isValidUsername } from '@mindbase/core';
 
 export type TreeCategory =
   | 'readme'
@@ -35,6 +35,7 @@ export function resolveTreePath(category: TreeCategory, relPath: string, user: s
   if (category === 'context') return p.context;
   if (category === 'soul') return p.soul;
   if (category === 'contributors') {
+    if (!isValidUsername(user)) throw new Error('Invalid username');
     return `${p.contributorsRoot}/${user}/${relPath}`;
   }
   if (category === 'research') return `${p.researchDir}/${relPath}`;

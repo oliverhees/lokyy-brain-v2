@@ -29,7 +29,11 @@ export function templateTreeRoutes(ctx: ServerContext): Router {
 
     let tplBody = '';
     try { tplBody = await readFile(tplPath, 'utf-8'); }
-    catch (e) { return res.status(500).json({ error: `Template not found at ${tplPath}: ${(e as Error).message}` }); }
+    catch (e) {
+      // The absolute plugin path stays in the server log, not the response.
+      console.error(`[tree] template ${tid} not readable at ${tplPath}:`, (e as Error).message);
+      return res.status(500).json({ error: 'Template not found', tid });
+    }
 
     const readmePath = join(projRoot, p.readme);
     const readme = await readFile(readmePath, 'utf-8').catch(() => '');

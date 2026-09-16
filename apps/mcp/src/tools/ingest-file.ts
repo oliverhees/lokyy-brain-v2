@@ -99,13 +99,17 @@ export async function handle(ctx: Context, rawInput: unknown) {
     ext = fetched.ext;
     base = sanitizeBase(basename(fetched.filename, extname(fetched.filename)));
   } else {
+    if (!ctx.allowLocalFilePaths) {
+      return errorResult('Local file paths are not accepted on this server. Pass an http(s) URL to the file instead.');
+    }
+    // Errors below do not echo `path`: absolute paths stay out of client responses.
     let info;
     try {
       info = await stat(path);
     } catch {
-      return errorResult(`File not found: ${path}. Pass an absolute path to an existing file, or an http(s) URL.`);
+      return errorResult('File not found. Pass an absolute path to an existing file, or an http(s) URL.');
     }
-    if (!info.isFile()) return errorResult(`Not a file: ${path}`);
+    if (!info.isFile()) return errorResult('Not a file. Pass an absolute path to a regular file.');
     if (info.size > MAX_BYTES) {
       return errorResult(`File is ${(info.size / 1024 / 1024).toFixed(1)}MB — the limit is 50MB.`);
     }

@@ -47,4 +47,29 @@ describe('tree quick routes', () => {
     const disk = await readFile(join(dataDir, 'projects', 'q', 'sources', 'research', 'transformer-basics.md'), 'utf-8');
     expect(disk).toContain('Transformer Basics');
   });
+
+  describe('path traversal (LBV2-11)', () => {
+    // sources/research → dataDir's parent is 5 levels up.
+    const escaped = () => join(dataDir, '..', 'quick-trav-escape.md');
+    afterEach(async () => { await rm(escaped(), { force: true }); await rm(join(dataDir, '..', 'quick-trav-evil'), { recursive: true, force: true }); });
+
+    it.each(['../../../../../quick-trav-escape', '../x', 'a/b', '/etc/x', 'Not A Slug'])(
+      'POST /research rejects slug %j',
+      async (slug) => {
+        const res = await request(app).post('/api/tree/research').send({ slug, body: 'pwn' });
+        expect(res.status).toBe(400);
+        expect(await readFile(escaped(), 'utf-8').catch(() => null)).toBeNull();
+      },
+    );
+
+    it('POST /contributors/daily rejects a traversal username header', async () => {
+      const res = await request(app)
+        .post('/api/tree/contributors/daily')
+        .set('x-mindbase-user', '../../../../../quick-trav-evil')
+        .send({ text: 'pwn' });
+      expect(res.status).toBe(400);
+      const today = new Date().toISOString().slice(0, 10);
+      expect(await readFile(join(dataDir, '..', 'quick-trav-evil', `${today}.md`), 'utf-8').catch(() => null)).toBeNull();
+    });
+  });
 });
