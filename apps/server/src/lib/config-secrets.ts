@@ -1,0 +1,180 @@
+// Secrets in config.json never travel to the browser (ASVS V8.3.4).
+// GET /api/config returns MASKED_SECRET in place of a stored secret; the web
+// UI round-trips whatever it got, so PUT keeps the stored secret whenever the
+// client sends the mask or omits the field — but only while the secret keeps
+// going to the same destination. Pointing a kept secret at a new provider,
+// endpoint or SMTP host would let anyone with UI access exfiltrate it, so that
+// requires re-entering the secret (KeyReentryError → 400).
+import type { AtlasConfig } from '../config';
+
+export const MASKED_SECRET = '********';
+
+export type PublicConfig = Omit<AtlasConfig, 'googleTokens'> & { hasApiKey: boolean };
+
+/** Invalid config input from the client → 400. */
+export class ConfigInputError extends Error {}
+
+export class KeyReentryError extends ConfigInputError {
+  constructor(what = 'API key') { super(`Re-enter the ${what} when changing provider or endpoint`); }
+}
+
+/** Providers that never use the LLM API key. Switching to one without a key clears the stored key. */
+const KEYLESS_PROVIDERS: ReadonlySet<string> = new Set(['ollama']);
+
+/** A new secret must not contain the mask: `********abc` is a UI accident, not a key. */
+function assertNotMaskDerived(incoming: unknown): void {
+  if (typeof incoming === 'string' && incoming !== MASKED_SECRET && incoming.includes(MASKED_SECRET)) {
+    throw new ConfigInputError(`Secret values must not contain the mask "${MASKED_SECRET}"; enter the full value`);
+  }
+}
+
+function smtpPortKey(port: unknown): string {
+  if (port === undefined || port === null || port === '') return '';
+  return String(Number(port));
+}
+
+const SECRET_QUERY_PARAM = /key|token|secret|pass|auth|sig|credential/i;
+
+function mask(value: string | undefined): string | undefined {
+  return value ? MASKED_SECRET : value;
+}
+
+/** Hides URL userinfo and secret-looking query parameter values. Non-URLs pass unchanged. */
+export function maskUrlCredentials(url: string): string {
+  if (!url) return url;
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return url; }
+  let changed = false;
+  if (parsed.username) { parsed.username = MASKED_SECRET; changed = true; }
+  if (parsed.password) { parsed.password = MASKED_SECRET; changed = true; }
+  for (const name of [...new Set(parsed.searchParams.keys())]) {
+    if (SECRET_QUERY_PARAM.test(name)) { parsed.searchParams.set(name, MASKED_SECRET); changed = true; }
+  }
+  if (!changed) return url;
+  // URLSearchParams percent-encodes '*'; keep the mask readable.
+  return parsed.toString().replaceAll('%2A', '*');
+}
+
+export function maskConfig(config: AtlasConfig): PublicConfig {
+  const { googleTokens: _tokens, ...rest } = config;
+  const out: PublicConfig = {
+    ...rest,
+    apiKey: mask(config.apiKey) ?? '',
+    hasApiKey: !!config.apiKey,
+    baseUrl: maskUrlCredentials(config.baseUrl ?? ''),
+  };
+  if (config.braveApiKey !== undefined) out.braveApiKey = mask(config.braveApiKey);
+  if (config.dailyBrief) {
+    out.dailyBrief = { ...config.dailyBrief, smtp: { ...config.dailyBrief.smtp, pass: mask(config.dailyBrief.smtp.pass) ?? '' } };
+  }
+  return out;
+}
+
+function normalizeEndpoint(url: string | undefined): string {
+  return (url ?? '').trim().replace(/\/+$/, '');
+}
+
+/** True when the incoming value asks to keep the stored secret (mask or not a string). */
+function wantsStored(incoming: unknown): boolean {
+  return typeof incoming !== 'string' || incoming === MASKED_SECRET;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** The client echoes back the masked baseUrl; map it to the stored one. */
+function resolveBaseUrl(incoming: unknown, stored: string): string {
+  if (typeof incoming !== 'string') return stored;
+  const masked = maskUrlCredentials(stored);
+  if (stored && masked !== stored && normalizeEndpoint(incoming) === normalizeEndpoint(masked)) return stored;
+  return incoming;
+}
+
+/**
+ * Builds the config to persist from a PUT body: the body is merged onto the
+ * stored config (known sections deeply), googleTokens are never taken from
+ * the client, and secrets are kept or replaced per the rules above.
+ */
+export function mergeSecrets(incoming: Record<string, unknown>, stored: AtlasConfig): AtlasConfig {
+  const { hasApiKey: _has, googleTokens: _clientTokens, ...body } = incoming;
+  const merged = { ...stored, ...body } as unknown as AtlasConfig;
+
+  assertNotMaskDerived(body['apiKey']);
+  assertNotMaskDerived(body['braveApiKey']);
+  if (isRecord(body['dailyBrief']) && isRecord(body['dailyBrief']['smtp'])) assertNotMaskDerived(body['dailyBrief']['smtp']['pass']);
+
+  // A non-object value (null, string, array…) for a section must not wipe it.
+  for (const section of ['dailyBrief', 'rss', 'srs'] as const) {
+    if (section in body && !isRecord(body[section])) {
+      if (stored[section] !== undefined) (merged as unknown as Record<string, unknown>)[section] = stored[section];
+      else delete merged[section];
+    }
+  }
+
+  if (isRecord(body['rss']) && stored.rss) merged.rss = { ...stored.rss, ...body['rss'] } as AtlasConfig['rss'];
+  if (isRecord(body['srs']) && stored.srs) merged.srs = { ...stored.srs, ...body['srs'] } as AtlasConfig['srs'];
+
+  merged.baseUrl = resolveBaseUrl(body['baseUrl'], stored.baseUrl ?? '');
+
+  if (wantsStored(body['apiKey'])) {
+    const sameDestination = merged.provider === stored.provider
+      && normalizeEndpoint(merged.baseUrl) === normalizeEndpoint(stored.baseUrl);
+    if (stored.apiKey && !sameDestination) {
+      // Keyless target (e.g. the chat model switch to ollama): the key is not
+      // needed there, so it is dropped rather than carried to the new destination.
+      if (!KEYLESS_PROVIDERS.has(merged.provider)) throw new KeyReentryError();
+      merged.apiKey = '';
+    } else {
+      merged.apiKey = stored.apiKey ?? '';
+    }
+  }
+
+  if (wantsStored(body['braveApiKey'])) {
+    if (stored.braveApiKey !== undefined) merged.braveApiKey = stored.braveApiKey;
+    else delete merged.braveApiKey;
+  }
+
+  if (isRecord(body['dailyBrief'])) {
+    const inBrief = body['dailyBrief'];
+    const storedBrief = stored.dailyBrief;
+    const inSmtp = isRecord(inBrief['smtp']) ? inBrief['smtp'] : {};
+    const smtp = { ...(storedBrief?.smtp ?? {}), ...inSmtp } as NonNullable<AtlasConfig['dailyBrief']>['smtp'];
+    if (wantsStored(inSmtp['pass'])) {
+      const storedPass = storedBrief?.smtp.pass ?? '';
+      const storedSmtp = storedBrief?.smtp;
+      const sameSmtpDestination = (smtp.host ?? '').trim().toLowerCase() === (storedSmtp?.host ?? '').trim().toLowerCase()
+        && smtpPortKey(smtp.port) === smtpPortKey(storedSmtp?.port)
+        && Boolean(smtp.secure) === Boolean(storedSmtp?.secure);
+      if (storedPass && !sameSmtpDestination) {
+        throw new KeyReentryError('SMTP password');
+      }
+      smtp.pass = storedPass;
+    }
+    merged.dailyBrief = { ...(storedBrief ?? {}), ...inBrief, smtp } as AtlasConfig['dailyBrief'];
+  }
+
+  if (stored.googleTokens) merged.googleTokens = stored.googleTokens;
+  else delete merged.googleTokens;
+  return merged;
+}
+
+/** The endpoint to actually call: a masked baseUrl echoed back by the UI resolves to the stored URL. */
+export function resolveStoredBaseUrl(baseUrl: string | undefined, stored: AtlasConfig): string {
+  return resolveBaseUrl(baseUrl ?? '', stored.baseUrl ?? '');
+}
+
+/** For POST /api/config/test: the mask resolves to the stored key only for the stored provider and endpoint. */
+export function unmaskApiKey(
+  req: { apiKey?: string; provider?: string; baseUrl?: string },
+  stored: AtlasConfig,
+): string {
+  assertNotMaskDerived(req.apiKey);
+  if (req.apiKey !== MASKED_SECRET) return req.apiKey ?? '';
+  if (req.provider && KEYLESS_PROVIDERS.has(req.provider) && req.provider !== stored.provider) return '';
+  const baseUrl = resolveBaseUrl(req.baseUrl ?? '', stored.baseUrl ?? '');
+  if (req.provider !== stored.provider || normalizeEndpoint(baseUrl) !== normalizeEndpoint(stored.baseUrl)) {
+    throw new KeyReentryError();
+  }
+  return stored.apiKey;
+}

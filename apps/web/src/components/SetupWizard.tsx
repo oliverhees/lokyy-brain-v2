@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { ProviderName } from '@mindbase/core';
 import { useSettings } from '../store/settings';
 import { apiGet, apiPut, apiPost, apiSSE } from '../lib/api';
+import { editedKey, keyAfterDestinationChange } from '../lib/config-form';
 
 type WizardStep = 'provider' | 'configure' | 'local-setup' | 'result';
 
@@ -168,6 +169,8 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
     setModel(provider.defaults.model || model);
     setBaseUrl(provider.defaults.baseUrl || (id === 'custom' ? baseUrl : ''));
     if (!provider.needsApiKey) setApiKey('');
+    // A masked stored key is only valid for the stored provider: ask for a real key on change.
+    else if (id !== selectedId) setApiKey((k) => keyAfterDestinationChange(k));
     setTestResult(null);
     // The free-local path has its own guided flow: detect → recommend →
     // install → verify. Everything else uses the generic key/config step.
@@ -477,7 +480,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
                   <input
                     type="text"
                     value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
+                    onChange={(e) => { setBaseUrl(e.target.value); setApiKey((k) => keyAfterDestinationChange(k)); }}
                     placeholder="http://localhost:11434"
                     className="w-full rounded-[10px] px-3.5 py-3 text-[13px] font-mono outline-none glass-card transition-colors"
                     style={{ color: 'var(--text-default)' }}
@@ -495,7 +498,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
                   <input
                     type="password"
                     value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
+                    onChange={(e) => { const next = e.target.value; setApiKey((prev) => editedKey(prev, next)); }}
                     placeholder={selected.configProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}
                     className="w-full rounded-[10px] px-3.5 py-3 text-[13px] font-mono outline-none glass-card transition-colors"
                     style={{ color: 'var(--text-default)' }}

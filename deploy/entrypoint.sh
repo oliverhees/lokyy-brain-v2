@@ -18,7 +18,7 @@ if [[ -n "${MCP_HTTP_PORT:-}" ]]; then
   pids+=($!)
 fi
 
-(cd /app/apps/server && exec node --import tsx src/index.ts) &
+(cd /app/apps/server && exec node dist/server.mjs) &
 pids+=($!)
 
 code=0

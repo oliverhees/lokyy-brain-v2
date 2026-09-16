@@ -1,12 +1,86 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
+import { randomBytes } from 'node:crypto';
 import { ingestPaste, compileL1 } from '@mindbase/core';
 import type { ServerContext } from '../context';
 import { makeHybridSearchClosure } from '../lib/compile-deps';
-import { getAuthUrl, exchangeCode, listFiles, downloadFileContent, isSupported } from '../google-drive';
+import { getAuthUrl, exchangeCode, hasGoogleCredentials, listFiles, downloadFileContent, isSupported } from '../google-drive';
 import { loadManifest, contentHash, isDuplicate } from '../manifest';
+import { OAuthStateStore } from '../lib/oauth-state';
+import { identityHeaderName, isGuarded, requireConfigAdminAlways } from '../lib/proxy-identity';
 
-export function googleRoutes(ctx: ServerContext): Router {
+export interface GoogleOAuthDeps {
+  stateStore: OAuthStateStore;
+  getAuthUrl: (params: { state: string; codeChallenge: string }) => string;
+  exchangeCode: typeof exchangeCode;
+  /** Defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
+  /** Defaults to hasGoogleCredentials (GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET present). */
+  isConfigured?: () => boolean;
+}
+
+/** HttpOnly, SameSite=Lax browser nonce that binds an OAuth state to the initiating browser. */
+export const OAUTH_COOKIE = 'mindbase_oauth';
+const OAUTH_COOKIE_PATH = '/api/google/auth';
+const NONCE_RE = /^[A-Za-z0-9_-]{43}$/;
+
+function readCookie(header: string | undefined, name: string): string | undefined {
+  for (const part of (header ?? '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq > 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return undefined;
+}
+
+export function googleRoutes(
+  ctx: ServerContext,
+  deps: GoogleOAuthDeps = { stateStore: new OAuthStateStore(), getAuthUrl, exchangeCode },
+): Router {
   const router = Router();
+  const env = deps.env ?? process.env;
+  const isConfigured = deps.isConfigured ?? hasGoogleCredentials;
+
+  // Guarded mode: connecting Drive is a configuration change → admins only, for every step.
+  const adminOnly = requireConfigAdminAlways(env);
+  router.use(['/auth/url', '/auth/start', '/auth/callback', '/auth/disconnect', '/set-sync-folder'], adminOnly);
+
+  /** Proxy identity in guarded mode ('' locally); null when guarded but missing. */
+  function initiatorIdentity(req: Request): string | null {
+    if (!isGuarded(env)) return '';
+    const raw = req.headers[identityHeaderName(env)];
+    return typeof raw === 'string' && raw.length > 0 ? raw : null;
+  }
+
+  type AuthUrlResult = { ok: true; url: string } | { ok: false; status: 401 | 500 | 503; error: string };
+
+  /**
+   * Checks credentials before issuing anything, so a misconfigured server
+   * neither burns pending states nor sets cookies; errors are generic (the
+   * underlying message names env vars and is only logged).
+   */
+  function newAuthUrl(req: Request, res: Response): AuthUrlResult {
+    if (!isConfigured()) return { ok: false, status: 503, error: 'Google Drive is not configured on this server' };
+    const identity = initiatorIdentity(req);
+    if (identity === null) return { ok: false, status: 401, error: 'Unauthenticated' };
+    const existing = readCookie(req.headers.cookie, OAUTH_COOKIE);
+    const nonce = existing && NONCE_RE.test(existing) ? existing : randomBytes(32).toString('base64url');
+    const owner = identity || `browser:${nonce}`;
+    let url: string;
+    try {
+      const { state, codeChallenge } = deps.stateStore.issue({ owner, binding: `${identity}\n${nonce}` });
+      url = deps.getAuthUrl({ state, codeChallenge });
+    } catch (e) {
+      console.warn('[google/auth] could not build auth URL:', (e as Error).message);
+      return { ok: false, status: 500, error: 'OAuth start failed' };
+    }
+    res.cookie(OAUTH_COOKIE, nonce, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: isGuarded(env) || req.secure,
+      path: OAUTH_COOKIE_PATH,
+      maxAge: 10 * 60_000,
+    });
+    return { ok: true, url };
+  }
 
   // --- Auth routes ---
 
@@ -16,30 +90,34 @@ export function googleRoutes(ctx: ServerContext): Router {
     res.json({ connected });
   });
 
-  router.get('/auth/url', (_req, res) => {
-    try {
-      const url = getAuthUrl();
-      res.json({ url });
-    } catch (e) {
-      res.status(500).json({ error: (e as Error).message });
-    }
+  router.get('/auth/url', (req, res) => {
+    const r = newAuthUrl(req, res);
+    if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
+    res.json({ url: r.url });
   });
 
   /** Server-side redirect — frontend opens this in a popup directly,
    *  preserving the user-gesture chain so popups aren't blocked. */
-  router.get('/auth/start', (_req, res) => {
-    try {
-      res.redirect(getAuthUrl());
-    } catch (e) {
-      res.status(500).send(`OAuth start failed: ${(e as Error).message}`);
-    }
+  router.get('/auth/start', (req, res) => {
+    const r = newAuthUrl(req, res);
+    if (!r.ok) { res.status(r.status).send(r.error); return; }
+    res.redirect(r.url);
   });
 
   router.get('/auth/callback', async (req, res) => {
-    const code = req.query['code'] as string | undefined;
-    if (!code) { res.status(400).send('Missing code'); return; }
+    const code = req.query['code'];
+    // Verify state before anything else: a missing, unknown, expired, replayed
+    // or foreign (other identity / other browser) state must never reach the
+    // token exchange (login CSRF).
+    const identity = initiatorIdentity(req);
+    const nonce = readCookie(req.headers.cookie, OAUTH_COOKIE) ?? '';
+    const codeVerifier = identity === null || !NONCE_RE.test(nonce)
+      ? null
+      : deps.stateStore.consume(req.query['state'], `${identity}\n${nonce}`);
+    if (!codeVerifier) { res.status(400).send('Invalid OAuth state'); return; }
+    if (typeof code !== 'string' || !code) { res.status(400).send('Missing code'); return; }
     try {
-      const tokens = await exchangeCode(code);
+      const tokens = await deps.exchangeCode(code, codeVerifier);
       const updated = { ...ctx.config, googleTokens: tokens };
       await ctx.saveConfig(updated);
       // Redirect back to app

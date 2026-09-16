@@ -17,11 +17,26 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!r.ok) {
-    const text = await r.text();
-    throw new Error(`API ${r.status}: ${text}`);
-  }
+  if (!r.ok) throw new Error(apiErrorMessage(r.status, await r.text()));
   return r.json();
+}
+
+/**
+ * Human-readable error for a failed API call: the server's JSON `error`
+ * field when present (e.g. "Re-enter the API key…", "Forbidden (403)"),
+ * otherwise just the status — never a raw response body.
+ */
+export function apiErrorMessage(status: number, body: string): string {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed === 'object' && parsed !== null && 'error' in parsed) {
+      const error = (parsed as { error: unknown }).error;
+      if (typeof error === 'string' && error.length > 0) {
+        return status === 401 || status === 403 ? `${error} (${status})` : error;
+      }
+    }
+  } catch { /* not JSON */ }
+  return `API ${status}`;
 }
 
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
@@ -30,7 +45,7 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`API ${r.status}`);
+  if (!r.ok) throw new Error(apiErrorMessage(r.status, await r.text()));
   return r.json();
 }
 
