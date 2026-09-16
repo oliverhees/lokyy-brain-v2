@@ -226,7 +226,8 @@ services:
       - traefik.http.routers.metamcp-outpost.entrypoints=web
       - traefik.http.routers.metamcp-outpost.service=authentik
       # MCP endpoints for AI clients: authenticated by MetaMCP API key, not browser SSO
-      - traefik.http.routers.metamcp-endpoints.rule=Host(`mcp.localhost`) && PathPrefix(`/metamcp/`)
+      # Only Streamable HTTP of a named endpoint: no endpoint catalogue (GET /metamcp/), no SSE/OpenAPI surface
+      - traefik.http.routers.metamcp-endpoints.rule=Host(`mcp.localhost`) && PathRegexp(`^/metamcp/[a-z0-9-]+/mcp$`)
       - traefik.http.routers.metamcp-endpoints.entrypoints=web
       - traefik.http.routers.metamcp-endpoints.priority=100
       - traefik.http.routers.metamcp-endpoints.service=metamcp

@@ -86,9 +86,10 @@ rpc ben bearer "$ANNA" "" "$INIT";  expect "anna's key on ben's endpoint (Bearer
 rpc ben query "$ANNA" "" "$INIT";   expect "anna's key on ben's endpoint (query param, disabled)" "$STATUS" "401"
 rpc ben none "" "" "$INIT";         expect "ben's endpoint without key" "$STATUS" "401"
 rpc anna key "$BEN" "" "$INIT";     expect "ben's key on anna's endpoint" "$STATUS" "403"
-expect "endpoint catalogue GET /metamcp/ not routed" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")" "404"
+# Anything but /metamcp/<name>/mcp falls through to the Authentik-protected admin router (302 to login).
+expect "endpoint catalogue GET /metamcp/ not routed to MetaMCP" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")" "302"
 for p in sse message api/openapi.json api/tools/x; do
-  expect "only /mcp is routed: /metamcp/anna/$p" "$(curl -s -o /dev/null -w '%{http_code}' -H "x-api-key: $ANNA" "$BASE/anna/$p")" "404"
+  expect "only /mcp is routed: /metamcp/anna/$p" "$(curl -s -o /dev/null -w '%{http_code}' -H "x-api-key: $ANNA" "$BASE/anna/$p")" "302"
 done
 
 echo "== 2. Tool visibility per user"
@@ -96,7 +97,7 @@ sa=$(open anna "$ANNA"); sb=$(open ben "$BEN")
 expect "anna opens a session with her key" "$([[ -n $sa ]] && echo yes || echo no)" "yes"
 expect "ben opens a session with his key" "$([[ -n $sb ]] && echo yes || echo no)" "yes"
 tools anna "$ANNA" "$sa" >"$tmp/anna.tools"; tools ben "$BEN" "$sb" >"$tmp/ben.tools"
-allow=$(sed -n "/READ_ONLY_TOOL_NAMES/,/]);/p" ../../apps/mcp/src/access.ts | grep -oE "'[a-z_]+'" | tr -d "'" | sort)
+allow=$(sed -n "/^export const READ_ONLY_TOOL_NAMES/,/]);/p" ../../apps/mcp/src/access.ts | grep -oE "'[a-z_]+'" | tr -d "'" | sort)
 expect "anna sees only her vault + company servers" "$(sed 's/__.*//' "$tmp/anna.tools" | sort -u | tr '\n' ' ' | sed 's/ $//')" "anna-firma anna-vault"
 expect "anna's company tools == vault read allowlist (12)" \
   "$([[ "$(sed -n 's/^anna-firma__//p' "$tmp/anna.tools")" == "$allow" ]] && echo "equal $(grep -c '^anna-firma__' "$tmp/anna.tools")" || echo "DIFF: $(sed -n 's/^anna-firma__//p' "$tmp/anna.tools" | tr '\n' ' ')")" "equal 12"
@@ -130,7 +131,9 @@ expect "ben's session cannot use anna's server names" "$(call ben "$BEN" "$sb" a
 echo "== 5. MetaMCP fail-open cases cannot turn into a company write (vault enforces)"
 # Credentials MetaMCP actually holds: a reader's company server must carry the read-only token, never the full one.
 dbq() { docker compose exec -T -e MCP_TOKEN_FIRMA -e MCP_READONLY_TOKEN_FIRMA metamcp-db psql -U metamcp -d metamcp -tA -v ON_ERROR_STOP=1 \
-  -c '\getenv full MCP_TOKEN_FIRMA' -c '\getenv ro MCP_READONLY_TOKEN_FIRMA' -c "$1" | tr -d '\r'; }
+  <<<"\\getenv full MCP_TOKEN_FIRMA
+\\getenv ro MCP_READONLY_TOKEN_FIRMA
+$1;" | tr -d '\r'; }
 expect "anna-firma stores the company READ-ONLY token" "$(dbq "select count(*) from mcp_servers where name='anna-firma' and bearer_token = :'ro'")" "1"
 expect "no server in anna's namespace stores the full company token" \
   "$(dbq "select count(*) from mcp_servers s join namespace_server_mappings m on m.mcp_server_uuid = s.uuid join namespaces n on n.uuid = m.namespace_uuid where n.user_id = 'lokyy-anna' and s.bearer_token = :'full'")" "0"
