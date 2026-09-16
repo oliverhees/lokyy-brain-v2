@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { ingestPaste, compileL1 } from '@mindbase/core';
 import type { ServerContext } from '../context';
 import { makeHybridSearchClosure } from '../lib/compile-deps';
-import { getAuthUrl, exchangeCode, listFiles, downloadFileContent, isSupported } from '../google-drive';
+import { getAuthUrl, exchangeCode, hasGoogleCredentials, listFiles, downloadFileContent, isSupported } from '../google-drive';
 import { loadManifest, contentHash, isDuplicate } from '../manifest';
 import { OAuthStateStore } from '../lib/oauth-state';
 import { identityHeaderName, isGuarded, requireConfigAdminAlways } from '../lib/proxy-identity';
@@ -14,6 +14,8 @@ export interface GoogleOAuthDeps {
   exchangeCode: typeof exchangeCode;
   /** Defaults to process.env. */
   env?: NodeJS.ProcessEnv;
+  /** Defaults to hasGoogleCredentials (GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET present). */
+  isConfigured?: () => boolean;
 }
 
 /** HttpOnly, SameSite=Lax browser nonce that binds an OAuth state to the initiating browser. */
@@ -35,6 +37,7 @@ export function googleRoutes(
 ): Router {
   const router = Router();
   const env = deps.env ?? process.env;
+  const isConfigured = deps.isConfigured ?? hasGoogleCredentials;
 
   // Guarded mode: connecting Drive is a configuration change → admins only, for every step.
   const adminOnly = requireConfigAdminAlways(env);
@@ -47,11 +50,28 @@ export function googleRoutes(
     return typeof raw === 'string' && raw.length > 0 ? raw : null;
   }
 
-  function newAuthUrl(req: Request, res: Response): string | null {
+  type AuthUrlResult = { ok: true; url: string } | { ok: false; status: 401 | 500 | 503; error: string };
+
+  /**
+   * Checks credentials before issuing anything, so a misconfigured server
+   * neither burns pending states nor sets cookies; errors are generic (the
+   * underlying message names env vars and is only logged).
+   */
+  function newAuthUrl(req: Request, res: Response): AuthUrlResult {
+    if (!isConfigured()) return { ok: false, status: 503, error: 'Google Drive is not configured on this server' };
     const identity = initiatorIdentity(req);
-    if (identity === null) return null;
+    if (identity === null) return { ok: false, status: 401, error: 'Unauthenticated' };
     const existing = readCookie(req.headers.cookie, OAUTH_COOKIE);
     const nonce = existing && NONCE_RE.test(existing) ? existing : randomBytes(32).toString('base64url');
+    const owner = identity || `browser:${nonce}`;
+    let url: string;
+    try {
+      const { state, codeChallenge } = deps.stateStore.issue({ owner, binding: `${identity}\n${nonce}` });
+      url = deps.getAuthUrl({ state, codeChallenge });
+    } catch (e) {
+      console.warn('[google/auth] could not build auth URL:', (e as Error).message);
+      return { ok: false, status: 500, error: 'OAuth start failed' };
+    }
     res.cookie(OAUTH_COOKIE, nonce, {
       httpOnly: true,
       sameSite: 'lax',
@@ -59,9 +79,7 @@ export function googleRoutes(
       path: OAUTH_COOKIE_PATH,
       maxAge: 10 * 60_000,
     });
-    const owner = identity || `browser:${nonce}`;
-    const { state, codeChallenge } = deps.stateStore.issue({ owner, binding: `${identity}\n${nonce}` });
-    return deps.getAuthUrl({ state, codeChallenge });
+    return { ok: true, url };
   }
 
   // --- Auth routes ---
@@ -73,25 +91,17 @@ export function googleRoutes(
   });
 
   router.get('/auth/url', (req, res) => {
-    try {
-      const url = newAuthUrl(req, res);
-      if (!url) { res.status(401).json({ error: 'Unauthenticated' }); return; }
-      res.json({ url });
-    } catch (e) {
-      res.status(500).json({ error: (e as Error).message });
-    }
+    const r = newAuthUrl(req, res);
+    if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
+    res.json({ url: r.url });
   });
 
   /** Server-side redirect — frontend opens this in a popup directly,
    *  preserving the user-gesture chain so popups aren't blocked. */
   router.get('/auth/start', (req, res) => {
-    try {
-      const url = newAuthUrl(req, res);
-      if (!url) { res.status(401).send('Unauthenticated'); return; }
-      res.redirect(url);
-    } catch (e) {
-      res.status(500).send(`OAuth start failed: ${(e as Error).message}`);
-    }
+    const r = newAuthUrl(req, res);
+    if (!r.ok) { res.status(r.status).send(r.error); return; }
+    res.redirect(r.url);
   });
 
   router.get('/auth/callback', async (req, res) => {

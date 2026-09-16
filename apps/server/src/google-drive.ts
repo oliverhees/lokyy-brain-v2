@@ -4,6 +4,10 @@ import type { AtlasConfig } from './config';
 const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
 const REDIRECT_URI = 'http://localhost:4321/api/google/auth/callback';
 
+export function hasGoogleCredentials(): boolean {
+  return !!process.env['GOOGLE_CLIENT_ID'] && !!process.env['GOOGLE_CLIENT_SECRET'];
+}
+
 export function createOAuth2Client(): InstanceType<typeof google.auth.OAuth2> {
   const clientId = process.env['GOOGLE_CLIENT_ID'];
   const clientSecret = process.env['GOOGLE_CLIENT_SECRET'];

@@ -5,7 +5,7 @@
 import type { RequestHandler } from 'express';
 
 export const DEFAULT_IDENTITY_HEADER = 'x-authentik-username';
-/** Authentik sends groups pipe-separated (`a|b`); commas are accepted too. */
+/** Authentik sends groups pipe-separated (`a|b`); only `|` separates (see parseGroups). */
 export const DEFAULT_GROUPS_HEADER = 'x-authentik-groups';
 
 /** Headers a client sets itself, or that the server consumes for other purposes. */

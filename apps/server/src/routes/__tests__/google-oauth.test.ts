@@ -20,7 +20,7 @@ describe('Google OAuth — admin gate, state bound to initiator, PKCE (LBV2-9)',
 
   function appFor(env: NodeJS.ProcessEnv): express.Application {
     const app = express();
-    app.use('/api/google', googleRoutes(ctx, { ...deps, env }));
+    app.use('/api/google', googleRoutes(ctx, { ...deps, env, isConfigured: () => true }));
     return app;
   }
 
@@ -100,6 +100,29 @@ describe('Google OAuth — admin gate, state bound to initiator, PKCE (LBV2-9)',
       const replay = await request(app).get(`/api/google/auth/callback?code=good&state=${state}`).set('Cookie', cookie);
       expect(replay.status).toBe(400);
       expect(deps.exchangeCode).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('missing Google credentials (QA 5)', () => {
+    it.each(['/api/google/auth/url', '/api/google/auth/start'])('%s answers a generic 503 without issuing state or cookie', async (path) => {
+      const issue = vi.spyOn(deps.stateStore, 'issue');
+      const app = express();
+      app.use('/api/google', googleRoutes(ctx, { ...deps, env: {}, isConfigured: () => false }));
+      const res = await request(app).get(path);
+      expect(res.status).toBe(503);
+      expect(res.text).not.toMatch(/GOOGLE_CLIENT/);
+      expect(res.headers['set-cookie']).toBeUndefined();
+      expect(issue).not.toHaveBeenCalled();
+      expect(deps.getAuthUrl).not.toHaveBeenCalled();
+    });
+
+    it('a failing getAuthUrl returns a generic error', async () => {
+      const app = express();
+      deps.getAuthUrl.mockImplementation(() => { throw new Error('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set'); });
+      app.use('/api/google', googleRoutes(ctx, { ...deps, env: {}, isConfigured: () => true }));
+      const res = await request(app).get('/api/google/auth/url');
+      expect(res.status).toBe(500);
+      expect(res.text).not.toMatch(/GOOGLE_CLIENT/);
     });
   });
 

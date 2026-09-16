@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { createAdapter } from '@mindbase/core';
 import type { ServerContext } from '../context';
 import type { AtlasConfig } from '../config';
-import { KeyReentryError, maskConfig, mergeSecrets, unmaskApiKey, maskUrlCredentials, resolveStoredBaseUrl } from '../lib/config-secrets';
+import { ConfigInputError, maskConfig, mergeSecrets, unmaskApiKey, maskUrlCredentials, resolveStoredBaseUrl } from '../lib/config-secrets';
 
 const GENERIC_TEST_ERROR = 'Connection test failed';
 
@@ -19,7 +19,7 @@ export function configRoutes(ctx: ServerContext): Router {
       await ctx.saveConfig(mergeSecrets(body, ctx.config));
       res.json({ ok: true });
     } catch (e) {
-      if (e instanceof KeyReentryError) {
+      if (e instanceof ConfigInputError) {
         res.status(400).json({ ok: false, error: e.message });
         return;
       }
@@ -33,7 +33,7 @@ export function configRoutes(ctx: ServerContext): Router {
     try {
       key = unmaskApiKey({ apiKey, provider, baseUrl }, ctx.config);
     } catch (e) {
-      if (!(e instanceof KeyReentryError)) throw e;
+      if (!(e instanceof ConfigInputError)) throw e;
       res.status(400).json({ ok: false, error: e.message });
       return;
     }

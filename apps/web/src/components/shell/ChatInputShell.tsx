@@ -3,6 +3,7 @@ import { Paperclip, AtSign, Slash, Send, Check, Settings as SettingsIcon } from 
 import { SlashMenu, matchSlashCommands, type SlashCommand } from '../ops/SlashMenu';
 import type { OpName } from '../ops/ops-types';
 import { apiGet, apiPut } from '../../lib/api';
+import { modelSwitchPayload } from '../../lib/config-form';
 import { useSettings } from '../../store/settings';
 import { showToast } from '../../store/toast';
 
@@ -60,8 +61,9 @@ export function ChatInputShell({
     setModelMenuOpen(false);
     if (model === modelName && provider === 'ollama') return;
     try {
-      const cfg = await apiGet<Record<string, unknown>>('/config');
-      await apiPut('/config', { ...cfg, provider: 'ollama', model });
+      // Only the changed fields: echoing GET /config would send masked secrets back.
+      await apiPut('/config', modelSwitchPayload(model));
+      useSettings.getState().setApiKey('');
       useSettings.getState().setProvider('ollama');
       useSettings.getState().setModel(model);
       showToast(`Switched to ${model}`);

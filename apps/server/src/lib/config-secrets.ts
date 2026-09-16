@@ -11,8 +11,26 @@ export const MASKED_SECRET = '********';
 
 export type PublicConfig = Omit<AtlasConfig, 'googleTokens'> & { hasApiKey: boolean };
 
-export class KeyReentryError extends Error {
+/** Invalid config input from the client → 400. */
+export class ConfigInputError extends Error {}
+
+export class KeyReentryError extends ConfigInputError {
   constructor(what = 'API key') { super(`Re-enter the ${what} when changing provider or endpoint`); }
+}
+
+/** Providers that never use the LLM API key. Switching to one without a key clears the stored key. */
+const KEYLESS_PROVIDERS: ReadonlySet<string> = new Set(['ollama']);
+
+/** A new secret must not contain the mask: `********abc` is a UI accident, not a key. */
+function assertNotMaskDerived(incoming: unknown): void {
+  if (typeof incoming === 'string' && incoming !== MASKED_SECRET && incoming.includes(MASKED_SECRET)) {
+    throw new ConfigInputError(`Secret values must not contain the mask "${MASKED_SECRET}"; enter the full value`);
+  }
+}
+
+function smtpPortKey(port: unknown): string {
+  if (port === undefined || port === null || port === '') return '';
+  return String(Number(port));
 }
 
 const SECRET_QUERY_PARAM = /key|token|secret|pass|auth|sig|credential/i;
@@ -68,7 +86,8 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 /** The client echoes back the masked baseUrl; map it to the stored one. */
 function resolveBaseUrl(incoming: unknown, stored: string): string {
   if (typeof incoming !== 'string') return stored;
-  if (stored && incoming === maskUrlCredentials(stored) && incoming !== stored) return stored;
+  const masked = maskUrlCredentials(stored);
+  if (stored && masked !== stored && normalizeEndpoint(incoming) === normalizeEndpoint(masked)) return stored;
   return incoming;
 }
 
@@ -80,6 +99,10 @@ function resolveBaseUrl(incoming: unknown, stored: string): string {
 export function mergeSecrets(incoming: Record<string, unknown>, stored: AtlasConfig): AtlasConfig {
   const { hasApiKey: _has, googleTokens: _clientTokens, ...body } = incoming;
   const merged = { ...stored, ...body } as unknown as AtlasConfig;
+
+  assertNotMaskDerived(body['apiKey']);
+  assertNotMaskDerived(body['braveApiKey']);
+  if (isRecord(body['dailyBrief']) && isRecord(body['dailyBrief']['smtp'])) assertNotMaskDerived(body['dailyBrief']['smtp']['pass']);
 
   // A non-object value (null, string, array…) for a section must not wipe it.
   for (const section of ['dailyBrief', 'rss', 'srs'] as const) {
@@ -97,8 +120,14 @@ export function mergeSecrets(incoming: Record<string, unknown>, stored: AtlasCon
   if (wantsStored(body['apiKey'])) {
     const sameDestination = merged.provider === stored.provider
       && normalizeEndpoint(merged.baseUrl) === normalizeEndpoint(stored.baseUrl);
-    if (stored.apiKey && !sameDestination) throw new KeyReentryError();
-    merged.apiKey = stored.apiKey ?? '';
+    if (stored.apiKey && !sameDestination) {
+      // Keyless target (e.g. the chat model switch to ollama): the key is not
+      // needed there, so it is dropped rather than carried to the new destination.
+      if (!KEYLESS_PROVIDERS.has(merged.provider)) throw new KeyReentryError();
+      merged.apiKey = '';
+    } else {
+      merged.apiKey = stored.apiKey ?? '';
+    }
   }
 
   if (wantsStored(body['braveApiKey'])) {
@@ -115,7 +144,7 @@ export function mergeSecrets(incoming: Record<string, unknown>, stored: AtlasCon
       const storedPass = storedBrief?.smtp.pass ?? '';
       const storedSmtp = storedBrief?.smtp;
       const sameSmtpDestination = (smtp.host ?? '').trim().toLowerCase() === (storedSmtp?.host ?? '').trim().toLowerCase()
-        && Number(smtp.port) === Number(storedSmtp?.port)
+        && smtpPortKey(smtp.port) === smtpPortKey(storedSmtp?.port)
         && Boolean(smtp.secure) === Boolean(storedSmtp?.secure);
       if (storedPass && !sameSmtpDestination) {
         throw new KeyReentryError('SMTP password');
@@ -140,7 +169,9 @@ export function unmaskApiKey(
   req: { apiKey?: string; provider?: string; baseUrl?: string },
   stored: AtlasConfig,
 ): string {
+  assertNotMaskDerived(req.apiKey);
   if (req.apiKey !== MASKED_SECRET) return req.apiKey ?? '';
+  if (req.provider && KEYLESS_PROVIDERS.has(req.provider) && req.provider !== stored.provider) return '';
   const baseUrl = resolveBaseUrl(req.baseUrl ?? '', stored.baseUrl ?? '');
   if (req.provider !== stored.provider || normalizeEndpoint(baseUrl) !== normalizeEndpoint(stored.baseUrl)) {
     throw new KeyReentryError();

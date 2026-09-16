@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { createContext, type ServerContext } from '../../context.js';
 import { configRoutes } from '../config.js';
 import {
-  MASKED_SECRET, KeyReentryError, maskConfig, maskUrlCredentials, mergeSecrets, unmaskApiKey, resolveStoredBaseUrl,
+  MASKED_SECRET, KeyReentryError, ConfigInputError, maskConfig, maskUrlCredentials, mergeSecrets, unmaskApiKey, resolveStoredBaseUrl,
 } from '../../lib/config-secrets.js';
 import type { AtlasConfig } from '../../config.js';
 
@@ -115,6 +115,49 @@ describe('config-secrets helpers (LBV2-9)', () => {
     expect(resolveStoredBaseUrl(undefined, withCreds)).toBe('');
   });
 
+  it('mergeSecrets: switching to a keyless provider (ollama) without a key clears the stored key (QA MAJOR 1)', () => {
+    const masked = maskConfig(BASE) as unknown as Record<string, unknown>;
+    const toOllama = mergeSecrets({ ...masked, provider: 'ollama', model: 'llama3' }, BASE);
+    expect(toOllama.provider).toBe('ollama');
+    expect(toOllama.apiKey).toBe('');
+    const partial = mergeSecrets({ provider: 'ollama', model: 'llama3' }, BASE);
+    expect(partial.apiKey).toBe('');
+    expect(partial.baseUrl).toBe('');
+    // the key never survives towards a new endpoint, even for ollama
+    const evil = mergeSecrets({ provider: 'ollama', baseUrl: 'https://attacker.example' }, BASE);
+    expect(evil.apiKey).toBe('');
+    // keyed providers still require re-entry
+    expect(() => mergeSecrets({ provider: 'anthropic' }, BASE)).toThrow(KeyReentryError);
+  });
+
+  it.each(['********abc', 'abc********', 'x********y'])('mergeSecrets rejects a new secret containing the mask %j (QA 2)', (value) => {
+    expect(() => mergeSecrets({ apiKey: value }, BASE)).toThrow(ConfigInputError);
+    expect(() => mergeSecrets({ braveApiKey: value }, BASE)).toThrow(ConfigInputError);
+    const masked = maskConfig(BASE);
+    const body = { dailyBrief: { ...masked.dailyBrief!, smtp: { ...masked.dailyBrief!.smtp, pass: value } } };
+    expect(() => mergeSecrets(body as unknown as Record<string, unknown>, BASE)).toThrow(ConfigInputError);
+    expect(() => unmaskApiKey({ apiKey: value, provider: 'openai', baseUrl: '' }, BASE)).toThrow(ConfigInputError);
+  });
+
+  it('unmaskApiKey: masked key for a keyless provider yields no key instead of an error', () => {
+    expect(unmaskApiKey({ apiKey: MASKED_SECRET, provider: 'ollama', baseUrl: 'http://localhost:11434' }, BASE)).toBe('');
+  });
+
+  it('an unchanged SMTP section without a port round-trips (QA 3)', () => {
+    const noPort = { ...BASE, dailyBrief: { ...BASE.dailyBrief!, smtp: { host: 'smtp.example', secure: false, user: 'u', pass: 'smtp-pass' } } } as unknown as AtlasConfig;
+    const merged = mergeSecrets(maskConfig(noPort) as unknown as Record<string, unknown>, noPort);
+    expect(merged.dailyBrief?.smtp.pass).toBe('smtp-pass');
+  });
+
+  it('a masked baseUrl sent back with a trailing slash keeps the stored URL and key (QA 4)', () => {
+    const withCreds = { ...BASE, baseUrl: 'https://u:p@llm.example/v1' };
+    const body = { ...maskConfig(withCreds), baseUrl: `${maskUrlCredentials(withCreds.baseUrl)}/` };
+    const merged = mergeSecrets(body as unknown as Record<string, unknown>, withCreds);
+    expect(merged.baseUrl).toBe('https://u:p@llm.example/v1');
+    expect(merged.apiKey).toBe('sk-live-secret-1234');
+    expect(unmaskApiKey({ apiKey: MASKED_SECRET, provider: 'openai', baseUrl: body.baseUrl }, withCreds)).toBe('sk-live-secret-1234');
+  });
+
   it('mergeSecrets restores a masked baseUrl with credentials', () => {
     const withCreds = { ...BASE, baseUrl: 'https://u:p@llm.example/v1?key=zzz' };
     const merged = mergeSecrets(maskConfig(withCreds) as unknown as Record<string, unknown>, withCreds);
@@ -220,6 +263,21 @@ describe('/api/config routes — secret masking (LBV2-9)', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/re-enter/i);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('PUT {provider: ollama, model} (chat model switch) succeeds and clears the cloud key (QA MAJOR 1)', async () => {
+    const res = await request(app).put('/api/config').send({ provider: 'ollama', model: 'llama3' });
+    expect(res.status).toBe(200);
+    expect(ctx.config.provider).toBe('ollama');
+    expect(ctx.config.apiKey).toBe('');
+    expect(ctx.config.dailyBrief?.smtp.pass).toBe('smtp-pass');
+  });
+
+  it('PUT with a key containing the mask answers 400 with a message (QA 2)', async () => {
+    const res = await request(app).put('/api/config').send({ apiKey: '********abc' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/mask/i);
+    expect(ctx.config.apiKey).toBe('sk-live-secret-1234');
   });
 
   it('POST /test with the masked baseUrl calls the stored endpoint, not the masked string (LOW)', async () => {
