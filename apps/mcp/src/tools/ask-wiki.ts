@@ -109,7 +109,11 @@ export async function handle(ctx: Context, rawInput: unknown) {
       if (!page) continue;
       const body = page.body.length > MAX_PAGE_BODY_CHARS ? `${cutAt(page.body, MAX_PAGE_BODY_CHARS)}${TRUNCATION_MARK}` : page.body;
       let section = `\n\n## [${i}] ${page.title} (slug: ${slug})\n\n${body}`;
-      if (section.length > remaining) section = `${cutAt(section, remaining)}${TRUNCATION_MARK}`;
+      // The mark counts toward the cap, so the block never exceeds MAX_CONTEXT_CHARS.
+      if (section.length > remaining) {
+        if (remaining <= TRUNCATION_MARK.length) break;
+        section = `${cutAt(section, remaining - TRUNCATION_MARK.length)}${TRUNCATION_MARK}`;
+      }
       contextBlock += section;
       citations.push({
         n: i,

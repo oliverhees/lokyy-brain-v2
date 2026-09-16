@@ -4,7 +4,7 @@
 
 ### Added
 - MCP over Streamable HTTP (`apps/mcp/dist/http.js`) with bearer token, session limits and Host allow-list; optional read-only token profile with a fail-closed allowlist of 13 tools and a reader view that hides `internal`/`pii` pages. See `docs/self-hosting-mcp-http.md`.
-- Readers may use `ask_wiki` (LBV2-18): retrieval runs only through the reader view, so only visible root-wiki pages are sent to the configured LLM provider; provider errors are generic; nothing is written. Only real provider requests count against the rate limit (failing calls are free). Rate limited per read-only session (`MCP_HTTP_READONLY_LLM_RATE`, default 20) and for all read-only sessions together (`MCP_HTTP_READONLY_LLM_RATE_TOTAL`, default 60) per `MCP_HTTP_READONLY_LLM_WINDOW_MS` (default 10 min).
+- Readers may use `ask_wiki` (LBV2-18): retrieval runs only through the reader view, so only visible root-wiki pages are sent to the configured LLM provider; provider errors are generic; nothing is written. Only provider requests count against the rate limit: calls that never reach the provider (invalid input, unsafe slug, no visible page) are free; requests the provider answers with an error (e.g. HTTP 500) consume budget. Rate limited per read-only session (`MCP_HTTP_READONLY_LLM_RATE`, default 20) and for all read-only sessions together (`MCP_HTTP_READONLY_LLM_RATE_TOTAL`, default 60) per `MCP_HTTP_READONLY_LLM_WINDOW_MS` (default 10 min).
 - Source-built vault Docker image (`deploy/Dockerfile`).
 - Web server proxy shared-secret guard (`VAULT_PROXY_SECRET`, header `X-Vault-Proxy-Secret`); required by the Docker image (`VAULT_REQUIRE_PROXY_SECRET=1`). Unset outside the image = previous behaviour.
 

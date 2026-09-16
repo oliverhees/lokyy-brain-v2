@@ -253,6 +253,9 @@ async function run() {
     const bigContent = bigBody?.messages?.[0]?.content ?? '';
     check(bigAnswer.includes('Mock answer') && bigContent.length > 0 && bigContent.length <= 42000 && bigContent.includes('BIGSTART0'),
       'full: oversized page bodies truncated to a bounded prompt', `len=${bigContent.length}`);
+    const ctxBlock = bigContent.slice(bigContent.indexOf('# Wiki context') + '# Wiki context'.length, bigContent.lastIndexOf('\n\n# Question'));
+    check(ctxBlock.length > 39000 && ctxBlock.length <= 40000 && ctxBlock.endsWith('[… truncated]'),
+      'full: context block incl. truncation mark stays within 40000 chars', `len=${ctxBlock.length}`);
     const bigAgain = await call(full, 'ask_wiki', { question: 'zzqq', context_pages: BIG_SLUGS, max_pages: 20 });
     check(bigAgain.includes('Mock answer') && JSON.parse(llmRequests.at(-1)).messages[0].content === bigContent, 'full: truncation is deterministic');
     check(llmRequests.at(-1).length < 60000, 'readonly/full: request body bounded');
