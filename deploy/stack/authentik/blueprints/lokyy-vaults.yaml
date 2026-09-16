@@ -1,0 +1,128 @@
+# yaml-language-server: $schema=https://goauthentik.io/blueprints/schema.json
+# Lokyy Brain v2 — local prototype: demo users, groups, one forward-auth
+# proxy provider + application per vault, and per-vault access bindings.
+version: 1
+metadata:
+  name: lokyy-vaults
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  # ---------------------------------------------------------------- groups
+  - model: authentik_core.group
+    id: group-firma-write
+    identifiers: { name: vault-firma-write }
+    attrs: { name: vault-firma-write }
+  - model: authentik_core.group
+    id: group-firma-read
+    identifiers: { name: vault-firma-read }
+    attrs: { name: vault-firma-read }
+  - model: authentik_core.group
+    id: group-admins
+    identifiers: { name: lokyy-admins }
+    attrs: { name: lokyy-admins }
+
+  # ----------------------------------------------------------------- users
+  # anna: company vault read-only (MCP). ben: company vault read + write.
+  - model: authentik_core.user
+    id: user-anna
+    identifiers: { username: anna }
+    attrs:
+      username: anna
+      name: Anna Demo
+      email: anna@example.local
+      password: !Env DEMO_PASS_ANNA
+      groups: [!KeyOf group-firma-read]
+  - model: authentik_core.user
+    id: user-ben
+    identifiers: { username: ben }
+    attrs:
+      username: ben
+      name: Ben Demo
+      email: ben@example.local
+      password: !Env DEMO_PASS_BEN
+      groups: [!KeyOf group-firma-write]
+  - model: authentik_core.user
+    identifiers: { username: akadmin }
+    state: present
+    attrs:
+      groups: [!KeyOf group-admins]
+
+  # ------------------------------------------------- providers + applications
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-anna
+    identifiers: { name: vault-anna }
+    attrs: &provider
+      name: vault-anna
+      mode: forward_single
+      external_host: http://anna.vault.localhost:18080
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=8
+  - model: authentik_core.application
+    id: app-anna
+    identifiers: { slug: vault-anna }
+    attrs: { name: Vault Anna, slug: vault-anna, provider: !KeyOf provider-anna, policy_engine_mode: any }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-anna, user: !KeyOf user-anna }
+    attrs: { target: !KeyOf app-anna, user: !KeyOf user-anna, order: 0 }
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-ben
+    identifiers: { name: vault-ben }
+    attrs:
+      <<: *provider
+      name: vault-ben
+      external_host: http://ben.vault.localhost:18080
+  - model: authentik_core.application
+    id: app-ben
+    identifiers: { slug: vault-ben }
+    attrs: { name: Vault Ben, slug: vault-ben, provider: !KeyOf provider-ben, policy_engine_mode: any }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-ben, user: !KeyOf user-ben }
+    attrs: { target: !KeyOf app-ben, user: !KeyOf user-ben, order: 0 }
+
+  # Company vault web UI: only writers (readers use MCP with filtered tools)
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-firma
+    identifiers: { name: vault-firma }
+    attrs:
+      <<: *provider
+      name: vault-firma
+      external_host: http://firma.vault.localhost:18080
+  - model: authentik_core.application
+    id: app-firma
+    identifiers: { slug: vault-firma }
+    attrs: { name: Firmen-Vault, slug: vault-firma, provider: !KeyOf provider-firma, policy_engine_mode: any }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-firma, group: !KeyOf group-firma-write }
+    attrs: { target: !KeyOf app-firma, group: !KeyOf group-firma-write, order: 0 }
+
+  # MetaMCP admin UI: admins only
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-metamcp
+    identifiers: { name: metamcp-admin }
+    attrs:
+      <<: *provider
+      name: metamcp-admin
+      external_host: http://mcp.localhost:18080
+  - model: authentik_core.application
+    id: app-metamcp
+    identifiers: { slug: metamcp-admin }
+    attrs: { name: MetaMCP Admin, slug: metamcp-admin, provider: !KeyOf provider-metamcp, policy_engine_mode: any }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-metamcp, group: !KeyOf group-admins }
+    attrs: { target: !KeyOf app-metamcp, group: !KeyOf group-admins, order: 0 }
+
+  # ------------------------------------------------------ embedded outpost
+  - model: authentik_outposts.outpost
+    identifiers: { managed: goauthentik.io/outposts/embedded }
+    state: present
+    attrs:
+      providers:
+        - !KeyOf provider-anna
+        - !KeyOf provider-ben
+        - !KeyOf provider-firma
+        - !KeyOf provider-metamcp
+      config:
+        authentik_host: http://auth.localhost:18080
+        authentik_host_browser: http://auth.localhost:18080
