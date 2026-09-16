@@ -59,6 +59,9 @@ The server validates every integer variable at startup. A value that is not an i
 | `MCP_HTTP_MAX_SESSIONS` | `32` | integer, at least 1 | Maximum number of concurrent full-profile sessions. |
 | `MCP_HTTP_MAX_READONLY_SESSIONS` | value of `MCP_HTTP_MAX_SESSIONS` | integer, at least 1 | Separate maximum for read-only sessions. The two profiles never evict each other's sessions. |
 | `MCP_HTTP_SESSION_IDLE_MS` | `1800000` (30 min) | integer, at least 1000 | Sessions idle longer than this are closed. |
+| `MCP_HTTP_READONLY_LLM_RATE` | `20` | integer, at least 0 | Maximum calls of LLM-backed tools (today: `ask_wiki`) **per read-only session** within the window. `0` disables LLM-backed tools for readers. See [Reader LLM access](#reader-llm-access-ask_wiki). |
+| `MCP_HTTP_READONLY_LLM_RATE_TOTAL` | `60` | integer, at least 0 | Maximum calls of LLM-backed tools of **all read-only sessions together** (that is, per read-only token) within the window. Opening more sessions does not raise it. |
+| `MCP_HTTP_READONLY_LLM_WINDOW_MS` | `600000` (10 min) | integer, at least 1000 | Sliding window for both reader LLM limits. |
 | `MCP_HTTP_ALLOWED_HOSTS` | unset (no Host check) | comma-separated, trimmed, case-insensitive | If set, requests whose `Host` header is not in the list get `403`. The list is compared against the full header value, including the port (for example `vault-acme:4322`). |
 
 ### Container and web server
@@ -87,7 +90,7 @@ Each token maps to one access profile:
 | Profile | Token | Tools | Data visible |
 |---|---|---|---|
 | full | `MCP_HTTP_TOKEN` | all registered tools | everything in the vault |
-| readonly | `MCP_HTTP_READONLY_TOKEN` | the 12 allowlisted tools below | only the reader view (see [Visibility](#visibility-read-only-sessions)) |
+| readonly | `MCP_HTTP_READONLY_TOKEN` | the 13 allowlisted tools below | only the reader view (see [Visibility](#visibility-read-only-sessions)) |
 
 **A session is bound to the token that opened it.** A request that carries a valid token for the other profile on an existing session gets `403 Forbidden: token does not match session`. A read-only client therefore cannot escalate an existing session by switching tokens.
 
@@ -109,6 +112,7 @@ Each token maps to one access profile:
 | `export_subgraph` | page plus neighbours as markdown |
 | `list_feeds` | RSS feed summaries |
 | `list_review_cards` | review cards |
+| `ask_wiki` | question answered by the configured LLM from visible pages, with citations; rate limited (see [Reader LLM access](#reader-llm-access-ask_wiki)) |
 
 For read-only sessions:
 
@@ -120,17 +124,37 @@ For read-only sessions:
 
 ### What readers cannot do, and why
 
-The review rule for the allowlist, from `access.ts`: no persistent writes to the data directory, no outbound network or URL fetching, no LLM or embedding API calls.
+The review rule for the allowlist, from `access.ts`: no persistent writes to the data directory, no outbound network or URL fetching. An LLM call is allowed only for a tool that was reviewed against the reader view and is listed in `LLM_TOOL_NAMES`, which puts every reader call under the rate limit. Today that is `ask_wiki` only.
 
 | Excluded | Examples | Reason |
 |---|---|---|
 | Writes | `create_note`, `append_to_page`, `set_visibility`, `mindbase_contribute`, … | they change the vault |
 | URL fetching | `mindbase_ingest_file` (URL mode), `add_rss_feed` | outbound network access, and they write |
-| LLM and embedding calls | `ask_wiki`, `semantic_search`, `synthesize_topic`, `find_contradictions`, `find_gaps`, `get_pulse`, `generate_daily_brief` | they call the LLM or embedding API or write shared caches |
+| Other LLM and embedding calls | `semantic_search`, `synthesize_topic`, `find_contradictions`, `find_gaps`, `get_pulse`, `generate_daily_brief` | not reviewed against the reader view; they call the LLM or embedding API or write shared caches |
 | Chats | `list_chats`, `recall_chat` | they expose other users' chat history |
 | Project wikis and status tools | `mindbase_status`, `mindbase_gather_sources`, `mindbase_validate_structure` | they read the data directory directly with `node:fs`, bypassing the reader view, and expose file names, modification times, and absolute project paths |
 
-The reader context has no LLM adapter: `getAdapter()` throws. All store write methods and `reindex` reject with `read-only session`.
+All store write methods and `reindex` reject with `read-only session`.
+
+### Reader LLM access (`ask_wiki`)
+
+Decision of 2026-09-16 (LBV2-18): readers may use `ask_wiki` through the vault's configured LLM provider (for example EUrouter), rate limited, and only visible pages may ever be sent to the provider.
+
+**What a reader's `ask_wiki` call sends to the LLM provider.** One chat request containing:
+
+- a fixed instruction text,
+- the reader's question, as typed,
+- for up to `max_pages` (default 8, max 20) pages: title, slug, and the full markdown body.
+
+The pages are chosen from the reader view only: the top keyword search hits for the question, the pages named in `context_pages`, and their 1-hop wikilink neighbours. Every page is read through the reader store, which checks the page's meta on disk right before returning it. Hidden pages (`internal`, `pii`, broken meta), project wikis, concept-layer collisions, raw sources, and chats can therefore never enter the prompt, even when `context_pages` names them. They are skipped exactly like pages that do not exist, so a reader cannot tell a hidden page from a missing one. If no visible page remains, no LLM request is made.
+
+**Data protection note.** Everything in public root-wiki pages can be sent to the configured provider, together with whatever the reader types into the question. Treat the provider as a processor of that data (DPA, region, retention). Do not mark a page `public` if its content must not leave your infrastructure. The provider's answer is returned to the reader, and nothing is written to the vault: no chat history, no cache, no log page.
+
+**Response.** `answer` (LLM text), `citations` (visible pages only), `pages_read` (only the pages actually sent), and `tokens_used`. Provider errors are replaced by the generic `LLM error: LLM request failed`, because provider error bodies can contain internal host names or prompt fragments.
+
+**Credentials stay on the server.** The reader context carries only `provider` and `model` of the configuration. API key and base URL are not part of it.
+
+**Rate limit.** Each call of an LLM-backed tool in a read-only session is counted before any work is done: per session (`MCP_HTTP_READONLY_LLM_RATE`, default 20) and for all read-only sessions together (`MCP_HTTP_READONLY_LLM_RATE_TOTAL`, default 60), in a sliding window of `MCP_HTTP_READONLY_LLM_WINDOW_MS` (default 10 minutes). A call over either limit returns the tool error `Rate limit exceeded for LLM-backed tools` and makes no LLM request. Calls that end without an LLM request (for example "No relevant pages found") still count. Full sessions are not limited. The counters live in process memory and reset when the MCP process restarts.
 
 **Fail-closed allowlist.** The profile is an allowlist, not a denylist. Tools added upstream later are denied to read-only sessions until someone reviews them and adds them to `READ_ONLY_TOOL_NAMES`. Treat tool deactivation in the aggregator as a second layer only. The vault enforces the profile itself.
 
@@ -156,7 +180,7 @@ Rules, all fail-closed:
 - **Search results carry rank, not score.** Readers get a descending position number (`hits.length - i`) instead of the raw score, which would reveal statistics of hidden pages.
 - **Review cards** are shown only if their `source_slug` is a visible slug. Cards without `source_slug` are hidden.
 - **The `mindbase://insights` resource** is generated live from the filtered graph for readers. The stored `wiki/_insights.md` is not served to readers because it may name restricted pages.
-- **Configuration and paths are withheld.** The reader context does not contain `dataDir` (an absolute path), `config` (API key), the synthesis cache, or templates.
+- **Configuration and paths are withheld.** The reader context does not contain `dataDir` (an absolute path), the API key or base URL (its `config` holds only `provider` and `model`), the synthesis cache, or templates.
 
 ## Security behaviour
 
@@ -192,7 +216,7 @@ The server checks each request in this order:
 ### Paths and slugs
 
 - **Unsafe slugs are rejected centrally.**
-  - The tool dispatcher checks the arguments `slug`, `slugs`, `source_slug`, `target_slug`, and `root`, for every tool and both profiles.
+  - The tool dispatcher checks the arguments `slug`, `slugs`, `source_slug`, `target_slug`, `root`, `context_pages` (`ask_wiki`), and `raw_id` (`ingest_plan`), for every tool and both profiles.
   - It rejects a `.` or `..` path segment, a backslash, a NUL byte, or a leading `/`, all with the same error: `Invalid input: unsafe slug`.
   - Because the check matches argument names, tools added later that use these names are covered too.
   - `mindbase://wiki/<slug>` resources apply the same check.
@@ -218,7 +242,7 @@ The items below are **limitations, not features**. They came out of the security
 | 2 | Meta is re-read on every reader request | readonly, performance | Before each tool call or resource request, the server lists `wiki/notes` and `wiki/concepts` and reads every page's meta file. The cost grows with the number of pages. |
 | 3 | Stale body-link edges until reindex | readonly | The graph comes from the SQLite index. Body wikilink edges reflect page bodies as of the last reindex, so a removed link can keep appearing (as a broken link) until the index is rebuilt. |
 | 4 | SSRF in `mindbase_ingest_file` URL mode | full token only | An `http(s)` URL is fetched server-side with redirects followed and no restriction on the target host, so a full-token client can make the container request internal addresses. Tracked as LBV2-13. The tool is not available to read-only sessions. |
-| 5 | `ask_wiki.context_pages` and `ingest_plan.raw_id` bypass the central slug check | full token only | These argument names are not in `SLUG_ARGUMENT_NAMES`. `FileStore` containment still keeps reads inside the data directory. Neither tool is available to read-only sessions. |
+| 5 | Public page content goes to the LLM provider | readonly (`ask_wiki`) | Readers can have any public root-wiki page sent to the configured provider, and the question text is sent as typed. The rate limit bounds cost, not data flow. See [Reader LLM access](#reader-llm-access-ask_wiki). (The former item 5, `context_pages`/`raw_id` bypassing the slug check, was fixed in LBV2-18.) |
 | 6 | Upstream server e2e tests are broken | development | The `apps/server/test/*-e2e.test.ts` suites failed before the LBV2 changes as well (commit `b78f97c`). They do not currently give regression signal. |
 | 7 | Upstream typecheck error | development | `pnpm -F mindbase-mcp typecheck` reports an error in `apps/mcp/src/tools/get-pulse.ts` (line 94). It is inherited from upstream and does not affect the build (`tsup`). |
 | 8 | Web UI / HTTP API on port 4321 has no user authentication | all deployments | Protection is the reverse proxy plus the proxy shared secret. Anyone holding the secret and reaching the port has full access; isolation still depends on the network. See the warning at the top. |
@@ -258,5 +282,7 @@ docker run --rm -v "$PWD":/repo:ro node:20-bookworm bash -c '
 | `ingest-local-stdio.mjs` | stdio | `mindbase_ingest_file` still accepts local paths over stdio, and its errors do not echo the path. |
 | `http-readonly-visibility.mjs` | HTTP | `internal`, `pii`, and broken-meta pages invisible to readers in every allowlisted tool and resource, hidden pages failing like missing pages, project, source, and raw data invisible, full sessions unchanged, per-profile session caps, allowlist immutability, reader instructions and prompts. |
 | `http-readonly-graph-leaks.mjs` | HTTP | LLM-inferred links to hidden or missing pages never reveal the target slug, community ids never exposed, central unsafe-slug rejection with one generic error while legitimate slugs keep working. |
+
+| `http-readonly-ask-wiki.mjs` | HTTP | Reader `ask_wiki` against a local mock of the Ollama chat API (provider `ollama`, `baseUrl` on `127.0.0.1`, no test-only server code): no canary from hidden, project, concept, raw, or chat data in any prompt even when `context_pages` names hidden pages, no hidden slug or provider error detail in the response, no LLM call when only hidden pages match, data directory unchanged, per-session and per-token rate limits without LLM calls, full sessions unlimited, invalid rate-limit variables refused at startup, `context_pages`/`raw_id` slug check. |
 
 `smoke.mjs` (stdio tool listing) is a minimal check that `pnpm test` does not run.

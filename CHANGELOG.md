@@ -3,16 +3,18 @@
 ## Unreleased — Lokyy Brain v2 fork
 
 ### Added
-- MCP over Streamable HTTP (`apps/mcp/dist/http.js`) with bearer token, session limits and Host allow-list; optional read-only token profile with a fail-closed allowlist of 12 tools and a reader view that hides `internal`/`pii` pages. See `docs/self-hosting-mcp-http.md`.
+- MCP over Streamable HTTP (`apps/mcp/dist/http.js`) with bearer token, session limits and Host allow-list; optional read-only token profile with a fail-closed allowlist of 13 tools and a reader view that hides `internal`/`pii` pages. See `docs/self-hosting-mcp-http.md`.
+- Readers may use `ask_wiki` (LBV2-18): retrieval runs only through the reader view, so only visible root-wiki pages are sent to the configured LLM provider; provider errors are generic; nothing is written. Rate limited per read-only session (`MCP_HTTP_READONLY_LLM_RATE`, default 20) and for all read-only sessions together (`MCP_HTTP_READONLY_LLM_RATE_TOTAL`, default 60) per `MCP_HTTP_READONLY_LLM_WINDOW_MS` (default 10 min).
 - Source-built vault Docker image (`deploy/Dockerfile`).
 - Web server proxy shared-secret guard (`VAULT_PROXY_SECRET`, header `X-Vault-Proxy-Secret`); required by the Docker image (`VAULT_REQUIRE_PROXY_SECRET=1`). Unset outside the image = previous behaviour.
 
 ### Changed — may affect existing (stdio / single-user) setups
-- **Slugs are validated for every MCP tool** (`slug`, `slugs`, `source_slug`, `target_slug`, `root`): a leading `/`, backslash, NUL, or a `.`/`..` path segment is rejected with `Invalid input: unsafe slug`. Previously e.g. `read_wiki_page {slug: "/flip"}` resolved to the page.
+- **Slugs are validated for every MCP tool** (`slug`, `slugs`, `source_slug`, `target_slug`, `root`, and since LBV2-18 `context_pages`, `raw_id`): a leading `/`, backslash, NUL, or a `.`/`..` path segment is rejected with `Invalid input: unsafe slug`. Previously e.g. `read_wiki_page {slug: "/flip"}` resolved to the page.
 - **Project ids** must be directory names (`[A-Za-z0-9][A-Za-z0-9_-]{0,127}`), also `currentProjectId` in `config.json`.
 - **File store paths** that would leave the data directory are refused; leading slashes stay relative to the data directory.
 - **Web API**: `POST /api/tree/research` accepts only plain slugs (`[a-z0-9-]`); an invalid `X-Mindbase-User` header returns 400; contributor usernames must be letters, digits, `_`, `-`, `.` (an OS username with `@` or spaces now fails for quick capture / contributor files); trash restore/delete reject ids not in the generated format and error messages no longer include ids or paths.
 - `mindbase_ingest_file` no longer accepts local file paths over the HTTP transport (stdio unchanged).
+- `ask_wiki` `pages_read` lists only the pages actually read and sent as context (previously also unreadable candidate slugs), for all profiles.
 
 ### Licensing
 - Fork modifications after `7aa8fcd` are licensed under PolyForm Noncommercial 1.0.0; upstream code remains MIT. See `NOTICE.md`.
