@@ -47,10 +47,14 @@ export function assertTrustedHeaderConfig(env: NodeJS.ProcessEnv): void {
   }
 }
 
+/**
+ * Authentik separates groups with `|` only. A duplicated header arrives as an
+ * array, or joined by Node with ", " — both are ambiguous (a second, possibly
+ * client-injected header) and grant nothing.
+ */
 export function parseGroups(raw: string | string[] | undefined): string[] {
-  // A duplicated header arrives as an array: ambiguous, so it grants nothing.
-  if (typeof raw !== 'string') return [];
-  return raw.split(/[|,]/).map((g) => g.trim()).filter((g) => g.length > 0);
+  if (typeof raw !== 'string' || raw.includes(', ')) return [];
+  return raw.split('|').map((g) => g.trim()).filter((g) => g.length > 0);
 }
 
 /**
@@ -59,7 +63,8 @@ export function parseGroups(raw: string | string[] | undefined): string[] {
  */
 export function isConfigAdmin(req: HeaderBag, env: NodeJS.ProcessEnv): boolean {
   if (!isGuarded(env)) return true;
-  const admins = new Set(parseGroups(env['VAULT_ADMIN_GROUPS']));
+  // Operator-set list: comma-separated (unlike the proxy header).
+  const admins = new Set((env['VAULT_ADMIN_GROUPS'] ?? '').split(',').map((g) => g.trim()).filter((g) => g.length > 0));
   if (admins.size === 0) return false;
   return parseGroups(req.headers[groupsHeaderName(env)]).some((g) => admins.has(g));
 }

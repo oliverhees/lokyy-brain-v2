@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { createContext, type ServerContext } from '../../context.js';
 import { configRoutes } from '../config.js';
 import {
-  MASKED_SECRET, KeyReentryError, maskConfig, maskUrlCredentials, mergeSecrets, unmaskApiKey,
+  MASKED_SECRET, KeyReentryError, maskConfig, maskUrlCredentials, mergeSecrets, unmaskApiKey, resolveStoredBaseUrl,
 } from '../../lib/config-secrets.js';
 import type { AtlasConfig } from '../../config.js';
 
@@ -90,6 +90,29 @@ describe('config-secrets helpers (LBV2-9)', () => {
     const masked = maskConfig(BASE);
     const body = { ...masked, dailyBrief: { ...masked.dailyBrief!, smtp: { ...masked.dailyBrief!.smtp, host: 'evil.example' } } };
     expect(() => mergeSecrets(body as unknown as Record<string, unknown>, BASE)).toThrow(KeyReentryError);
+  });
+
+  it.each([
+    ['port', { port: 2525 }],
+    ['secure', { secure: true }],
+  ])('mergeSecrets refuses to keep the SMTP password when the SMTP %s changes', (_name, change) => {
+    const masked = maskConfig(BASE);
+    const body = { ...masked, dailyBrief: { ...masked.dailyBrief!, smtp: { ...masked.dailyBrief!.smtp, ...change } } };
+    expect(() => mergeSecrets(body as unknown as Record<string, unknown>, BASE)).toThrow(KeyReentryError);
+  });
+
+  it.each([null, 'x', 42, ['a']])('mergeSecrets ignores a non-object %j for dailyBrief/rss/srs (keeps stored)', (bad) => {
+    const merged = mergeSecrets({ dailyBrief: bad, rss: bad, srs: bad }, BASE);
+    expect(merged.dailyBrief).toEqual(BASE.dailyBrief);
+    expect(merged.rss).toEqual(BASE.rss);
+    expect(merged.srs).toEqual(BASE.srs);
+  });
+
+  it('resolveStoredBaseUrl maps the masked URL back to the stored one', () => {
+    const withCreds = { ...BASE, baseUrl: 'https://u:p@llm.example/v1?key=zzz' };
+    expect(resolveStoredBaseUrl(maskUrlCredentials(withCreds.baseUrl), withCreds)).toBe(withCreds.baseUrl);
+    expect(resolveStoredBaseUrl('https://other.example', withCreds)).toBe('https://other.example');
+    expect(resolveStoredBaseUrl(undefined, withCreds)).toBe('');
   });
 
   it('mergeSecrets restores a masked baseUrl with credentials', () => {
@@ -197,6 +220,18 @@ describe('/api/config routes — secret masking (LBV2-9)', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/re-enter/i);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('POST /test with the masked baseUrl calls the stored endpoint, not the masked string (LOW)', async () => {
+    const stored = 'https://u:p@llm.example/v1?key=zzz';
+    await ctx.saveConfig({ ...BASE, baseUrl: stored });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
+    const res = await request(app).post('/api/config/test')
+      .send({ provider: 'openai', model: 'gpt-4o-mini', apiKey: MASKED_SECRET, baseUrl: maskUrlCredentials(stored) });
+    expect(res.body).toEqual({ ok: true });
+    const calledUrl = String(fetchSpy.mock.calls[0]![0]);
+    expect(calledUrl.startsWith('https://u:p@llm.example/v1')).toBe(true);
+    expect(calledUrl).not.toContain(MASKED_SECRET);
   });
 
   it('POST /test returns a generic error instead of the upstream message (INFO)', async () => {

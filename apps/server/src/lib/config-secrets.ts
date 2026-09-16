@@ -81,6 +81,14 @@ export function mergeSecrets(incoming: Record<string, unknown>, stored: AtlasCon
   const { hasApiKey: _has, googleTokens: _clientTokens, ...body } = incoming;
   const merged = { ...stored, ...body } as unknown as AtlasConfig;
 
+  // A non-object value (null, string, array…) for a section must not wipe it.
+  for (const section of ['dailyBrief', 'rss', 'srs'] as const) {
+    if (section in body && !isRecord(body[section])) {
+      if (stored[section] !== undefined) (merged as unknown as Record<string, unknown>)[section] = stored[section];
+      else delete merged[section];
+    }
+  }
+
   if (isRecord(body['rss']) && stored.rss) merged.rss = { ...stored.rss, ...body['rss'] } as AtlasConfig['rss'];
   if (isRecord(body['srs']) && stored.srs) merged.srs = { ...stored.srs, ...body['srs'] } as AtlasConfig['srs'];
 
@@ -105,7 +113,11 @@ export function mergeSecrets(incoming: Record<string, unknown>, stored: AtlasCon
     const smtp = { ...(storedBrief?.smtp ?? {}), ...inSmtp } as NonNullable<AtlasConfig['dailyBrief']>['smtp'];
     if (wantsStored(inSmtp['pass'])) {
       const storedPass = storedBrief?.smtp.pass ?? '';
-      if (storedPass && (smtp.host ?? '').trim().toLowerCase() !== (storedBrief?.smtp.host ?? '').trim().toLowerCase()) {
+      const storedSmtp = storedBrief?.smtp;
+      const sameSmtpDestination = (smtp.host ?? '').trim().toLowerCase() === (storedSmtp?.host ?? '').trim().toLowerCase()
+        && Number(smtp.port) === Number(storedSmtp?.port)
+        && Boolean(smtp.secure) === Boolean(storedSmtp?.secure);
+      if (storedPass && !sameSmtpDestination) {
         throw new KeyReentryError('SMTP password');
       }
       smtp.pass = storedPass;
@@ -116,6 +128,11 @@ export function mergeSecrets(incoming: Record<string, unknown>, stored: AtlasCon
   if (stored.googleTokens) merged.googleTokens = stored.googleTokens;
   else delete merged.googleTokens;
   return merged;
+}
+
+/** The endpoint to actually call: a masked baseUrl echoed back by the UI resolves to the stored URL. */
+export function resolveStoredBaseUrl(baseUrl: string | undefined, stored: AtlasConfig): string {
+  return resolveBaseUrl(baseUrl ?? '', stored.baseUrl ?? '');
 }
 
 /** For POST /api/config/test: the mask resolves to the stored key only for the stored provider and endpoint. */

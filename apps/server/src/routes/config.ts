@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { createAdapter } from '@mindbase/core';
 import type { ServerContext } from '../context';
 import type { AtlasConfig } from '../config';
-import { KeyReentryError, maskConfig, mergeSecrets, unmaskApiKey, maskUrlCredentials } from '../lib/config-secrets';
+import { KeyReentryError, maskConfig, mergeSecrets, unmaskApiKey, maskUrlCredentials, resolveStoredBaseUrl } from '../lib/config-secrets';
 
 const GENERIC_TEST_ERROR = 'Connection test failed';
 
@@ -42,7 +42,8 @@ export function configRoutes(ctx: ServerContext): Router {
       console.warn(`[config/test] ${provider ?? '?'} @ ${maskUrlCredentials(baseUrl ?? '')}: ${detail ?? 'failed'}`);
     };
     try {
-      const adapter = createAdapter(provider as AtlasConfig['provider'], { apiKey: key, model: model ?? '', baseUrl: baseUrl || undefined });
+      const endpoint = resolveStoredBaseUrl(baseUrl, ctx.config);
+      const adapter = createAdapter(provider as AtlasConfig['provider'], { apiKey: key, model: model ?? '', baseUrl: endpoint || undefined });
       const result = await adapter.testConnection();
       if (result.ok) {
         res.json({ ok: true });

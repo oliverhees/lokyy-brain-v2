@@ -37,11 +37,20 @@ describe('trusted header configuration (LBV2-9)', () => {
 });
 
 describe('admin groups (LBV2-9)', () => {
-  it('parses Authentik pipe-separated and comma-separated groups', () => {
+  it('parses Authentik pipe-separated groups only', () => {
     expect(parseGroups('lokyy-admins|vault-firma-admin')).toEqual(['lokyy-admins', 'vault-firma-admin']);
-    expect(parseGroups(' a , b| c ||')).toEqual(['a', 'b', 'c']);
+    expect(parseGroups(' a | b|| c ')).toEqual(['a', 'b', 'c']);
+    expect(parseGroups('staff,vault-admins')).toEqual(['staff,vault-admins']);
     expect(parseGroups(undefined)).toEqual([]);
     expect(parseGroups(['a', 'b'])).toEqual([]);
+  });
+
+  it('treats a Node-joined duplicate header (", ") as no groups (fail closed)', () => {
+    expect(parseGroups('staff, vault-admins')).toEqual([]);
+    expect(parseGroups('staff|x, vault-admins')).toEqual([]);
+    const env = guarded({ VAULT_ADMIN_GROUPS: 'vault-admins' });
+    expect(isConfigAdmin({ headers: { 'x-authentik-groups': 'staff, vault-admins' } }, env)).toBe(false);
+    expect(isConfigAdmin({ headers: { 'x-authentik-groups': 'staff,vault-admins' } }, env)).toBe(false);
   });
 
   it('is always admin outside guarded mode', () => {
