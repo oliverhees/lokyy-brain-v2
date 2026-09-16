@@ -17,6 +17,31 @@ export {
   resolveInside,
   USERNAME_MAX_LENGTH,
 } from './storage/safe-names';
+export {
+  safeFetch,
+  SafeFetchError,
+  classifyAddress,
+  isPublicAddress,
+  ALLOW_PRIVATE_FETCH_ENV,
+  DEFAULT_FETCH_MAX_BYTES,
+  DEFAULT_FETCH_TIMEOUT_MS,
+  fetchUntrusted,
+  UntrustedFetchError,
+  UNTRUSTED_FETCH_ERROR,
+  redirectTarget,
+  readFetchConcurrency,
+  FETCH_CONCURRENCY_ENV,
+  DEFAULT_FETCH_CONCURRENCY,
+} from './net/safe-fetch';
+export type {
+  UntrustedFetchOptions,
+  SafeFetchOptions,
+  SafeFetchResponse,
+  SafeFetchErrorCode,
+  ResolvedAddress,
+  Resolver,
+  AddressClass,
+} from './net/safe-fetch';
 
 /** Regex to detect LLM auto-save markers in responses: [AUTO_SAVE: title] */
 export const AUTO_SAVE_REGEX = /\[AUTO_SAVE:\s*(.+?)\]\s*$/;

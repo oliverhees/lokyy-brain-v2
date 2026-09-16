@@ -21,6 +21,7 @@ import http from 'node:http';
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { readFetchConcurrency } from '@mindbase/core';
 import { loadContext } from './context.js';
 import { createMcpServer } from './index.js';
 import type { AccessProfile } from './access.js';
@@ -48,8 +49,10 @@ const sha256 = (value: string): Buffer => createHash('sha256').update(value).dig
 
 /** Resolves the bearer token to an access profile; constant-time against every configured token. */
 function profileFor(header: string | undefined, tokens: ReadonlyArray<[Buffer, AccessProfile]>): AccessProfile | null {
-  if (!header?.startsWith('Bearer ')) return null;
-  const given = sha256(header.slice('Bearer '.length));
+  // RFC 7235 §2.1: the auth scheme is case-insensitive.
+  const credentials = header === undefined ? null : /^bearer (.+)$/i.exec(header);
+  if (!credentials?.[1]) return null;
+  const given = sha256(credentials[1]);
   let match: AccessProfile | null = null;
   for (const [want, profile] of tokens) {
     if (timingSafeEqual(given, want)) match = profile;
@@ -104,6 +107,12 @@ async function main(): Promise<void> {
   const maxReadonlySessions = intEnv('MCP_HTTP_MAX_READONLY_SESSIONS', maxSessions, 1);
   const capFor = (p: AccessProfile): number => (p === 'full' ? maxSessions : maxReadonlySessions);
   const idleMs = intEnv('MCP_HTTP_SESSION_IDLE_MS', 30 * 60 * 1000, 1000);
+  try {
+    readFetchConcurrency(process.env);
+  } catch (e) {
+    log(`fatal: ${(e as Error).message}`);
+    process.exit(1);
+  }
   const allowedHosts = (process.env['MCP_HTTP_ALLOWED_HOSTS'] ?? '')
     .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
 

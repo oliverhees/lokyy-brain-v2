@@ -17,6 +17,8 @@
 
 ## Install
 
+> **Lokyy Brain v2 note — the plugin runs the upstream npm package.** `.mcp.json` starts the MCP server with `npx -y mindbase-mcp`, which downloads the upstream MindBase release from npm. It does **not** contain the Lokyy Brain v2 changes (for example slug and project-id validation, the HTTP transport with access profiles, or SSRF protection for URL fetches). The Lokyy Brain v2 packages are private and are not published to npm. To use the fork's MCP server, build `apps/mcp` from this repository and point your MCP client at `apps/mcp/dist/cli.js` (stdio) or run `apps/mcp/dist/http.js` (see `docs/self-hosting-mcp-http.md`).
+
 Via the official marketplace (once available):
 ```bash
 /plugin marketplace add mindbase
@@ -67,4 +69,6 @@ artifacts/                             Generated outputs (briefs, exports)
 
 ## License
 
-Mixed. The plugin itself is upstream MindBase code (MIT, [LICENSE-MIT](../../LICENSE-MIT)), but it bundles `apps/mcp`, which contains Lokyy Brain v2 changes licensed under PolyForm Noncommercial 1.0.0 ([LICENSE](../../LICENSE)). See [NOTICE.md](../../NOTICE.md).
+Mixed. The plugin files are upstream MindBase code (MIT, [LICENSE-MIT](../../LICENSE-MIT)); Lokyy Brain v2 modifications in this repository, including this directory, are licensed under PolyForm Noncommercial 1.0.0 ([LICENSE](../../LICENSE)). See [NOTICE.md](../../NOTICE.md).
+
+As shipped, the plugin starts the upstream `mindbase-mcp` package from npm (see the note under [Install](#install)), so its MCP server contains no Lokyy Brain v2 changes. The optional local bundle (`pnpm build`, which copies `apps/mcp` into `mcp-server/dist`) does contain them and falls under the same mixed licensing.

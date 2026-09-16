@@ -6,9 +6,10 @@ import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
 import { resolveProjectId } from '../lib/resolve-project.js';
 import { extractPdfText } from '../lib/extract-pdf.js';
-import { projectPaths, isoToday } from '@mindbase/core';
+import { projectPaths, isoToday, fetchUntrusted, UNTRUSTED_FETCH_ERROR, type SafeFetchResponse } from '@mindbase/core';
 
-const MAX_BYTES = 50 * 1024 * 1024; // 50MB
+const MAX_BYTES = 50 * 1024 * 1024; // 50MB, local files (stdio only)
+const REMOTE_MAX_BYTES = 20 * 1024 * 1024; // 20MB, URL downloads (server memory, LBV2-13)
 const RETURN_CHAR_CAP = 40_000;
 const ALLOWED_EXTS = new Set(['.pdf', '.md', '.txt']);
 
@@ -36,16 +37,19 @@ export const definition = {
 interface Fetched { buf: Buffer; filename: string; ext: string }
 
 async function fetchRemoteFile(url: string): Promise<Fetched | { error: string }> {
-  let res: Response;
+  let res: SafeFetchResponse;
   try {
-    res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(60_000) });
-  } catch (e) {
-    return { error: `Download failed: ${(e as Error).message}` };
+    // SSRF-safe: private/loopback/metadata targets are refused on every redirect hop, and every
+    // failure (policy, DNS, connection, status, size) gets one generic message (LBV2-13).
+    // Details are logged to stderr only.
+    res = await fetchUntrusted(url, { timeoutMs: 60_000, maxBytes: REMOTE_MAX_BYTES });
+  } catch {
+    // Exactly the generic message for every cause, incl. the size cap (documented; detail in the log).
+    return { error: UNTRUSTED_FETCH_ERROR };
   }
-  if (!res.ok) return { error: `Download failed: HTTP ${res.status} from ${url}` };
 
   const ctype = (res.headers.get('content-type') ?? '').toLowerCase();
-  const urlPath = new URL(url).pathname;
+  const urlPath = new URL(res.url).pathname;
   const urlExt = extname(urlPath).toLowerCase();
 
   let ext: string;
@@ -58,10 +62,7 @@ async function fetchRemoteFile(url: string): Promise<Fetched | { error: string }
     return { error: `Unsupported content-type '${ctype}'. Supported: PDF, markdown, plain text.` };
   }
 
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length > MAX_BYTES) {
-    return { error: `Downloaded file is ${(buf.length / 1024 / 1024).toFixed(1)}MB — the limit is 50MB.` };
-  }
+  const buf = res.body;
 
   // Filename: Content-Disposition beats URL basename.
   const dispo = res.headers.get('content-disposition') ?? '';
