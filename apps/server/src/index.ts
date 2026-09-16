@@ -58,7 +58,7 @@ import { EmbeddingIndexer } from './lib/embedding-indexer';
 import { SynthesisWorker } from './lib/synthesis-worker';
 import { startMdns } from './lib/mdns';
 import { captureGate, healthPayload, shouldStartCaptureWorker, shouldStartMdns } from './lib/capture-gate';
-import { assertTrustedHeaderConfig, requireConfigAdmin, requireConfigAdminAlways } from './lib/proxy-identity';
+import { assertTrustedHeaderConfig, requireConfigAdmin } from './lib/proxy-identity';
 
 const PORT = parseInt(process.env['PORT'] ?? '4321', 10);
 
@@ -147,9 +147,8 @@ async function main() {
   // Guarded mode: server configuration changes need a VAULT_ADMIN_GROUPS member (fail closed).
   app.use('/api/config', requireConfigAdmin(process.env));
   app.use('/api/server', requireConfigAdmin(process.env));
-  app.use('/api/google/auth/callback', requireConfigAdminAlways(process.env));
-  app.use('/api/google/auth/disconnect', requireConfigAdminAlways(process.env));
-  app.use('/api/google/set-sync-folder', requireConfigAdminAlways(process.env));
+  // Google auth/url, auth/start, auth/callback, auth/disconnect and set-sync-folder are
+  // admin-gated inside googleRoutes (with the OAuth state bound to the initiator).
 
   // API routes
   app.use('/api/ingest', ingestRoutes(ctx));
