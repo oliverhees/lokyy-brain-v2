@@ -37,6 +37,10 @@
 - **Switching to a keyless provider (Ollama) without a key clears the stored cloud API key** (the chat model switch now sends only `provider` and `model`); enter the cloud key again when switching back. A new secret that contains `********` is rejected with 400. The web UI shows the server's error message for failed saves and connection tests.
 - `POST /api/config/test` returns a generic error message (details in the server log); `GET /api/health` no longer returns `dataDir`.
 - **OS username fallback is sanitized**: an OS account like `oliver@corp` is attributed as `oliver_corp` instead of failing with 500.
+- **LLM provider requests time out** (LBV2-14): a provider that sends nothing for `MINDBASE_LLM_TIMEOUT_MS` (default 120000 ms, integer 1000–3600000) is aborted with the generic error `LLM provider did not respond in time`, so a hanging provider no longer blocks `ask_wiki`, compile or chat (and a reader's `ask_wiki` budget) indefinitely. The timer restarts with every stream chunk. An invalid value stops the web server and the MCP HTTP server at startup.
+
+### Fixed
+- Web trash (LBV2-14): `GET /api/trash` no longer fails with 500 in the default project layout; list, restore, permanent delete and empty operate on the global trash of the data directory.
 
 ### Licensing
 - Fork modifications after `7aa8fcd` are licensed under PolyForm Noncommercial 1.0.0; upstream code remains MIT. See `NOTICE.md`.

@@ -1,5 +1,6 @@
 import type { ChatChunk, ChatMessage, ChatRequest, ContentBlock, ToolCall, ToolDefinition } from '../types';
 import type { AdapterConfig, LLMAdapter } from './types';
+import { RequestDeadline, readLlmTimeoutMs } from './timeout';
 
 interface OpenAIToolCallDelta {
   index: number;
@@ -106,10 +107,12 @@ export class OpenAIAdapter implements LLMAdapter {
   readonly supportsTools = true;
   readonly supportsPDFs = true;
   private fetchImpl: typeof fetch;
+  private timeoutMs: number;
   private baseUrl: string;
 
   constructor(private config: AdapterConfig) {
     this.fetchImpl = config.fetchImpl ?? fetch.bind(globalThis);
+    this.timeoutMs = config.timeoutMs ?? readLlmTimeoutMs(process.env);
     this.baseUrl = (config.baseUrl ?? 'https://api.openai.com').replace(/\/+$/, '');
   }
 
@@ -189,9 +192,10 @@ export class OpenAIAdapter implements LLMAdapter {
       return base;
     });
 
+    const deadline = new RequestDeadline(this.timeoutMs);
     let response: Response;
     try {
-      response = await this.fetchImpl(this.chatUrl(), {
+      response = await deadline.fetch(this.fetchImpl, this.chatUrl(), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -210,12 +214,13 @@ export class OpenAIAdapter implements LLMAdapter {
         }),
       });
     } catch (e) {
-      yield { kind: 'error', error: (e as Error).message };
+      yield { kind: 'error', error: deadline.message(e) };
       return;
     }
 
     if (!response.ok) {
-      const text = await response.text();
+      const text = await deadline.race(response.text()).catch((e: unknown) => deadline.message(e));
+      deadline.clear();
       yield { kind: 'error', error: `HTTP ${response.status}: ${text}` };
       return;
     }
@@ -233,7 +238,7 @@ export class OpenAIAdapter implements LLMAdapter {
 
     try {
       while (true) {
-        const { value, done } = await reader.read();
+        const { value, done } = await deadline.race(reader.read());
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -284,9 +289,11 @@ export class OpenAIAdapter implements LLMAdapter {
         }
       }
     } catch (e) {
-      yield { kind: 'error', error: (e as Error).message };
+      yield { kind: 'error', error: deadline.message(e) };
       return;
     } finally {
+      deadline.clear();
+      if (deadline.timedOut) void reader.cancel().catch(() => undefined);
       try { reader.releaseLock(); } catch { /* ignore */ }
     }
 
@@ -302,9 +309,10 @@ export class OpenAIAdapter implements LLMAdapter {
         content: toResponsesContent(m.role, m.content),
       }));
 
+    const deadline = new RequestDeadline(this.timeoutMs);
     let response: Response;
     try {
-      response = await this.fetchImpl(this.responsesUrl(), {
+      response = await deadline.fetch(this.fetchImpl, this.responsesUrl(), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -320,12 +328,13 @@ export class OpenAIAdapter implements LLMAdapter {
         }),
       });
     } catch (e) {
-      yield { kind: 'error', error: (e as Error).message };
+      yield { kind: 'error', error: deadline.message(e) };
       return;
     }
 
     if (!response.ok) {
-      const text = await response.text();
+      const text = await deadline.race(response.text()).catch((e: unknown) => deadline.message(e));
+      deadline.clear();
       yield { kind: 'error', error: `HTTP ${response.status}: ${text}` };
       return;
     }
@@ -342,7 +351,7 @@ export class OpenAIAdapter implements LLMAdapter {
 
     try {
       while (true) {
-        const { value, done } = await reader.read();
+        const { value, done } = await deadline.race(reader.read());
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const events = parseSSEEvents(buffer);
@@ -405,9 +414,11 @@ export class OpenAIAdapter implements LLMAdapter {
         }
       }
     } catch (e) {
-      yield { kind: 'error', error: (e as Error).message };
+      yield { kind: 'error', error: deadline.message(e) };
       return;
     } finally {
+      deadline.clear();
+      if (deadline.timedOut) void reader.cancel().catch(() => undefined);
       try { reader.releaseLock(); } catch { /* ignore */ }
     }
 

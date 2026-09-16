@@ -47,6 +47,7 @@ export type {
 export const AUTO_SAVE_REGEX = /\[AUTO_SAVE:\s*(.+?)\]\s*$/;
 export { createAdapter } from './adapters/registry';
 export type { LLMAdapter, AdapterConfig } from './adapters/types';
+export { readLlmTimeoutMs, DEFAULT_LLM_TIMEOUT_MS, LLM_TIMEOUT_ERROR } from './adapters/timeout';
 export { SearchIndex } from './search/index';
 export type { SearchDoc, SearchResult } from './search/index';
 export { EmbeddingStore } from './search/embedding-store';

@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(import.meta.dirname, '../../../.env') });
 
 import express from 'express';
-import { readFetchConcurrency } from '@mindbase/core';
+import { readFetchConcurrency, readLlmTimeoutMs } from '@mindbase/core';
 import { createContext } from './context';
 import { proxySecretGuard, readProxySecret } from './lib/proxy-secret';
 import { resolveDataDirAsync } from './config';
@@ -101,6 +101,8 @@ function installSearchIndexCrashGuard(dataDir: string): void {
 async function main() {
   // Fail fast on invalid fetch settings instead of failing every later URL fetch (LBV2-13).
   readFetchConcurrency(process.env);
+  // Same for the LLM provider timeout (LBV2-14).
+  readLlmTimeoutMs(process.env);
   // Refuse to start when a trusted proxy header is configured to a client-controlled name.
   assertTrustedHeaderConfig(process.env);
   const dataDir = await resolveDataDirAsync();

@@ -1,5 +1,6 @@
 import type { ChatChunk, ChatMessage, ChatRequest, ContentBlock, ToolCall, ToolDefinition } from '../types';
 import type { AdapterConfig, LLMAdapter } from './types';
+import { RequestDeadline, readLlmTimeoutMs } from './timeout';
 
 interface AnthropicStreamEvent {
   type: string;
@@ -70,18 +71,21 @@ export class AnthropicAdapter implements LLMAdapter {
   readonly supportsTools = true;
   readonly supportsPDFs = true;
   private fetchImpl: typeof fetch;
+  private timeoutMs: number;
   private baseUrl: string;
 
   constructor(private config: AdapterConfig) {
     this.fetchImpl = config.fetchImpl ?? fetch.bind(globalThis);
+    this.timeoutMs = config.timeoutMs ?? readLlmTimeoutMs(process.env);
     this.baseUrl = config.baseUrl ?? 'https://api.anthropic.com';
   }
 
   async *chat(request: ChatRequest): AsyncIterable<ChatChunk> {
     const { system, rest } = splitSystem(request.messages);
+    const deadline = new RequestDeadline(this.timeoutMs);
     let response: Response;
     try {
-      response = await this.fetchImpl(`${this.baseUrl}/v1/messages`, {
+      response = await deadline.fetch(this.fetchImpl, `${this.baseUrl}/v1/messages`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -100,12 +104,13 @@ export class AnthropicAdapter implements LLMAdapter {
         }),
       });
     } catch (e) {
-      yield { kind: 'error', error: (e as Error).message };
+      yield { kind: 'error', error: deadline.message(e) };
       return;
     }
 
     if (!response.ok) {
-      const text = await response.text();
+      const text = await deadline.race(response.text()).catch((e: unknown) => deadline.message(e));
+      deadline.clear();
       yield { kind: 'error', error: `HTTP ${response.status}: ${text}` };
       return;
     }
@@ -122,7 +127,7 @@ export class AnthropicAdapter implements LLMAdapter {
 
     try {
       while (true) {
-        const { value, done } = await reader.read();
+        const { value, done } = await deadline.race(reader.read());
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const events = buffer.split('\n\n');
@@ -196,9 +201,11 @@ export class AnthropicAdapter implements LLMAdapter {
         }
       }
     } catch (e) {
-      yield { kind: 'error', error: (e as Error).message };
+      yield { kind: 'error', error: deadline.message(e) };
       return;
     } finally {
+      deadline.clear();
+      if (deadline.timedOut) void reader.cancel().catch(() => undefined);
       try { reader.releaseLock(); } catch { /* ignore */ }
     }
 

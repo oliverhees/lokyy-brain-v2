@@ -15,4 +15,6 @@ export interface AdapterConfig {
   baseUrl?: string;
   model: string;
   fetchImpl?: typeof fetch; // for tests
+  /** Provider inactivity timeout; defaults to MINDBASE_LLM_TIMEOUT_MS (120000). */
+  timeoutMs?: number;
 }
