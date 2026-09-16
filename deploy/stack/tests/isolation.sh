@@ -33,9 +33,7 @@ trap 'rm -f "$jar_anna" "$jar_ben"' EXIT
 
 echo "== 1. Unauthenticated access is redirected to the login"
 for v in anna ben firma; do
-  expect "anon → $v /api/config" "$(code "$(printf $V $v)/api/config")" "302expect "vault-anna → EUrouter API host (LLM base URL)" \
-  "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://api.eurouter.ai/api/v1/models")" "200"
-"
+  expect "anon → $v /api/config" "$(code "$(printf $V $v)/api/config")" "302"
 done
 expect "anon → metamcp admin" "$(code http://mcp.localhost:18080/)" "302"
 
@@ -142,6 +140,8 @@ expect "vault-anna → traefik → ben (no session)" \
   "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Host: ben.vault.localhost:18080' http://traefik/api/config")" "302"
 expect "vault-anna → internet (EUrouter must stay reachable)" \
   "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://www.eurouter.ai/")" "200|301|302|307|308"
+expect "vault-anna → EUrouter API host (LLM base URL)" \
+  "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://api.eurouter.ai/api/v1/models")" "200"
 
 echo "== 5b. Network topology (name-independent)"
 members() { docker network inspect "${STACK}_$1" --format '{{range .Containers}}{{.Name}} {{end}}' | tr ' ' '\n' | sed -E "s/^${STACK}-//; s/-[0-9]+\$//" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//'; }

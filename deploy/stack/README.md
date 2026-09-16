@@ -95,6 +95,15 @@ Risks:
 - `GET /api/config` returns the whole config including `apiKey` to every user who can open the vault web UI.
 - Embeddings do not use EUrouter: BGE-M3 runs locally in the vault (`/transformers`, ~570 MB download from Hugging Face on first use into the container home, so again after every container re-creation).
 
+### Memory per vault (measured 2026-09-16, `docker stats`, 5 s sampling)
+
+| State | vault-anna | vault-ben | vault-firma |
+|---|---|---|---|
+| Idle after fresh start (12 samples) | 234 MiB | 239–240 MiB | 244–246 MiB |
+| anna restarted with 200 generated pages (36 samples, 3 min) | 195 MiB → **8.98 GiB peak**, 4.42 GiB afterwards | unchanged | unchanged |
+
+The embedding model does not work in the image: `@xenova/transformers` tries to write its cache to `/app/node_modules/.../@xenova/transformers/.cache`, which the non-root `vault` user cannot create (`EACCES`, 40 errors). Pages were not embedded (`indexed=0`), but the downloaded model files were held in memory and not released. Fix (separate item): set a writable cache dir (e.g. `env.cacheDir` / `TRANSFORMERS_CACHE` on a volume) and a memory limit per vault, then measure indexing again.
+
 ## Attack tests
 
 `tests/isolation.sh` (71 checks) logs in through the real Authentik flow (`tests/login.sh`) and verifies:
