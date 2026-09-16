@@ -53,4 +53,4 @@ Open an issue with:
 
 ## License
 
-This repository (Lokyy Brain v2) is a fork of MindBase with mixed licensing, see [NOTICE.md](NOTICE.md). By contributing, you agree that your contributions will be licensed under the PolyForm Noncommercial License 1.0.0 ([LICENSE](LICENSE)) and that Oliver Hees may additionally license them commercially. Fixes you want in upstream MindBase (MIT) should be submitted to [frankchu91/mindbase-llm-wiki](https://github.com/frankchu91/mindbase-llm-wiki) instead.
+This repository (Lokyy Brain v2) is a fork of MindBase with mixed licensing, see [NOTICE.md](NOTICE.md). By contributing, you agree that your contributions will be licensed under the PolyForm Noncommercial License 1.0.0 ([LICENSE](LICENSE)). Fixes you want in upstream MindBase (MIT) should be submitted to [frankchu91/mindbase-llm-wiki](https://github.com/frankchu91/mindbase-llm-wiki) instead.
