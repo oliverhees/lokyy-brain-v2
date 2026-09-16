@@ -69,4 +69,6 @@ artifacts/                             Generated outputs (briefs, exports)
 
 ## License
 
-Mixed. The plugin itself is upstream MindBase code (MIT, [LICENSE-MIT](../../LICENSE-MIT)), but it bundles `apps/mcp`, which contains Lokyy Brain v2 changes licensed under PolyForm Noncommercial 1.0.0 ([LICENSE](../../LICENSE)). See [NOTICE.md](../../NOTICE.md).
+Mixed. The plugin files are upstream MindBase code (MIT, [LICENSE-MIT](../../LICENSE-MIT)); Lokyy Brain v2 modifications in this repository, including this directory, are licensed under PolyForm Noncommercial 1.0.0 ([LICENSE](../../LICENSE)). See [NOTICE.md](../../NOTICE.md).
+
+As shipped, the plugin starts the upstream `mindbase-mcp` package from npm (see the note under [Install](#install)), so its MCP server contains no Lokyy Brain v2 changes. The optional local bundle (`pnpm build`, which copies `apps/mcp` into `mcp-server/dist`) does contain them and falls under the same mixed licensing.
