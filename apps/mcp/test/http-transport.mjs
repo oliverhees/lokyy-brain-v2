@@ -4,13 +4,14 @@
  * Run from apps/mcp/ directory: node test/http-transport.mjs
  */
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-const TOKEN = 'test-token-0123456789abcdef';
+const TOKEN = 'test-token-0123456789abcdef-0123456789';
 const PORT = 18000 + Math.floor(Math.random() * 1000);
 const URL_MCP = `http://127.0.0.1:${PORT}/mcp`;
 
@@ -65,13 +66,18 @@ async function run() {
   else if (code === 0) fail('server exited 0 without MCP_HTTP_TOKEN (expected non-zero)');
   else ok('server refuses to start without MCP_HTTP_TOKEN');
 
-  // 1b. Refuses a weak (short) token
-  const weak = startServer({ MCP_HTTP_TOKEN: 'short' });
+  // 1b. Refuses a weak (short) token — minimum 32 chars
+  const weak = startServer({ MCP_HTTP_TOKEN: 'a'.repeat(31) });
   const weakCode = await waitForExit(weak, 5000);
-  if (weakCode === null) { weak.kill(); fail('server started with a token shorter than 16 chars'); }
-  else ok('server refuses a token shorter than 16 chars');
+  if (weakCode === null) { weak.kill(); fail('server started with a token shorter than 32 chars'); }
+  else ok('server refuses a token shorter than 32 chars');
 
-  const proc = startServer({ MCP_HTTP_TOKEN: TOKEN });
+  const proc = startServer({
+    MCP_HTTP_TOKEN: TOKEN,
+    MCP_HTTP_MAX_SESSIONS: '2',
+    MCP_HTTP_SESSION_IDLE_MS: '1500',
+    MCP_HTTP_ALLOWED_HOSTS: `127.0.0.1:${PORT}`,
+  });
   let stderr = '';
   proc.stderr.on('data', (c) => { stderr += c.toString(); });
   try {
@@ -92,6 +98,32 @@ async function run() {
     // 5. Unknown path → 404 (with valid token)
     const r4 = await fetch(`http://127.0.0.1:${PORT}/other`, { method: 'POST', headers: { ...jsonHeaders, authorization: `Bearer ${TOKEN}` }, body: initBody });
     r4.status === 404 ? ok('unknown path → 404') : fail(`unknown path → ${r4.status} (expected 404)`);
+
+    const auth = { ...jsonHeaders, authorization: `Bearer ${TOKEN}` };
+
+    // 5b. Host header not in MCP_HTTP_ALLOWED_HOSTS → 403 (DNS rebinding / wrong route)
+    const rHost = await new Promise((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port: PORT, path: '/mcp', method: 'POST',
+        headers: { ...auth, host: 'evil.example' } }, (res) => { res.resume(); resolve(res.statusCode); });
+      req.on('error', () => resolve(0));
+      req.end(initBody);
+    });
+    rHost === 403 ? ok('foreign Host header → 403') : fail(`foreign Host header → ${rHost} (expected 403)`);
+
+    // 5c. Unknown session id → 404 (spec: client must re-initialize)
+    const rSess = await fetch(URL_MCP, { method: 'POST', headers: { ...auth, 'mcp-session-id': 'does-not-exist' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }) });
+    rSess.status === 404 ? ok('unknown session id → 404') : fail(`unknown session id → ${rSess.status} (expected 404)`);
+
+    // 5d. Declared oversized body → 413
+    const rBig = await new Promise((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port: PORT, path: '/mcp', method: 'POST',
+        headers: { ...auth, 'content-length': String(5 * 1024 * 1024) } }, (res) => { res.resume(); resolve(res.statusCode); });
+      req.on('error', () => resolve(0));
+      req.write('{');
+      setTimeout(() => req.destroy(), 1000);
+    });
+    rBig === 413 ? ok('oversized body → 413') : fail(`oversized body → ${rBig} (expected 413)`);
 
     // 6. Valid token → full MCP round-trip via the SDK client
     const client = new Client({ name: 'http-test', version: '0.0.0' });
@@ -116,8 +148,29 @@ async function run() {
     const { tools: tools2 } = await client2.listTools();
     tools2.length === tools.length ? ok('second concurrent session works') : fail('second session tool count differs');
 
-    await client.close();
-    await client2.close();
+    // 8. Session cap (2) evicts the oldest session instead of locking out new clients
+    const client3 = new Client({ name: 'http-test-3', version: '0.0.0' });
+    try {
+      await client3.connect(new StreamableHTTPClientTransport(new URL(URL_MCP), {
+        requestInit: { headers: { authorization: `Bearer ${TOKEN}` } },
+      }));
+      ok('third session admitted at cap=2 (oldest evicted)');
+      await client3.close();
+    } catch (e) {
+      fail(`third session rejected at cap=2: ${e.message}`);
+    }
+
+    // 9. Idle sessions expire (idle 1500 ms) → old session id answers 404
+    const idleInit = await fetch(URL_MCP, { method: 'POST', headers: auth, body: initBody });
+    const idleId = idleInit.headers.get('mcp-session-id');
+    await idleInit.text();
+    await new Promise((r) => setTimeout(r, 3500));
+    const rIdle = await fetch(URL_MCP, { method: 'POST', headers: { ...auth, 'mcp-session-id': idleId ?? 'none' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list' }) });
+    idleId && rIdle.status === 404 ? ok('idle session expired → 404') : fail(`idle session → ${rIdle.status} (id=${idleId})`);
+
+    await client.close().catch(() => {});
+    await client2.close().catch(() => {});
   } catch (e) {
     fail(`${e.message}\n${stderr}`);
   } finally {

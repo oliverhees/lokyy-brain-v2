@@ -4,3 +4,7 @@ node_modules
 .git
 apps/ios
 apps/android
+.env
+.env.*
+!.env.example
+.pnpm-store

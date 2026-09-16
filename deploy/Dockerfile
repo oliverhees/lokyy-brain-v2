@@ -24,7 +24,10 @@ RUN useradd -r -u 10001 -m vault && mkdir -p /data && chown vault /data
 USER vault
 VOLUME ["/data"]
 EXPOSE 4321 4322
+# Web must answer 200; if MCP is enabled it must answer 401 without a token (alive, auth on).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:4321/ >/dev/null || exit 1
-ENTRYPOINT ["tini", "--"]
+  CMD curl -fsS -o /dev/null http://127.0.0.1:4321/ \
+   && { [ -z "$MCP_HTTP_PORT" ] || [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:${MCP_HTTP_PORT}/mcp)" = "401" ]; } \
+   || exit 1
+ENTRYPOINT ["tini", "-g", "--"]
 CMD ["/app/deploy/entrypoint.sh"]
