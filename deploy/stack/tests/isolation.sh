@@ -98,6 +98,31 @@ expect "unauthenticated request with forged identity headers never reaches the v
   "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-authentik-username: anna' -H 'X-authentik-groups: lokyy-admins' "$(printf $V anna)/__echo")" "302"
 docker compose -f compose.yml -f tests/echo.override.yml rm -sf echo >/dev/null 2>&1
 
+echo "== 3c. Vault-side admin groups and secret masking (LBV2-9, end to end through Traefik)"
+# carl: web access to the company vault (vault-firma-write) but not in vault-firma-admin.
+jar_carl=$(mktemp)
+tests/login.sh "$jar_carl" "$(printf $V firma)/" carl "$DEMO_PASS_CARL" || bad "carl login"
+put() { # put <jar> <vault> <path> <json> [extra curl args] → HTTP status
+  local jar=$1 v=$2 p=$3 json=$4; shift 4
+  curl -s -o /dev/null -w '%{http_code}' -b "$jar" -X "${METHOD:-PUT}" -H 'content-type: application/json' "$@" -d "$json" "$(printf $V "$v")$p"
+}
+expect "carl (firma writer, no admin) → firma GET /api/config" "$(access "$jar_carl" "$(printf $V firma)/api/config")" "DATA"
+expect "carl → firma PUT /api/config" "$(put "$jar_carl" firma /api/config '{}')" "403"
+expect "carl → firma PUT /api/config with forged X-authentik-groups: vault-firma-admin|lokyy-admins" \
+  "$(put "$jar_carl" firma /api/config '{}' -H 'X-authentik-groups: vault-firma-admin|lokyy-admins')" "403"
+expect "carl → firma POST /api/config/test" "$(METHOD=POST put "$jar_carl" firma /api/config/test '{}')" "403"
+expect "anna (vault-anna-admin) → own vault PUT /api/config" "$(put "$jar_anna" anna /api/config '{}')" "200"
+test_key="isolation-test-key-$RANDOM$RANDOM"
+expect "ben (vault-firma-admin) → firma PUT /api/config with an API key" \
+  "$(put "$jar_ben" firma /api/config "{\"apiKey\":\"$test_key\"}")" "200"
+cfg=$(curl -s -b "$jar_carl" "$(printf $V firma)/api/config")
+expect "firma GET /api/config masks the stored key (as carl)" "$(jq -r '"\(.apiKey)/\(.hasApiKey)"' <<<"$cfg")" '\*\*\*\*\*\*\*\*/true'
+expect "firma GET /api/config never contains the key" "$([[ $cfg == *"$test_key"* ]] && echo LEAKED || echo masked)" "masked"
+expect "ben clears the test key again" "$(put "$jar_ben" firma /api/config '{"apiKey":""}')" "200"
+expect "capture disabled (MINDBASE_DISABLE_CAPTURE): ben → firma /api/devices" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -b "$jar_ben" "$(printf $V firma)/api/devices")" "404"
+rm -f "$jar_carl"
+
 echo "== 4. Direct container access bypassing Traefik"
 in_c() { docker compose exec -T "$1" sh -c "$2" 2>/dev/null; }
 # in_ct <container> <token> <command>: the bearer header reaches the container via stdin (file $h), never argv

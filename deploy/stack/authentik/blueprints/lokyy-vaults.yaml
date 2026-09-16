@@ -54,6 +54,16 @@ entries:
       email: ben@example.local
       password: !Env DEMO_PASS_BEN
       groups: [!KeyOf group-firma-write, !KeyOf group-ben-admin, !KeyOf group-firma-admin]
+  # carl: company vault web access (writer) but NOT a vault admin — used to test VAULT_ADMIN_GROUPS
+  - model: authentik_core.user
+    id: user-carl
+    identifiers: { username: carl }
+    attrs:
+      username: carl
+      name: Carl Demo
+      email: carl@example.local
+      password: !Env DEMO_PASS_CARL
+      groups: [!KeyOf group-firma-write]
   - model: authentik_core.user
     identifiers: { username: akadmin }
     state: present

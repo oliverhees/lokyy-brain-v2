@@ -27,7 +27,7 @@ tests/metamcp-attacks.sh         # MCP endpoint attack tests (rotates anna's key
 | `http://firma.vault.localhost:18080` | Company vault web UI — only group `vault-firma-write` (ben) |
 | `http://mcp.localhost:18080` | MetaMCP admin UI — only group `lokyy-admins`; `/metamcp/*` endpoints use MetaMCP API keys |
 
-Demo users and groups come from `authentik/blueprints/lokyy-vaults.yaml`: `anna` is in `vault-firma-read` and `vault-anna-admin`, `ben` in `vault-firma-write`, `vault-ben-admin` and `vault-firma-admin`. Passwords are `DEMO_PASS_ANNA` / `DEMO_PASS_BEN`. Usernames must stay plain (no `@`): the vault rejects them as identity.
+Demo users and groups come from `authentik/blueprints/lokyy-vaults.yaml`: `anna` is in `vault-firma-read` and `vault-anna-admin`, `ben` in `vault-firma-write`, `vault-ben-admin` and `vault-firma-admin`, `carl` only in `vault-firma-write` (company vault web access without admin rights, for the admin-group tests). Passwords are `DEMO_PASS_ANNA` / `DEMO_PASS_BEN` / `DEMO_PASS_CARL`. Usernames must stay plain (no `@`): the vault rejects them as identity.
 
 On a fresh start Authentik applies the blueprint in the background; right after `up` the vault routes answer `404` until it is done, which is why `tests/wait-ready.sh` waits for it. If the blueprint ends in status `error` (seen once during development, when Authentik's default flows did not exist yet), re-apply it:
 
@@ -44,7 +44,8 @@ docker compose exec authentik-worker ak apply_blueprint custom/lokyy-vaults.yaml
 | Vaults cannot reach each other | No published ports. Per-vault internal networks: `web-<vault>` (Traefik only) and `mcp-<vault>` (MetaMCP only, alias `mcp.vault-<vault>`). Shared `egress` network with inter-container traffic disabled |
 | MCP access | Per-vault `MCP_HTTP_TOKEN`, known only to MetaMCP; `MCP_HTTP_ALLOWED_HOSTS=mcp.vault-<vault>:4322` |
 | Identity for the vault web server | Traefik forward-auth `authResponseHeaders` delete any client `X-authentik-username` / `X-authentik-groups` and set Authentik's values; the `vault-identity` middleware strips `X-Mindbase-User`. The vault trusts these headers only behind the proxy secret (LBV2-9) |
-| Vault administration (config writes) | `VAULT_ADMIN_GROUPS=vault-<vault>-admin,lokyy-admins` is set; the vault-side check against the proxy-set groups header **requires LBV2-9 (identity hardening)** in the vault image. This stack only verifies the headers (Authentik format: groups separated by `\|`) |
+| Vault administration (config writes) | `VAULT_ADMIN_GROUPS=vault-<vault>-admin,lokyy-admins` on every vault; the vault (LBV2-9) answers `403` to config changes from anyone else, based on the proxy-set `X-authentik-groups` (Authentik format: groups separated by `\|`). `GET /api/config` returns secrets masked. Tested end to end in `tests/isolation.sh` section 3c |
+| Capture / device pairing | Disabled on all vaults (`MINDBASE_DISABLE_CAPTURE=1`, beta decision) |
 | Readers of the company vault | `MCP_HTTP_READONLY_TOKEN` on `vault-firma`: 13 read tools (incl. rate-limited `ask_wiki`), no `internal`/`pii` pages, enforced inside the vault (fail closed). MetaMCP's own tool deactivation is only a second layer |
 | MCP clients (AI tools) | One MetaMCP endpoint per user, API key only (no OAuth, no key in the query string). Traefik routes only `/metamcp/<endpoint>/mcp`, rate-limits it per client IP (20 req/s, burst 60) and rewrites MetaMCP's `404` for unknown endpoints to `401`, so endpoint names cannot be probed by status code (the response body still differs) |
 | MetaMCP accounts | `metamcp-init` creates the admin and closes self-registration (open by default in MetaMCP 2.4.22) |
@@ -161,7 +162,6 @@ The embedding model does not work in the image: `@xenova/transformers` tries to 
 - MetaMCP must reach the vaults, so a vault can reach MetaMCP back (compose has no one-way rules). Its surface stays authenticated.
 - MetaMCP 2.4.22's tool deactivation is a fail-open denylist — never rely on it alone (see LBV2-4).
 - MetaMCP stores API keys and vault bearer tokens in plain text in its database (accepted, see "Risk: plaintext secrets in MetaMCP").
-- Guarded-mode identity and admin checks inside the vault (LBV2-9) are verified here at header level only.
 - Vaults can reach services published on the Docker host through the egress gateway (and cloud metadata endpoints, if any). Harmless on a developer machine, relevant for the Coolify template (LBV2-16).
 - The stack suite does not re-test the `internal`/`pii` visibility rules; those are covered by `apps/mcp/test/http-readonly-visibility.mjs`.
 - Traefik mounts the Docker socket (read-only) for label discovery.

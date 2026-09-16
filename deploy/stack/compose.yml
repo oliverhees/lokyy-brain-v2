@@ -24,6 +24,8 @@ x-vault: &vault
   environment: &vault-env
     MCP_HTTP_PORT: "4322"
     MINDBASE_MDNS: "off"
+    # Beta decision: no capture / device pairing on hosted vaults
+    MINDBASE_DISABLE_CAPTURE: "1"
 
 services:
   traefik:
@@ -75,6 +77,7 @@ services:
       AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
       DEMO_PASS_ANNA: ${DEMO_PASS_ANNA:?set in .env}
       DEMO_PASS_BEN: ${DEMO_PASS_BEN:?set in .env}
+      DEMO_PASS_CARL: ${DEMO_PASS_CARL:?set in .env}
     volumes:
       - ./authentik/blueprints:/blueprints/custom:ro
     shm_size: 512mb
