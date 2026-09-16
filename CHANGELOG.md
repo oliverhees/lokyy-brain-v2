@@ -21,7 +21,7 @@
 - **`GET /api/config` masks secrets**: `apiKey`, `braveApiKey` and `dailyBrief.smtp.pass` are returned as `********` (plus `hasApiKey`), `googleTokens` is omitted. `PUT /api/config` keeps a stored secret when it receives the mask or no value. Scripts that read the key from this endpoint no longer get it. Credentials in `baseUrl` are masked too.
 - **Changing provider or `baseUrl` (or the SMTP host) requires re-entering the key**: otherwise `PUT /api/config` and `POST /api/config/test` answer 400, so a kept key can no longer be sent to a new endpoint.
 - **`PUT /api/config` merges** onto the stored config instead of replacing it (partial saves no longer drop `dailyBrief`, `rss`, `srs`, Google sync settings); client-sent `googleTokens` are ignored.
-- **Google Drive OAuth** uses a single-use `state` and PKCE (S256); a callback without a valid `state` answers 400.
+- **Google Drive OAuth** uses a single-use `state` and PKCE (S256), bound to the initiating identity and an HttpOnly browser cookie; a callback without a matching `state` answers 400. In guarded mode every auth step (url, start, callback) is admin-only. At most 3 pending states per identity.
 - The SMTP password is kept only while SMTP host, port and `secure` are unchanged; non-object `dailyBrief`/`rss`/`srs` values in `PUT /api/config` are ignored.
 - `POST /api/config/test` returns a generic error message (details in the server log); `GET /api/health` no longer returns `dataDir`.
 - **OS username fallback is sanitized**: an OS account like `oliver@corp` is attributed as `oliver_corp` instead of failing with 500.

@@ -219,7 +219,7 @@ Without the guard (local, single-user), `X-Mindbase-User` is used as before. If 
 | Variable | Default | Effect |
 |---|---|---|
 | `VAULT_IDENTITY_HEADER` | `x-authentik-username` | Name of the proxy-set identity header. Only read when `VAULT_PROXY_SECRET` is set. |
-| `VAULT_GROUPS_HEADER` | `x-authentik-groups` | Name of the proxy-set groups header. Groups are split on `\|` only (Authentik format); a comma is part of the group name. A duplicated header (sent twice, which Node joins with `, `) or any value containing `, ` grants no groups. Only read when `VAULT_PROXY_SECRET` is set. |
+| `VAULT_GROUPS_HEADER` | `x-authentik-groups` | Name of the proxy-set groups header. Groups are split on `\|` only (Authentik format); a comma is part of the group name. A duplicated header (sent twice, which Node joins with `, `) or any value containing `, ` grants no groups. Group names must not contain `|`: how Authentik escapes it has not been verified, so such a group could be split into names you did not intend. Only read when `VAULT_PROXY_SECRET` is set. |
 | `VAULT_ADMIN_GROUPS` | unset | Comma-separated group names (exact match), for example `lokyy-admins,vault-firma-admin`. In guarded mode only members may change server configuration. **Unset or empty = nobody may** (fail closed). |
 
 The web server refuses to start if `VAULT_IDENTITY_HEADER` or `VAULT_GROUPS_HEADER` names a header the client controls or the server uses for something else (`x-mindbase-user`, `x-vault-proxy-secret`, `authorization`, `cookie`, `host`, `content-type`, `content-length`, `origin`, `referer`, `user-agent`), or if both variables name the same header.
@@ -252,7 +252,9 @@ A key whose literal value is `********` cannot be saved, because it is indisting
 
 ### Google Drive connect (OAuth)
 
-`/api/google/auth/start` and `/api/google/auth/url` create a random, single-use `state` (256 bit) and a PKCE `code_verifier` with an S256 `code_challenge`. Pending states are kept in server memory for 10 minutes, at most 100 at a time (the oldest is dropped). `/api/google/auth/callback` answers `400 Invalid OAuth state` for a missing, unknown, expired or already used `state` and does not exchange the code. This blocks login CSRF, where an attacker's authorization code would link the vault to the attacker's Drive. A server restart invalidates pending logins; start the connection again.
+In guarded mode, `/api/google/auth/url`, `/api/google/auth/start` and `/api/google/auth/callback` require a `VAULT_ADMIN_GROUPS` member (otherwise `403`) and an identity header (otherwise `401`).
+
+`/api/google/auth/start` and `/api/google/auth/url` create a random, single-use `state` (256 bit) and a PKCE `code_verifier` with an S256 `code_challenge`. Each state is bound to whoever started the flow: the proxy identity (guarded mode) and a random browser nonce in the cookie `mindbase_oauth` (`HttpOnly`, `SameSite=Lax`, path `/api/google/auth`, 10 minutes, `Secure` in guarded mode). Pending states are kept in server memory for 10 minutes, at most 3 per identity (or per browser locally) and 100 in total; the oldest are dropped. `/api/google/auth/callback` answers `400 Invalid OAuth state` and does not exchange the code when the `state` is missing, unknown, expired or already used, or when the identity or cookie differs from the one that started the flow. A mismatched attempt also invalidates the state. So a callback URL passed to another user, including another admin, is useless. This blocks login CSRF, where an attacker's authorization code would link the vault to the attacker's Drive. A server restart invalidates pending logins; start the connection again.
 
 ## Capture disabled
 
