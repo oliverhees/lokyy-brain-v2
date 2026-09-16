@@ -1,6 +1,6 @@
 # Lokyy Brain v2 — self-hosted vault image, built from source (no prebuilt npm bundle).
-# Runs the web server (port 4321). The MCP server is built too and exposed
-# over Streamable HTTP by deploy/entrypoint.sh when MCP_HTTP_PORT is set.
+# Runs the web server (port 4321). When MCP_HTTP_PORT is set, the MCP server is
+# also served over Streamable HTTP (requires MCP_HTTP_TOKEN, see apps/mcp/src/http.ts).
 FROM node:20-bookworm AS build
 WORKDIR /src
 RUN corepack enable
@@ -23,8 +23,11 @@ ENV NODE_ENV=production \
 RUN useradd -r -u 10001 -m vault && mkdir -p /data && chown vault /data
 USER vault
 VOLUME ["/data"]
-EXPOSE 4321
+EXPOSE 4321 4322
+# Web must answer 200; if MCP is enabled it must answer 401 without a token (alive, auth on).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:4321/ >/dev/null || exit 1
-ENTRYPOINT ["tini", "--"]
-CMD ["sh", "-c", "cd apps/server && exec node --import tsx src/index.ts"]
+  CMD curl -fsS -o /dev/null http://127.0.0.1:4321/ \
+   && { [ -z "$MCP_HTTP_PORT" ] || [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:${MCP_HTTP_PORT}/mcp)" = "401" ]; } \
+   || exit 1
+ENTRYPOINT ["tini", "-g", "--"]
+CMD ["/app/deploy/entrypoint.sh"]

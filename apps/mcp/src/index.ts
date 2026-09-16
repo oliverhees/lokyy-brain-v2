@@ -56,9 +56,8 @@ When the user asks for an audit, cleanup, or "what should I improve":
 Treat MindBase as a living thing the user cares about. Be useful but precise; this is their second brain, not a scratchpad.`;
 
 
-export async function runServer(opts: RunOptions = {}): Promise<void> {
-  const ctx = await loadContext({ dataDir: opts.dataDir });
-
+/** Build a fully registered MindBase MCP server bound to an already-loaded context. */
+export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>): Server {
   const server = new Server(
     { name: 'mindbase-mcp', version: '0.1.3' },
     {
@@ -74,6 +73,12 @@ export async function runServer(opts: RunOptions = {}): Promise<void> {
   registerTools(server, ctx);
   registerResources(server, ctx);
   registerPrompts(server);
+  return server;
+}
+
+export async function runServer(opts: RunOptions = {}): Promise<void> {
+  const ctx = await loadContext({ dataDir: opts.dataDir });
+  const server = createMcpServer(ctx);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
