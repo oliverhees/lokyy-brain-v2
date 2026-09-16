@@ -208,6 +208,30 @@ The server checks each request in this order:
   - `GET http://127.0.0.1:4321/` must succeed.
   - If `MCP_HTTP_PORT` is set, `POST http://127.0.0.1:$MCP_HTTP_PORT/mcp` without a token must return `401`. That shows the MCP process is alive and authentication is on.
 
+## Identity and attribution
+
+Contributor files and quick-capture entries are attributed to a username that becomes a directory under `sources/contributors/`.
+
+When the proxy guard is active (`VAULT_PROXY_SECRET` set), attribution comes only from the identity header that the reverse proxy sets. The header name is `VAULT_IDENTITY_HEADER` (default `x-authentik-username`, compared case-insensitively). A client-sent `X-Mindbase-User` header is ignored in this mode. Configure Traefik's forward-auth middleware with `authResponseHeaders: X-authentik-username` so the proxy overwrites any value the client sends. If the header is missing, writes are attributed to the fixed user `unknown` and the server logs one warning. A value that is not a valid username (letters, digits, `_`, `-`, `.`; no `@`, spaces, or `..`) gets `400 Invalid identity header`. Authentik usernames that are e-mail addresses therefore need a username without `@`.
+
+Without the guard (local, single-user), `X-Mindbase-User` is used as before. If it is absent, the OS username is mapped to a valid name: invalid characters become `_`, leading `.`/`-` are removed, `..` is collapsed, and the result is cut to 64 characters (`oliver@corp` → `oliver_corp`). An invalid explicit header still gets `400`.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `VAULT_IDENTITY_HEADER` | `x-authentik-username` | Name of the proxy-set identity header. Only read when `VAULT_PROXY_SECRET` is set. |
+
+### API key masking
+
+`GET /api/config` never returns stored secrets. `apiKey`, `braveApiKey` and `dailyBrief.smtp.pass` come back as `********` when set (empty when not), `hasApiKey` reports whether an LLM key is stored, and `googleTokens` is left out. `PUT /api/config` keeps a stored secret when the request sends `********` or leaves the field out, and replaces it when the request sends any other value (an empty string clears it). `POST /api/config/test` uses the stored key when it receives `********`.
+
+## Capture disabled
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MINDBASE_DISABLE_CAPTURE` | unset | `1`, `true` or `yes` turns off capture and device pairing: `/api/capture` and `/api/devices` (including `pair-code` and `pair`) return `404`, the background capture worker does not start, and mDNS advertising stays off regardless of `MINDBASE_MDNS`. `GET /api/health` reports `features.capture: false`, and the web UI's Devices page shows a "disabled" notice instead of the pairing QR code. |
+
+`/api/inbox` stays available because RSS feeds write into the inbox. With capture disabled, queued inbox entries (including RSS items) are no longer compiled automatically; use the Compile button in the inbox.
+
 ## Known limitations and residual risks
 
 The items below are **limitations, not features**. They came out of the security audits of LBV2-7, LBV2-10, LBV2-11, and LBV2-12, and they are tracked. Decide whether they are acceptable for your deployment.

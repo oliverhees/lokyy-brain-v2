@@ -7,12 +7,18 @@
 - Source-built vault Docker image (`deploy/Dockerfile`).
 - Web server proxy shared-secret guard (`VAULT_PROXY_SECRET`, header `X-Vault-Proxy-Secret`); required by the Docker image (`VAULT_REQUIRE_PROXY_SECRET=1`). Unset outside the image = previous behaviour.
 
+- Trusted user attribution behind the proxy: with `VAULT_PROXY_SECRET` set, the contributor username comes only from the proxy identity header (`VAULT_IDENTITY_HEADER`, default `x-authentik-username`); a client `X-Mindbase-User` is ignored; a missing identity is attributed to `unknown`.
+- `MINDBASE_DISABLE_CAPTURE=1`: `/api/capture` and `/api/devices` return 404, the capture worker and mDNS do not start, `/api/health` reports `features.capture`, and the Devices page shows a disabled notice.
+
 ### Changed — may affect existing (stdio / single-user) setups
 - **Slugs are validated for every MCP tool** (`slug`, `slugs`, `source_slug`, `target_slug`, `root`): a leading `/`, backslash, NUL, or a `.`/`..` path segment is rejected with `Invalid input: unsafe slug`. Previously e.g. `read_wiki_page {slug: "/flip"}` resolved to the page.
 - **Project ids** must be directory names (`[A-Za-z0-9][A-Za-z0-9_-]{0,127}`), also `currentProjectId` in `config.json`.
 - **File store paths** that would leave the data directory are refused; leading slashes stay relative to the data directory.
 - **Web API**: `POST /api/tree/research` accepts only plain slugs (`[a-z0-9-]`); an invalid `X-Mindbase-User` header returns 400; contributor usernames must be letters, digits, `_`, `-`, `.` (an OS username with `@` or spaces now fails for quick capture / contributor files); trash restore/delete reject ids not in the generated format and error messages no longer include ids or paths.
 - `mindbase_ingest_file` no longer accepts local file paths over the HTTP transport (stdio unchanged).
+
+- **`GET /api/config` masks secrets**: `apiKey`, `braveApiKey` and `dailyBrief.smtp.pass` are returned as `********` (plus `hasApiKey`), `googleTokens` is omitted. `PUT /api/config` keeps a stored secret when it receives the mask or no value. Scripts that read the key from this endpoint no longer get it.
+- **OS username fallback is sanitized**: an OS account like `oliver@corp` is attributed as `oliver_corp` instead of failing with 500.
 
 ### Licensing
 - Fork modifications after `7aa8fcd` are licensed under PolyForm Noncommercial 1.0.0; upstream code remains MIT. See `NOTICE.md`.
