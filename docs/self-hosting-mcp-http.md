@@ -44,6 +44,31 @@ No `-p` flag: the ports stay on the internal `mcp-acme` network, which only the 
 
 The container runs as the non-root user `vault` (uid 10001) under `tini`.
 
+### Image contents and size
+
+`deploy/Dockerfile` is a three-stage build on Debian bookworm:
+
+1. **build** (`node:20-bookworm`): installs the whole workspace, builds `@mindbase/core`, the web UI and the MCP server, and compiles the web server with `deploy/build-server.mjs` into `apps/server/dist/server.mjs` (esbuild; `@mindbase/core` is inlined, packages from `apps/server/package.json` `dependencies` stay external).
+2. **prod-deps** (`node:20-bookworm`): installs production dependencies only, for `@mindbase/server` and `mindbase-mcp`. Native modules (`better-sqlite3`, `argon2`, `sharp`, `onnxruntime-node`) are built or downloaded here for Debian glibc. Unused files are removed: `tsx`/`esbuild`, musl and macOS/Windows binaries, `*.d.ts` and `*.map`.
+3. **runtime** (`node:20-bookworm-slim`): only `node_modules`, `apps/server/dist`, `apps/mcp/dist`, `apps/web/dist`, `schema/`, `apps/plugin/templates/` and `deploy/entrypoint.sh`. No TypeScript sources, no dev dependencies, no `tsx`.
+
+| | Before LBV2-6 (whole workspace + dev deps, `tsx` at runtime) | Since LBV2-6 |
+|---|---|---|
+| `docker image ls` disk usage | 1.82 GB | 800 MB |
+| Content size (compressed layers) | 367 MB | 179 MB |
+
+The remaining `node_modules` is about 360 MB; the largest packages are `tesseract.js-core`, `@xenova/transformers` and `onnxruntime-node` (embeddings), `googleapis` (37 MB, Google Drive import), `@napi-rs/canvas` and `pdfjs-dist`. The web server needs no build step at runtime and starts in a few seconds.
+
+`deploy/build-server.mjs` rewrites `import.meta.dirname` in server sources to the original source directory, so `schema/`, `apps/web/dist` and `.env` resolve as they do in development. The build fails if server code uses `import.meta.url`, `import.meta.filename`, `__dirname` or `__filename`, because those would silently point to `dist/` in the bundle.
+
+**Embedding model cache (`/models`).** The web server's embedding indexer and the MCP server load the BGE-M3 model through `@xenova/transformers`, which downloads it from Hugging Face on first use (about 560 MB) and caches it in the package directory. In the image that cache directory is a symlink to `/models`, owned by `vault`. Without a mount the model is downloaded again after every container recreation. To keep it, mount a named volume:
+
+```bash
+docker run ... -v lokyy-models:/models ...
+```
+
+One volume can be shared by several vault containers; the files are read-only after the download. Without outbound access to `huggingface.co` the download fails; the indexer logs the failure per page and keyword search keeps working.
+
 ## Configuration
 
 ### MCP HTTP transport (`apps/mcp/src/http.ts`)
@@ -72,6 +97,7 @@ The server validates every integer variable at startup. A value that is not an i
 | `PORT` | `4321` | Web server port. The healthcheck assumes `4321`. |
 | `MINDBASE_MDNS` | `off` | Any value other than `off` makes the web server advertise itself via mDNS (`_mindbase._tcp`). Keep `off` in containers. |
 | `NODE_ENV` | `production` | Standard Node.js setting. |
+| `MINDBASE_PLUGIN_ROOT` | `/app/apps/plugin` | Location of the schema page templates (`templates/schema-templates/`) used by the tree template route. |
 | `VAULT_PROXY_SECRET` | unset — **required** in the image | At least 32 characters, otherwise the web server exits. Every web request must carry header `X-Vault-Proxy-Secret` with this value (constant-time compare), otherwise `403`; the header is stripped before handlers. Not passed to the MCP process. The healthcheck sends it via stdin. Generate with `openssl rand -hex 32`, one per vault. |
 | `VAULT_REQUIRE_PROXY_SECRET` | `1` | When set (any non-empty value), a missing or empty `VAULT_PROXY_SECRET` aborts web server startup instead of disabling the guard. An empty value turns the requirement off. |
 
