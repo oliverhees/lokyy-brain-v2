@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { ingestPaste, ingestFile } from '@mindbase/core';
+import { ingestPaste, ingestFile, fetchUntrusted, UntrustedFetchError, UNTRUSTED_FETCH_ERROR } from '@mindbase/core';
 import type { ServerContext } from '../context';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -19,14 +19,15 @@ function isUrl(text: string): boolean {
 }
 
 async function fetchUrlContent(url: string): Promise<{ title: string; text: string; kind: 'pdf' | 'webpage' }> {
-  const res = await fetch(url, {
+  // SSRF-safe: the URL comes from the client (LBV2-13).
+  const res = await fetchUntrusted(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
       'Accept': 'text/html,application/xhtml+xml,application/pdf,*/*',
     },
-    redirect: 'follow',
+    timeoutMs: 60_000,
+    maxBytes: 20 * 1024 * 1024,
   });
-  if (!res.ok) throw new Error(`Failed to fetch URL: ${res.status}`);
 
   const contentType = res.headers.get('content-type') ?? '';
 
@@ -250,7 +251,10 @@ export function ingestRoutes(ctx: ServerContext): Router {
           res.json({ ok: true, rawId: raw.id, title: title || fetched.title, kind: fetched.kind });
           return;
         } catch (e) {
-          res.status(400).json({ ok: false, error: `URL fetch failed: ${(e as Error).message}` });
+          res.status(400).json({
+            ok: false,
+            error: e instanceof UntrustedFetchError ? UNTRUSTED_FETCH_ERROR : `URL fetch failed: ${(e as Error).message}`,
+          });
           return;
         }
       }

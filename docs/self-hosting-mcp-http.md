@@ -27,8 +27,6 @@ MCP clients ──► aggregator (e.g. MetaMCP) ──internal network──► 
 # from the repository root
 docker build -f deploy/Dockerfile -t lokyy-brain-vault .
 
-docker network create vaults   # internal network shared with the aggregator
-
 docker network create --internal mcp-acme   # vault <-> aggregator only, no egress
 docker run -d --name vault-acme --network mcp-acme \
   -v vault-acme-data:/data \
@@ -77,7 +75,7 @@ The server validates every integer variable at startup. A value that is not an i
 
 | Variable | Default | Validation | Effect |
 |---|---|---|---|
-| `MCP_HTTP_TOKEN` | none (required) | at least 32 characters, otherwise the process exits 1 | Token for the **full** access profile. Clients send `Authorization: Bearer <token>`. |
+| `MCP_HTTP_TOKEN` | none (required) | at least 32 characters, otherwise the process exits 1 | Token for the **full** access profile. Clients send `Authorization: Bearer <token>` (the scheme name is case-insensitive). |
 | `MCP_HTTP_READONLY_TOKEN` | unset (no read-only profile) | if set: at least 32 characters and different from `MCP_HTTP_TOKEN`, otherwise the process exits 1 | Token for the **read-only** access profile (see [Access profiles](#access-profiles)). |
 | `MCP_HTTP_PORT` | `4322` when `http.js` runs directly | integer, at least 1 | Listen port. In the container, the MCP server only starts if this variable is set. |
 | `MCP_HTTP_HOST` | `0.0.0.0` | none | Listen address. Keep `0.0.0.0` inside a container so the aggregator can reach it over the container network. |
@@ -97,8 +95,10 @@ The server validates every integer variable at startup. A value that is not an i
 | `PORT` | `4321` | Web server port. The healthcheck assumes `4321`. |
 | `MINDBASE_MDNS` | `off` | Any value other than `off` makes the web server advertise itself via mDNS (`_mindbase._tcp`). Keep `off` in containers. |
 | `NODE_ENV` | `production` | Standard Node.js setting. |
+| `MINDBASE_ALLOW_PRIVATE_FETCH` | unset (protection on) | Only the exact value `1` turns off the SSRF address check for URL fetches in both the web server and the MCP server (see [Outbound URL fetches](#outbound-url-fetches-ssrf-protection)). Meant for local single-user setups that ingest from `localhost` or the LAN. Never set it in a multi-tenant or self-hosted container. |
+| `MINDBASE_FETCH_CONCURRENCY` | unset (4) | Maximum concurrent outbound URL fetches per process, integer 1–64. |
 | `MINDBASE_PLUGIN_ROOT` | `/app/apps/plugin` | Location of the schema page templates (`templates/schema-templates/`) used by the tree template route. |
-| `VAULT_PROXY_SECRET` | unset — **required** in the image | At least 32 characters, otherwise the web server exits. Every web request must carry header `X-Vault-Proxy-Secret` with this value (constant-time compare), otherwise `403`; the header is stripped before handlers. Not passed to the MCP process. The healthcheck sends it via stdin. Generate with `openssl rand -hex 32`, one per vault. |
+| `VAULT_PROXY_SECRET` | unset — **required** in the image | At least 32 characters and no leading or trailing whitespace, otherwise the web server exits. Every web request must carry header `X-Vault-Proxy-Secret` with this value (constant-time compare), otherwise `403`; the header is stripped before handlers. Not passed to the MCP process. The healthcheck sends it via stdin. Generate with `openssl rand -hex 32`, one per vault. |
 | `VAULT_REQUIRE_PROXY_SECRET` | `1` | When set (any non-empty value), a missing or empty `VAULT_PROXY_SECRET` aborts web server startup instead of disabling the guard. An empty value turns the requirement off. |
 
 ### Generating tokens
@@ -221,7 +221,7 @@ Rules, all fail-closed:
 The server checks each request in this order:
 
 1. **Token.**
-   - Only the `Authorization: Bearer <token>` header is accepted. A token in the query string gets `401`.
+   - Only the `Authorization: Bearer <token>` header is accepted; the scheme name is matched case-insensitively (`bearer` works, RFC 7235). A token in the query string gets `401`.
    - The given token and each configured token are SHA-256 hashed and compared with `timingSafeEqual`, against every configured token.
    - A missing or wrong token gets `401 Unauthorized`.
    - Both tokens must be at least 32 characters long.
@@ -253,7 +253,23 @@ The server checks each request in this order:
   - Because the check matches argument names, tools added later that use these names are covered too.
   - `mindbase://wiki/<slug>` resources apply the same check.
 - **Path containment.** `FileStore` resolves every store path relative to the data directory. It refuses any path that would leave the directory (`Path is outside the store root`).
-- **Local file paths are disabled over HTTP.** The HTTP transport sets `allowLocalFilePaths: false`, so `mindbase_ingest_file` rejects local paths ("Local file paths are not accepted on this server"). Local paths still work over stdio. See also the SSRF limitation below.
+- **Local file paths are disabled over HTTP.** The HTTP transport sets `allowLocalFilePaths: false`, so `mindbase_ingest_file` rejects local paths ("Local file paths are not accepted on this server"). Local paths still work over stdio.
+
+### Outbound URL fetches (SSRF protection)
+
+Every fetch of a URL that comes from a client, a user, or feed content goes through one helper, `safeFetch` (`packages/core/src/net/safe-fetch.ts`). That covers `mindbase_ingest_file` (URL mode) and `add_rss_feed` in the MCP server, and in the web server `POST /api/feeds`, `POST /api/ingest/text` with a URL, article extraction for captures, the RSS worker (feed and article URLs), and result pages of the research web search. Fixed endpoints from configuration (LLM provider, Ollama, embeddings, Brave API) are not affected.
+
+- **Schemes.** Only `http` and `https`. Other schemes, also in a redirect, are refused.
+- **Address check.** The host name is resolved and **every** resolved address must be public.
+  - IPv4 refused: `0/8`, `10/8`, `100.64/10` (CGNAT), `127/8`, `169.254/16` (incl. the cloud metadata address), `172.16/12`, `192.0.0/24`, `192.88.99/24`, `192.168/16`, `198.18/15`, `224/4`, `240/4`.
+  - IPv6 is **default-deny outside global unicast `2000::/3`**. That covers `::`, `::1`, IPv4-compatible and IPv4-translated addresses (`::ffff:0:0/96`), NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), `fc00::/7`, `fe80::/10`, multicast and everything else outside `2000::/3`. Inside it, `2001::/23` (incl. Teredo `2001::/32`), `2001:db8::/32` and `3fff::/20` are refused. IPv4-mapped (`::ffff:a.b.c.d`) and 6to4 (`2002::/16`) addresses are judged by the embedded IPv4 address.
+- **DNS rebinding.** The connection is pinned to the address that passed the check, so a second DNS answer cannot redirect it.
+- **Redirects** are followed manually, at most 5, and each hop is checked again. A redirect from `https` to `http` is refused. Userinfo (`user:pass@`) in a redirect target is removed.
+- **Limits.** Timeout for the whole request including redirects, and a maximum decoded response size (after gzip/deflate/br). URL downloads for `mindbase_ingest_file` and `POST /api/ingest/text` are limited to 20 MB (local files over stdio: 50 MB).
+- **Concurrency.** At most `MINDBASE_FETCH_CONCURRENCY` fetches (default 4, integer 1–64) run at once per process; further requests wait. At most 64 further fetches wait; the next one fails at once, and a waiting fetch fails as soon as its timeout expires. An invalid value makes both the MCP HTTP server and the web server exit with code 1 at startup.
+- **Errors.** Clients get one message for every failure: `URL not allowed or unreachable`. Blocked addresses, DNS failures, refused connections, HTTP statuses, timeouts and size limits look the same, so the error cannot be used to map internal names or ports. The detail is written to the server log (`[safe-fetch] <scheme://host/path> <code>: …`, no query string). The same generic text is stored as a feed's `last_error`.
+
+`MINDBASE_ALLOW_PRIVATE_FETCH=1` disables the address check (schemes, redirect rules, limits and generic errors still apply). Use it only for local single-user setups. Code can also exempt specific host names (`trustedHosts` option of `safeFetch`); no current call site uses it, and it must never be filled from client input.
 
 ### Container
 
@@ -331,7 +347,7 @@ The items below are **limitations, not features**. They came out of the security
 | 1 | Search ordering may depend on hidden pages | readonly | The underlying search index also contains hidden pages. Readers get the filtered hits with rank-only scores, but the order of visible hits can still be influenced by term statistics that include hidden pages. |
 | 2 | Meta is re-read on every reader request | readonly, performance | Before each tool call or resource request, the server lists `wiki/notes` and `wiki/concepts` and reads every page's meta file. The cost grows with the number of pages. |
 | 3 | Stale body-link edges until reindex | readonly | The graph comes from the SQLite index. Body wikilink edges reflect page bodies as of the last reindex, so a removed link can keep appearing (as a broken link) until the index is rebuilt. |
-| 4 | SSRF in `mindbase_ingest_file` URL mode | full token only | An `http(s)` URL is fetched server-side with redirects followed and no restriction on the target host, so a full-token client can make the container request internal addresses. Tracked as LBV2-13. The tool is not available to read-only sessions. |
+| 4 | Outbound fetches still reach the public internet | full token only | Since LBV2-13, URL fetches refuse private, loopback, link-local and reserved targets (see [Outbound URL fetches](#outbound-url-fetches-ssrf-protection)). A full-token client can still make the container request arbitrary **public** hosts. Restrict egress on the container network if that matters. The check is off when `MINDBASE_ALLOW_PRIVATE_FETCH=1`. Internal services reachable under a public address (for example through NAT hairpinning) are not detected. |
 | 5 | Public page content goes to the LLM provider | readonly (`ask_wiki`) | Readers can have any public root-wiki page sent to the configured provider, and the question text is sent as typed. The rate limit bounds cost, not data flow; it is per process and resets on restart. Answers are untrusted output: visible pages may carry prompt injection aimed at the reader's own agent. See [Reader LLM access](#reader-llm-access-ask_wiki). (The former item 5, `context_pages`/`raw_id` bypassing the slug check, was fixed in LBV2-18.) |
 | 6 | Upstream server e2e tests are broken | development | The `apps/server/test/*-e2e.test.ts` suites failed before the LBV2 changes as well (commit `b78f97c`). They do not currently give regression signal. |
 | 7 | Upstream typecheck error | development | `pnpm -F mindbase-mcp typecheck` reports an error in `apps/mcp/src/tools/get-pulse.ts` (line 94). It is inherited from upstream and does not affect the build (`tsup`). |
@@ -369,6 +385,7 @@ docker run --rm -v "$PWD":/repo:ro node:20-bookworm bash -c '
 | `http-transport.mjs` | HTTP | Startup refuses a missing or short token and invalid integer variables. Also: `401` for a missing or wrong token and for a token in the query string, `404` for an unknown path or unknown session, `403` for a foreign Host, `413` for an oversized body, a tool round trip, concurrent sessions, LRU eviction at the cap, idle expiry. |
 | `http-readonly.mjs` | HTTP | Read-only startup validation (identical or short token), `tools/list` equals the allowlist, every non-allowlisted tool and unknown tools rejected, data directory unchanged after write attempts, chat resources hidden, session-to-token binding (`403` in both directions). |
 | `path-traversal.mjs` | HTTP | Traversal slugs in `read_wiki_page`, wiki resources, and `export_subgraph`, plus traversal `projectId`s and contributor usernames, do not leak a canary from outside the vault or from `mindbase.config.json`. Also: local paths in `mindbase_ingest_file` rejected over HTTP, and errors without absolute paths. |
+| `ssrf.mjs` | HTTP | `mindbase_ingest_file` (direct, redirect chain, `localhost`, IPv4-mapped IPv6, metadata address) and `add_rss_feed` cannot reach a service on loopback, the service receives no request, and every error is the generic `URL not allowed or unreachable` (also for refused ports, HTTP 404 and unresolvable names); with `MINDBASE_ALLOW_PRIVATE_FETCH=1` the redirect chain works. Address classification, per-hop redirect checks, DNS answers with private addresses, pinning, https downgrade, userinfo stripping, concurrency, size and timeout limits are unit-tested in `packages/core/src/net/safe-fetch.test.ts`. |
 | `ingest-local-stdio.mjs` | stdio | `mindbase_ingest_file` still accepts local paths over stdio, and its errors do not echo the path. |
 | `http-readonly-visibility.mjs` | HTTP | `internal`, `pii`, and broken-meta pages invisible to readers in every allowlisted tool and resource, hidden pages failing like missing pages, project, source, and raw data invisible, full sessions unchanged, per-profile session caps, allowlist immutability, reader instructions and prompts. |
 | `http-readonly-graph-leaks.mjs` | HTTP | LLM-inferred links to hidden or missing pages never reveal the target slug, community ids never exposed, central unsafe-slug rejection with one generic error while legitimate slugs keep working. |

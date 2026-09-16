@@ -73,7 +73,7 @@ async function run() {
   else ok('server refuses a token shorter than 32 chars');
 
   // 1c. Refuses invalid numeric settings (NaN would disable expiry and the cap)
-  for (const [key, value] of [['MCP_HTTP_SESSION_IDLE_MS', 'abc'], ['MCP_HTTP_SESSION_IDLE_MS', '0'], ['MCP_HTTP_MAX_SESSIONS', 'x'], ['MCP_HTTP_PORT', 'nope']]) {
+  for (const [key, value] of [['MCP_HTTP_SESSION_IDLE_MS', 'abc'], ['MCP_HTTP_SESSION_IDLE_MS', '0'], ['MCP_HTTP_MAX_SESSIONS', 'x'], ['MCP_HTTP_PORT', 'nope'], ['MINDBASE_FETCH_CONCURRENCY', '0'], ['MINDBASE_FETCH_CONCURRENCY', 'many']]) {
     const bad = startServer({ MCP_HTTP_TOKEN: TOKEN, [key]: value });
     const badCode = await waitForExit(bad, 5000);
     if (badCode === null || badCode === 0) { bad.kill(); fail(`server started with ${key}=${value}`); }
@@ -108,6 +108,15 @@ async function run() {
     r4.status === 404 ? ok('unknown path → 404') : fail(`unknown path → ${r4.status} (expected 404)`);
 
     const auth = { ...jsonHeaders, authorization: `Bearer ${TOKEN}` };
+
+    // 5a. Auth scheme is case-insensitive (RFC 7235 §2.1): "bearer <token>" → 200
+    for (const scheme of ['bearer', 'BEARER']) {
+      const rCase = await fetch(URL_MCP, { method: 'POST', headers: { ...jsonHeaders, authorization: `${scheme} ${TOKEN}` }, body: initBody });
+      const sid = rCase.headers.get('mcp-session-id');
+      await rCase.body?.cancel();
+      rCase.status === 200 ? ok(`"${scheme} <token>" → 200`) : fail(`"${scheme} <token>" → ${rCase.status} (expected 200)`);
+      if (sid) await fetch(URL_MCP, { method: 'DELETE', headers: { ...auth, 'mcp-session-id': sid } }).then((r) => r.body?.cancel());
+    }
 
     // 5b. Host header not in MCP_HTTP_ALLOWED_HOSTS → 403 (DNS rebinding / wrong route)
     const rHost = await new Promise((resolve) => {

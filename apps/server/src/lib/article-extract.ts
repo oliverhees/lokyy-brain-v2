@@ -1,5 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
+import { fetchUntrusted } from '@mindbase/core';
 
 export interface ArticleExtractOptions {
   /** ms before abort (default 15000) */
@@ -22,25 +23,18 @@ export async function extractArticleText(
   url: string,
   opts: ArticleExtractOptions = {},
 ): Promise<{ text: string; title?: string }> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 15000);
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      headers: {
-        'User-Agent': opts.userAgent ?? 'MindBase/0.1',
-        Accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
-      },
-      signal: ctrl.signal,
-      redirect: 'follow',
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!res.ok) throw new Error(`readability: HTTP ${res.status}`);
+  // SSRF-safe: capture URLs come from clients (LBV2-13).
+  // Failures throw UntrustedFetchError with the generic message; details are logged.
+  const res = await fetchUntrusted(url, {
+    headers: {
+      'User-Agent': opts.userAgent ?? 'MindBase/0.1',
+      Accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
+    },
+    timeoutMs: opts.timeoutMs ?? 15000,
+  });
 
   const html = await res.text();
-  const dom = new JSDOM(html, { url });
+  const dom = new JSDOM(html, { url: res.url });
   const reader = new Readability(dom.window.document);
   const article = reader.parse();
   const text = (article?.textContent ?? '').trim();

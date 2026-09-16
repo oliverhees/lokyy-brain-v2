@@ -3,6 +3,7 @@
 // Optional Brave Search integration for the research op. No key → the
 // caller falls back to wiki-only mode; failures degrade to fewer sources
 // rather than failing the op.
+import { safeFetch } from '@mindbase/core';
 import type { ResearchSource } from './recipes/research';
 
 const RESULT_COUNT = 3;
@@ -47,7 +48,12 @@ export async function braveSearchSources(apiKey: string, query: string): Promise
     results.map(async (res) => {
       const host = new URL(res.url).hostname;
       try {
-        const page = await fetchWithTimeout(res.url, { headers: { 'User-Agent': 'MindBase-research/1.0' } });
+        // Result URLs are third-party controlled: SSRF-safe fetch (LBV2-13).
+        const page = await safeFetch(res.url, {
+          headers: { 'User-Agent': 'MindBase-research/1.0' },
+          timeoutMs: FETCH_TIMEOUT_MS,
+          maxBytes: 2 * 1024 * 1024,
+        });
         const text = stripHtml(await page.text()).slice(0, PAGE_CHAR_CAP);
         return { label: `web — ${host} (${res.url})`, body: text || res.description || res.title };
       } catch {

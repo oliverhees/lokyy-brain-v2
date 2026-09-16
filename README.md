@@ -67,6 +67,8 @@ Three operations run the loop: **ingest** (AI reads a source, discusses takeaway
 
 **Browser (fastest):** `npx mindbase-app` — shown above. Everything runs locally at `localhost:4321`.
 
+> **Lokyy Brain v2 — ingesting from `localhost` or your LAN.** The server and MCP server built from this repository refuse to fetch URLs that point at `localhost`, private LAN addresses, or other internal targets (SSRF protection); such URLs fail with `URL not allowed or unreachable`. For a local single-user setup that ingests from those addresses, start the server with `MINDBASE_ALLOW_PRIVATE_FETCH=1`, for example `MINDBASE_ALLOW_PRIVATE_FETCH=1 pnpm -F @mindbase/server dev`. Never set it on a shared or self-hosted deployment. Details: [docs/self-hosting-mcp-http.md](docs/self-hosting-mcp-http.md#outbound-url-fetches-ssrf-protection).
+
 **Claude Code (flagship):** the full Karpathy 8-step ingest with sub-agents, slash commands, and per-agent tool boundaries:
 
 ```
