@@ -317,12 +317,20 @@ These are just composed prompts — they instruct the AI to call the right combi
 
 ---
 
+## HTTP transport (self-hosted)
+
+Besides stdio, the server can run over Streamable HTTP (`dist/http.js`, endpoint `/mcp`) for self-hosted vault containers that an MCP aggregator such as MetaMCP reaches over an internal network. It requires a bearer token (`MCP_HTTP_TOKEN`, at least 32 characters). An optional second token (`MCP_HTTP_READONLY_TOKEN`) opens read-only sessions: they get a fail-closed allowlist of 12 tools and never see pages with visibility `internal` or `pii`. Local file paths are disabled on this transport.
+
+Configuration, access profiles, visibility rules, security behaviour, known limitations and tests: [docs/self-hosting-mcp-http.md](../../docs/self-hosting-mcp-http.md).
+
+---
+
 ## Privacy
 
 - Everything runs locally. No telemetry. No analytics.
 - The only outbound network calls are to the LLM endpoint you've configured (OpenAI, Anthropic, or your own via the LLM adapter).
 - Read-only tools never call the LLM.
-- Pages marked `visibility: internal` or `visibility: pii` are excluded from semantic search and `ask_wiki` by default — they're still readable by `read_wiki_page` if you ask explicitly.
+- Pages marked `visibility: internal` or `visibility: pii` are excluded from semantic search and `ask_wiki` by default. In full-access sessions (stdio, or HTTP with `MCP_HTTP_TOKEN`) they are still readable by `read_wiki_page` if you ask explicitly; read-only HTTP sessions (`MCP_HTTP_READONLY_TOKEN`) never see them.
 
 ---
 
@@ -381,7 +389,7 @@ npx @modelcontextprotocol/inspector npx -y mindbase-mcp
 pnpm -F mindbase-mcp dev        # tsx watch on src/cli.ts
 pnpm -F mindbase-mcp build      # tsup bundle to dist/
 pnpm -F mindbase-mcp typecheck  # tsc --noEmit
-pnpm -F mindbase-mcp test       # vitest
+pnpm -F mindbase-mcp test       # node test scripts in test/*.mjs (requires a build)
 ```
 
 Source layout:
