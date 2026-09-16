@@ -44,7 +44,8 @@ async function fetchRemoteFile(url: string): Promise<Fetched | { error: string }
     // Details are logged to stderr only.
     res = await fetchUntrusted(url, { timeoutMs: 60_000, maxBytes: REMOTE_MAX_BYTES });
   } catch {
-    return { error: `${UNTRUSTED_FETCH_ERROR} (downloads are limited to ${REMOTE_MAX_BYTES / 1024 / 1024}MB)` };
+    // Exactly the generic message for every cause, incl. the size cap (documented; detail in the log).
+    return { error: UNTRUSTED_FETCH_ERROR };
   }
 
   const ctype = (res.headers.get('content-type') ?? '').toLowerCase();

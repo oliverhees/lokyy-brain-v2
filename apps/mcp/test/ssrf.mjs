@@ -33,6 +33,7 @@ const internal = createServer((req, res) => {
   if (req.url === '/r1') { res.writeHead(302, { location: '/r2' }); res.end(); return; }
   if (req.url === '/r2') { res.writeHead(301, { location: `http://127.0.0.1:${internal.address().port}/secret.txt` }); res.end(); return; }
   if (req.url === '/secret.txt') { res.writeHead(200, { 'content-type': 'text/plain' }); res.end(CANARY); return; }
+  if (req.url === '/huge.txt') { res.writeHead(200, { 'content-type': 'text/plain' }); res.end(Buffer.alloc(21 * 1024 * 1024, 'a')); return; }
   if (req.url === '/feed.xml') {
     res.writeHead(200, { 'content-type': 'application/rss+xml' });
     res.end(`<?xml version="1.0"?><rss version="2.0"><channel><title>${CANARY}</title><link>http://x/</link></channel></rss>`);
@@ -67,6 +68,11 @@ async function connect(port) {
   return client;
 }
 
+/** The `error` field of a tool error result (exact text the client sees). */
+const errorOf = (res) => {
+  try { return JSON.parse(res.content?.[0]?.text ?? '{}').error; } catch { return res.content?.[0]?.text; }
+};
+
 const call = (client, name, args) => client.callTool({ name, arguments: args })
   .catch((e) => ({ isError: true, content: [{ type: 'text', text: String(e?.message ?? e) }] }));
 
@@ -87,13 +93,13 @@ async function run() {
     const text = JSON.stringify(res);
     if (text.includes(CANARY)) fail(`ingest_file ${label} leaked the canary`);
     else if (!res.isError) fail(`ingest_file ${label} was accepted`);
-    else if (!text.includes(GENERIC) || LEAKY.test(text)) fail(`ingest_file ${label} error is not generic: ${text.slice(0, 200)}`);
+    else if (errorOf(res) !== GENERIC || LEAKY.test(text)) fail(`ingest_file ${label} error is not generic: ${text.slice(0, 200)}`);
     else ok(`ingest_file ${label} rejected with the generic error`);
   }
   const feed = await call(client, 'add_rss_feed', { url: `${base}/feed.xml` });
   const feedText = JSON.stringify(feed);
   if (feedText.includes(CANARY)) fail('add_rss_feed leaked the canary');
-  else if (!feed.isError || !feedText.includes(GENERIC) || LEAKY.test(feedText)) fail(`add_rss_feed internal URL error not generic: ${feedText.slice(0, 200)}`);
+  else if (!feed.isError || errorOf(feed) !== GENERIC || LEAKY.test(feedText)) fail(`add_rss_feed internal URL error not generic: ${feedText.slice(0, 200)}`);
   else ok('add_rss_feed internal URL rejected with the generic error');
   hits.length === 0 ? ok('internal service received no request') : fail(`internal service was hit: ${hits.join(', ')}`);
   await client.close().catch(() => {});
@@ -106,10 +112,10 @@ async function run() {
     ? ok('MINDBASE_ALLOW_PRIVATE_FETCH=1 follows the redirect chain to the private target')
     : fail(`escape hatch did not work: ${JSON.stringify(allowed).slice(0, 300)}\n${procs[1].stderrText}`);
   // Even with private targets allowed, errors must not reveal ports, addresses or HTTP statuses.
-  for (const [label, path] of [['refused port', 'http://127.0.0.1:1/x.txt'], ['HTTP 404', `${base}/missing.txt`], ['unresolvable name', 'http://does-not-exist.invalid/x.txt']]) {
+  for (const [label, path] of [['too large (21MB, cap 20MB)', `${base}/huge.txt`], ['refused port','http://127.0.0.1:1/x.txt'], ['HTTP 404', `${base}/missing.txt`], ['unresolvable name', 'http://does-not-exist.invalid/x.txt']]) {
     const res = await call(local, 'mindbase_ingest_file', { projectId: 'demo', path });
     const text = JSON.stringify(res);
-    res.isError && text.includes(GENERIC) && !LEAKY.test(text) && !text.includes('404') && !text.includes('does-not-exist')
+    res.isError && errorOf(res) === GENERIC && !LEAKY.test(text) && !text.includes('404') && !text.includes('does-not-exist')
       ? ok(`ingest_file ${label} → generic error`) : fail(`ingest_file ${label} error reveals details: ${text.slice(0, 300)}`);
   }
   await local.close().catch(() => {});
