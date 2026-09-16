@@ -2,6 +2,8 @@
 
 This guide is for operators who run Lokyy Brain vaults as containers, one per company or team, and connect them to an MCP aggregator.
 
+> **Warning — the web UI port has no authentication.** Port `4321` (`PORT`) serves the web UI and the full HTTP API (`/api/*`, see `apps/server/src/index.ts`) without any login or token. Anyone who can reach it has full read and write access to the vault, including `internal`/`pii` pages and `PUT /api/config` (LLM API key). This bypasses both MCP token profiles described below. Never publish this port. Reach it only through an authenticating reverse proxy (for example Traefik with Authentik forward-auth), and keep it off every network the MCP aggregator or other services share. The proxy shared-secret guard (`VAULT_PROXY_SECRET`, work item LBV2-8) is developed on a separate branch and is not part of this revision.
+
 It covers configuration, the two access profiles, what read-only sessions can see, the security behaviour of the HTTP transport, known limitations, and how to run the tests.
 
 Sources of truth: `apps/mcp/src/http.ts`, `apps/mcp/src/access.ts`, `apps/mcp/src/visibility.ts`, `deploy/Dockerfile`, `deploy/entrypoint.sh`. If this document and the code disagree, the code wins. Please report the mismatch.
@@ -215,6 +217,7 @@ The items below are **limitations, not features**. They came out of the security
 | 5 | `ask_wiki.context_pages` and `ingest_plan.raw_id` bypass the central slug check | full token only | These argument names are not in `SLUG_ARGUMENT_NAMES`. `FileStore` containment still keeps reads inside the data directory. Neither tool is available to read-only sessions. |
 | 6 | Upstream server e2e tests are broken | development | The `apps/server/test/*-e2e.test.ts` suites failed before the LBV2 changes as well (commit `b78f97c`). They do not currently give regression signal. |
 | 7 | Upstream typecheck error | development | `pnpm -F mindbase-mcp typecheck` reports an error in `apps/mcp/src/tools/get-pulse.ts` (line 94). It is inherited from upstream and does not affect the build (`tsup`). |
+| 8 | Web UI / HTTP API on port 4321 is unauthenticated | all deployments | See the warning at the top. Isolation depends entirely on the network and the reverse proxy. |
 
 ## Testing
 

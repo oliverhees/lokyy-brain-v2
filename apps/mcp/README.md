@@ -414,4 +414,4 @@ src/
 
 ## License
 
-MIT
+Mixed. Upstream MindBase code is MIT ([LICENSE-MIT](../../LICENSE-MIT)). Changes made in the Lokyy Brain v2 fork after commit `7aa8fcd` — including the HTTP transport (`src/http.ts`), access profiles (`src/access.ts`) and the reader view (`src/visibility.ts`) — are licensed under PolyForm Noncommercial 1.0.0 ([LICENSE](../../LICENSE)). See [NOTICE.md](../../NOTICE.md).

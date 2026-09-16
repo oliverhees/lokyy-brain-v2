@@ -2,7 +2,7 @@
   "name": "mindbase-mcp",
   "version": "0.1.3",
   "description": "MCP server for MindBase — query and write to your wiki from Claude Desktop, Cursor, Windsurf, Cline, or any MCP-compatible AI client.",
-  "private": false,
+  "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
@@ -71,6 +71,6 @@
   "homepage": "https://github.com/frankchu91/mindbase#readme",
   "bugs": "https://github.com/frankchu91/mindbase/issues",
   "author": "Haobing Chu <haobing0304@gmail.com>",
-  "license": "MIT",
+  "license": "SEE LICENSE IN ../../NOTICE.md",
   "mcpName": "io.github.frankchu91/mindbase"
 }

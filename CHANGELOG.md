@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — Lokyy Brain v2 fork
+
+### Added
+- MCP over Streamable HTTP (`apps/mcp/dist/http.js`) with bearer token, session limits and Host allow-list; optional read-only token profile with a fail-closed allowlist of 12 tools and a reader view that hides `internal`/`pii` pages. See `docs/self-hosting-mcp-http.md`.
+- Source-built vault Docker image (`deploy/Dockerfile`).
+
+### Changed — may affect existing (stdio / single-user) setups
+- **Slugs are validated for every MCP tool** (`slug`, `slugs`, `source_slug`, `target_slug`, `root`): a leading `/`, backslash, NUL, or a `.`/`..` path segment is rejected with `Invalid input: unsafe slug`. Previously e.g. `read_wiki_page {slug: "/flip"}` resolved to the page.
+- **Project ids** must be directory names (`[A-Za-z0-9][A-Za-z0-9_-]{0,127}`), also `currentProjectId` in `config.json`.
+- **File store paths** that would leave the data directory are refused; leading slashes stay relative to the data directory.
+- **Web API**: `POST /api/tree/research` accepts only plain slugs (`[a-z0-9-]`); an invalid `X-Mindbase-User` header returns 400; contributor usernames must be letters, digits, `_`, `-`, `.` (an OS username with `@` or spaces now fails for quick capture / contributor files); trash restore/delete reject ids not in the generated format and error messages no longer include ids or paths.
+- `mindbase_ingest_file` no longer accepts local file paths over the HTTP transport (stdio unchanged).
+
+### Licensing
+- Fork modifications after `7aa8fcd` are licensed under PolyForm Noncommercial 1.0.0; upstream code remains MIT. See `NOTICE.md`.
+
+
 ## 0.4.5 (2026-09-13)
 
 ### Added — wiki integrity (ideas from the Karpathy LLM-wiki thread)
