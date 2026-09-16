@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { paths } from '@mindbase/core';
+import { paths, guardLlmFetch } from '@mindbase/core';
 import type { ServerContext } from '../context';
 
 interface EmbeddingResult {
@@ -28,7 +28,8 @@ async function getEmbeddings(
   const url = `${baseUrl}/v1/embeddings`;
   const model = config.model || 'text-embedding-3-small';
 
-  const response = await fetch(url, {
+  // Config URL + API key: host allow-list and no off-host redirects (LBV2-19).
+  const response = await guardLlmFetch(fetch)(url, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
