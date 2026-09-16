@@ -13,7 +13,7 @@
 #   egress      vaults -> internet (EUrouter, model download); inter-container traffic disabled
 # No vault publishes a port. Vaults cannot reach each other on any network.
 
-name: lokyy-stack
+name: ${STACK_NAME:-lokyy-stack}
 
 x-vault: &vault
   image: lokyy-brain-v2:dev
@@ -80,7 +80,7 @@ services:
     shm_size: 512mb
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-stack_edge
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_edge
       - traefik.http.routers.authentik.rule=Host(`auth.localhost`)
       - traefik.http.routers.authentik.entrypoints=web
       - traefik.http.services.authentik.loadbalancer.server.port=9000
@@ -113,7 +113,7 @@ services:
     volumes: [vault-anna:/data]
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-stack_web-anna
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-anna
       - traefik.http.routers.vault-anna.rule=Host(`anna.vault.localhost`)
       - traefik.http.routers.vault-anna.entrypoints=web
       - traefik.http.routers.vault-anna.middlewares=authentik@docker,vault-anna-secret@docker
@@ -140,7 +140,7 @@ services:
     volumes: [vault-ben:/data]
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-stack_web-ben
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-ben
       - traefik.http.routers.vault-ben.rule=Host(`ben.vault.localhost`)
       - traefik.http.routers.vault-ben.entrypoints=web
       - traefik.http.routers.vault-ben.middlewares=authentik@docker,vault-ben-secret@docker
@@ -168,7 +168,7 @@ services:
     volumes: [vault-firma:/data]
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-stack_web-firma
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-firma
       - traefik.http.routers.vault-firma.rule=Host(`firma.vault.localhost`)
       - traefik.http.routers.vault-firma.entrypoints=web
       - traefik.http.routers.vault-firma.middlewares=authentik@docker,vault-firma-secret@docker
@@ -217,7 +217,7 @@ services:
       TRANSFORM_LOCALHOST_TO_DOCKER_INTERNAL: "false"
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-stack_edge
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_edge
       # Admin UI behind Authentik (group lokyy-admins)
       - traefik.http.routers.metamcp.rule=Host(`mcp.localhost`)
       - traefik.http.routers.metamcp.entrypoints=web

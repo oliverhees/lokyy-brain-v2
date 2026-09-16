@@ -4,6 +4,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 set -a; . ./.env; set +a
+STACK=${STACK_NAME:-lokyy-stack}
 tests/wait-ready.sh "${WAIT_TIMEOUT:-300}" || exit 1
 
 pass=0 fail=0
@@ -107,17 +108,17 @@ expect "vault-anna → internet (EUrouter must stay reachable)" \
   "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://www.eurouter.ai/")" "200|301|302|307|308"
 
 echo "== 5b. Network topology (name-independent)"
-members() { docker network inspect "lokyy-stack_$1" --format '{{range .Containers}}{{.Name}} {{end}}' | tr ' ' '\n' | sed -E 's/^lokyy-stack-//; s/-[0-9]+$//' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//'; }
+members() { docker network inspect "${STACK}_$1" --format '{{range .Containers}}{{.Name}} {{end}}' | tr ' ' '\n' | sed -E "s/^${STACK}-//; s/-[0-9]+\$//" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//'; }
 for v in anna ben firma; do
   expect "web-$v members" "$(members web-$v)" "traefik vault-$v"
   expect "mcp-$v members" "$(members mcp-$v)" "metamcp vault-$v"
-  expect "vault-$v networks" "$(docker inspect "lokyy-stack-vault-$v-1" --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed 's/^lokyy-stack_//' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')" "egress mcp-$v web-$v"
+  expect "vault-$v networks" "$(docker inspect "${STACK}-vault-$v-1" --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed "s/^${STACK}_//" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')" "egress mcp-$v web-$v"
 done
 expect "egress inter-container traffic disabled" \
-  "$(docker network inspect lokyy-stack_egress --format '{{index .Options "com.docker.network.bridge.enable_icc"}}')" "false"
+  "$(docker network inspect "${STACK}_egress" --format '{{index .Options "com.docker.network.bridge.enable_icc"}}')" "false"
 # Probe every other vault by IP on every network, so a shared network is caught even if DNS points elsewhere.
 for target in ben firma; do
-  for ip in $(docker inspect "lokyy-stack-vault-$target-1" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}'); do
+  for ip in $(docker inspect "${STACK}-vault-$target-1" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}'); do
     for port in 4321 4322; do
       expect "vault-anna → vault-$target $ip:$port" \
         "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://$ip:$port/ || true")" "000"
