@@ -48,9 +48,15 @@ export interface SafeFetchOptions {
   maxRedirects?: number;
   /** Refuse plain http, also on redirects. */
   httpsOnly?: boolean;
+  /** Follow a redirect from https to http. Default false (refused). */
+  allowHttpsDowngrade?: boolean;
   /** Skip the address check. Default: MINDBASE_ALLOW_PRIVATE_FETCH === '1'. */
   allowPrivate?: boolean;
-  /** Host names exempt from the address check (configured by code, never by clients). */
+  /**
+   * Host names exempt from the address check, for code-configured internal hosts only.
+   * Never fill this from client input. Redirect targets are still checked unless they
+   * are trusted too.
+   */
   trustedHosts?: readonly string[];
   /** DNS resolver; injectable for tests. Default: system resolver (getaddrinfo). */
   resolve?: Resolver;
@@ -137,6 +143,7 @@ function classifyIPv4(b: number[]): AddressClass {
   if (a === 169 && c === 254) return 'link-local';
   if (a === 172 && c >= 16 && c <= 31) return 'private';
   if (a === 192 && c === 0 && d === 0) return 'reserved';
+  if (a === 192 && c === 88 && d === 99) return 'reserved'; // 6to4 relay anycast
   if (a === 192 && c === 168) return 'private';
   if (a === 198 && (c === 18 || c === 19)) return 'reserved';
   if (a >= 224 && a <= 239) return 'multicast';
@@ -155,19 +162,20 @@ function classifyIPv6(b: number[]): AddressClass {
   }
   // ::ffff:0:0/96 — IPv4-mapped
   if (zeroPrefix(10) && b[10] === 0xff && b[11] === 0xff) return classifyIPv4(b.slice(12));
-  // 64:ff9b::/96 — NAT64 well-known prefix embeds IPv4
-  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && b.slice(4, 12).every((x) => x === 0)) {
-    return classifyIPv4(b.slice(12));
-  }
-  // 2002::/16 — 6to4 embeds IPv4 in bytes 2..5
-  if (b[0] === 0x20 && b[1] === 0x02) return classifyIPv4(b.slice(2, 6));
-  const first = b[0] ?? 0;
-  const second = b[1] ?? 0;
-  if (first === 0x01 && second === 0x00 && b.slice(2, 8).every((x) => x === 0)) return 'reserved'; // 100::/64 discard
+  const [first = 0, second = 0, third = 0, fourth = 0] = b;
   if ((first & 0xfe) === 0xfc) return 'unique-local'; // fc00::/7
   if (first === 0xfe && (second & 0xc0) === 0x80) return 'link-local'; // fe80::/10
-  if (first === 0xfe && (second & 0xc0) === 0xc0) return 'reserved'; // fec0::/10 site-local
   if (first === 0xff) return 'multicast';
+  // Default deny outside global unicast 2000::/3. This also covers ::ffff:0:0/96
+  // (IPv4-translated), 64:ff9b::/96 and 64:ff9b:1::/48 (NAT64), 100::/64 and fec0::/10.
+  if ((first & 0xe0) !== 0x20) return 'reserved';
+  // 2002::/16 — 6to4 embeds IPv4 in bytes 2..5
+  if (first === 0x20 && second === 0x02) return classifyIPv4(b.slice(2, 6));
+  // 2001::/23 — IETF protocol assignments, incl. Teredo 2001::/32 (embeds an IPv4 server/client)
+  if (first === 0x20 && second === 0x01 && (third & 0xfe) === 0x00) return 'reserved';
+  // 2001:db8::/32 and 3fff::/20 — documentation
+  if (first === 0x20 && second === 0x01 && third === 0x0d && fourth === 0xb8) return 'reserved';
+  if (first === 0x3f && second === 0xff && (third & 0xf0) === 0x00) return 'reserved';
   return 'public';
 }
 
@@ -322,8 +330,11 @@ export async function safeFetch(input: string | URL, opts: SafeFetchOptions = {}
   if (opts.signal?.aborted) controller.abort();
 
   let headers: Record<string, string> = { 'accept-encoding': 'gzip, deflate, br', ...opts.headers };
-  let url = parseTarget(input, httpsOnly);
+  let acquired = false;
   try {
+    let url = parseTarget(input, httpsOnly);
+    await acquireSlot(readFetchConcurrency(process.env));
+    acquired = true;
     for (let redirects = 0; ; redirects++) {
       const pinned = await resolveTarget(url, opts);
       if (controller.signal.aborted) throw new Error('aborted');
@@ -334,7 +345,7 @@ export async function safeFetch(input: string | URL, opts: SafeFetchOptions = {}
         if (redirects >= maxRedirects) {
           throw new SafeFetchError('too_many_redirects', `Too many redirects (limit ${maxRedirects})`);
         }
-        const next = parseTarget(new URL(location, url), httpsOnly);
+        const next = redirectTarget(url, location, opts);
         if (next.origin !== url.origin) {
           headers = Object.fromEntries(
             Object.entries(headers).filter(([k]) => !['authorization', 'cookie'].includes(k.toLowerCase())),
@@ -363,5 +374,118 @@ export async function safeFetch(input: string | URL, opts: SafeFetchOptions = {}
   } finally {
     clearTimeout(timer);
     opts.signal?.removeEventListener('abort', onOuterAbort);
+    if (acquired) releaseSlot();
   }
+}
+
+/**
+ * Next URL for a redirect `location` seen on `current`: resolved relative to it, http/https only,
+ * no https → http downgrade unless allowed, userinfo stripped.
+ */
+export function redirectTarget(
+  current: URL,
+  location: string,
+  opts: Pick<SafeFetchOptions, 'httpsOnly' | 'allowHttpsDowngrade'>,
+): URL {
+  let next: URL;
+  try {
+    next = new URL(location, current);
+  } catch {
+    throw new SafeFetchError('bad_url', 'Blocked URL: invalid redirect location');
+  }
+  next = parseTarget(next, opts.httpsOnly ?? false);
+  if (current.protocol === 'https:' && next.protocol === 'http:' && !opts.allowHttpsDowngrade) {
+    throw new SafeFetchError('bad_url', 'Blocked URL: redirect downgrades https to http');
+  }
+  next.username = '';
+  next.password = '';
+  return next;
+}
+
+// ── Per-process concurrency limit ─────────────────────────────────────────
+
+export const FETCH_CONCURRENCY_ENV = 'MINDBASE_FETCH_CONCURRENCY';
+export const DEFAULT_FETCH_CONCURRENCY = 4;
+const MAX_FETCH_CONCURRENCY = 64;
+
+/** Reads MINDBASE_FETCH_CONCURRENCY (integer 1..64, default 4); throws on any other value. */
+export function readFetchConcurrency(env: Record<string, string | undefined>): number {
+  const raw = env[FETCH_CONCURRENCY_ENV];
+  if (raw === undefined || raw === '') return DEFAULT_FETCH_CONCURRENCY;
+  if (!/^[1-9]\d*$/.test(raw) || Number(raw) > MAX_FETCH_CONCURRENCY) {
+    throw new Error(`${FETCH_CONCURRENCY_ENV} must be an integer between 1 and ${MAX_FETCH_CONCURRENCY}`);
+  }
+  return Number(raw);
+}
+
+let activeFetches = 0;
+const waiting: Array<{ limit: number; start: () => void }> = [];
+
+function acquireSlot(limit: number): Promise<void> {
+  if (activeFetches < limit) {
+    activeFetches++;
+    return Promise.resolve();
+  }
+  return new Promise((start) => waiting.push({ limit, start }));
+}
+
+function releaseSlot(): void {
+  activeFetches--;
+  while (waiting.length > 0 && activeFetches < (waiting[0]?.limit ?? DEFAULT_FETCH_CONCURRENCY)) {
+    const next = waiting.shift();
+    activeFetches++;
+    next?.start();
+  }
+}
+
+// ── Client-facing wrapper without error oracle ────────────────────────────
+
+/** The only error text clients see for a failed untrusted fetch. */
+export const UNTRUSTED_FETCH_ERROR = 'URL not allowed or unreachable';
+
+/** Thrown by fetchUntrusted. `message` is generic; `detail` is for server logs only. */
+export class UntrustedFetchError extends Error {
+  constructor(readonly detail: string) {
+    super(UNTRUSTED_FETCH_ERROR);
+    this.name = 'UntrustedFetchError';
+  }
+}
+
+export interface UntrustedFetchOptions extends SafeFetchOptions {
+  /** Statuses that count as success. Default: 2xx. */
+  acceptStatus?: (status: number) => boolean;
+  /** Server-side log sink for the failure detail. Default: console.warn. */
+  log?: (message: string) => void;
+}
+
+function logSafeUrl(input: string | URL): string {
+  try {
+    const u = new URL(input);
+    return `${u.protocol}//${u.host}${u.pathname}`;
+  } catch {
+    return '<invalid url>';
+  }
+}
+
+/**
+ * safeFetch for URLs from clients: every failure (policy, DNS, connection, size, timeout,
+ * unaccepted status) becomes an UntrustedFetchError with one generic message, so responses
+ * cannot be used to probe internal names, addresses or ports. Details go to `log`.
+ */
+export async function fetchUntrusted(input: string | URL, opts: UntrustedFetchOptions = {}): Promise<SafeFetchResponse> {
+  const { acceptStatus = (s: number) => s >= 200 && s < 300, log = (m: string) => console.warn(m), ...fetchOpts } = opts;
+  let res: SafeFetchResponse;
+  try {
+    res = await safeFetch(input, fetchOpts);
+  } catch (e) {
+    const detail = e instanceof SafeFetchError ? `${e.code}: ${e.message}` : `error: ${(e as Error).message}`;
+    log(`[safe-fetch] ${logSafeUrl(input)} ${detail}`);
+    throw new UntrustedFetchError(detail);
+  }
+  if (!acceptStatus(res.status)) {
+    const detail = `http_status: ${res.status}`;
+    log(`[safe-fetch] ${logSafeUrl(input)} ${detail}`);
+    throw new UntrustedFetchError(detail);
+  }
+  return res;
 }

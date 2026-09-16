@@ -322,6 +322,10 @@ describe('RSSWorker SSRF protection (LBV2-13)', () => {
     });
     const worker = new RSSWorker(makeCtx({ readabilityEnabled: false }), store, makeInbox());
     const error = await worker.pollOne(feed.id).then(() => null, (e: unknown) => e as Error);
-    expect(error?.message).toMatch(/blocked/i);
+    expect(error?.message).toBe('URL not allowed or unreachable');
+    // tick() stores the error on the feed, which GET /api/feeds returns to clients: generic only.
+    const result = await worker.tick();
+    expect(result.errors[0]?.error).toBe('URL not allowed or unreachable');
+    expect((await store.findById(feed.id))?.last_error).toBe('URL not allowed or unreachable');
   });
 });

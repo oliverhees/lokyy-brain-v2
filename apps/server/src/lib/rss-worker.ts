@@ -2,7 +2,7 @@ import Parser from 'rss-parser';
 import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import type { ServerContext } from '../context';
-import { safeFetch } from '@mindbase/core';
+import { fetchUntrusted } from '@mindbase/core';
 import type { FeedStore, Feed } from '@mindbase/core';
 import type { Inbox } from './inbox';
 
@@ -14,6 +14,8 @@ export interface FeedFetchResponse {
   status: number;
   statusText: string;
   ok: boolean;
+  /** Final URL after redirects, if the fetcher reports it. */
+  url?: string;
   headers: { get(name: string): string | null };
   text(): Promise<string>;
 }
@@ -24,7 +26,9 @@ export type FeedFetcher = (
 ) => Promise<FeedFetchResponse>;
 
 /** Feed and article URLs come from users and from feed content: SSRF-safe by default (LBV2-13). */
-const defaultFetcher: FeedFetcher = (url, init) => safeFetch(url, init);
+// Failures carry only the generic message (stored as the feed's last_error, visible to clients).
+const defaultFetcher: FeedFetcher = (url, init) =>
+  fetchUntrusted(url, { ...init, acceptStatus: (s) => (s >= 200 && s < 300) || s === 304 });
 
 interface PollResult {
   ingested: number;
@@ -192,7 +196,7 @@ export class RSSWorker {
         });
         if (res.ok) {
           const html = await res.text();
-          const dom = new JSDOM(html, { url: item.link });
+          const dom = new JSDOM(html, { url: res.url || item.link });
           const reader = new Readability(dom.window.document);
           const article = reader.parse();
           const text = (article?.textContent ?? '').trim();

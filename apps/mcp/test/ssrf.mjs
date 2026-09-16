@@ -18,6 +18,9 @@ const TOKEN = 'ssrf-token-0123456789abcdef-0123456789';
 const CANARY = 'CANARY-SSRF-4b1d-INTERNAL';
 const PORT_BLOCKED = 21000 + Math.floor(Math.random() * 500);
 const PORT_ALLOWED = PORT_BLOCKED + 500;
+const GENERIC = 'URL not allowed or unreachable';
+// Anything that would turn the error into an oracle for internal names, addresses or ports.
+const LEAKY = /127\.0\.0\.1|localhost|169\.254|ffff|ECONNREFUSED|ENOTFOUND|blocked|private|resolve/i;
 
 let exitCode = 0;
 const ok = (m) => console.log(`OK: ${m}`);
@@ -84,14 +87,14 @@ async function run() {
     const text = JSON.stringify(res);
     if (text.includes(CANARY)) fail(`ingest_file ${label} leaked the canary`);
     else if (!res.isError) fail(`ingest_file ${label} was accepted`);
-    else if (!/blocked/i.test(text)) fail(`ingest_file ${label} failed for another reason: ${text.slice(0, 200)}`);
-    else ok(`ingest_file ${label} rejected as blocked`);
+    else if (!text.includes(GENERIC) || LEAKY.test(text)) fail(`ingest_file ${label} error is not generic: ${text.slice(0, 200)}`);
+    else ok(`ingest_file ${label} rejected with the generic error`);
   }
   const feed = await call(client, 'add_rss_feed', { url: `${base}/feed.xml` });
   const feedText = JSON.stringify(feed);
   if (feedText.includes(CANARY)) fail('add_rss_feed leaked the canary');
-  else if (!feed.isError || !/blocked/i.test(feedText)) fail(`add_rss_feed internal URL not blocked: ${feedText.slice(0, 200)}`);
-  else ok('add_rss_feed internal URL rejected as blocked');
+  else if (!feed.isError || !feedText.includes(GENERIC) || LEAKY.test(feedText)) fail(`add_rss_feed internal URL error not generic: ${feedText.slice(0, 200)}`);
+  else ok('add_rss_feed internal URL rejected with the generic error');
   hits.length === 0 ? ok('internal service received no request') : fail(`internal service was hit: ${hits.join(', ')}`);
   await client.close().catch(() => {});
 
@@ -102,6 +105,13 @@ async function run() {
   !allowed.isError && JSON.stringify(allowed).includes(CANARY)
     ? ok('MINDBASE_ALLOW_PRIVATE_FETCH=1 follows the redirect chain to the private target')
     : fail(`escape hatch did not work: ${JSON.stringify(allowed).slice(0, 300)}\n${procs[1].stderrText}`);
+  // Even with private targets allowed, errors must not reveal ports, addresses or HTTP statuses.
+  for (const [label, path] of [['refused port', 'http://127.0.0.1:1/x.txt'], ['HTTP 404', `${base}/missing.txt`], ['unresolvable name', 'http://does-not-exist.invalid/x.txt']]) {
+    const res = await call(local, 'mindbase_ingest_file', { projectId: 'demo', path });
+    const text = JSON.stringify(res);
+    res.isError && text.includes(GENERIC) && !LEAKY.test(text) && !text.includes('404') && !text.includes('does-not-exist')
+      ? ok(`ingest_file ${label} → generic error`) : fail(`ingest_file ${label} error reveals details: ${text.slice(0, 300)}`);
+  }
   await local.close().catch(() => {});
 }
 

@@ -3,7 +3,18 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { gzipSync } from 'node:zlib';
-import { classifyAddress, isPublicAddress, safeFetch, SafeFetchError, type ResolvedAddress } from './safe-fetch';
+import {
+  classifyAddress,
+  isPublicAddress,
+  safeFetch,
+  SafeFetchError,
+  fetchUntrusted,
+  UntrustedFetchError,
+  UNTRUSTED_FETCH_ERROR,
+  redirectTarget,
+  readFetchConcurrency,
+  type ResolvedAddress,
+} from './safe-fetch';
 
 describe('classifyAddress', () => {
   const blocked = [
@@ -13,11 +24,16 @@ describe('classifyAddress', () => {
     '::', '::1', '0:0:0:0:0:0:0:1', 'fc00::1', 'fd12:3456:789a::1', 'fe80::1', 'fe80::1%eth0', 'febf::1', 'ff02::1',
     '::ffff:127.0.0.1', '::ffff:7f00:1', '::ffff:10.0.0.1', '::ffff:a9fe:a9fe', '::ffff:0.0.0.0', '::127.0.0.1',
     '64:ff9b::a9fe:a9fe', '2002:7f00:1::1', '2002:c0a8:101::',
+    // audit LBV2-13 (LOW 1)
+    '::ffff:0:a00:1', '::ffff:0:7f00:1', '64:ff9b:1::a00:1', '64:ff9b:1:ffff::1', '64:ff9b::a00:1', '64:ff9b::808:808',
+    '2001::1', '2001:0:4136:e378:8000:63bf:3fff:fdd2', '2001:db8::1', '2001:10::1', '192.88.99.1', '192.88.99.255',
+    // default-deny outside 2000::/3
+    '100::1', '4000::1', '1000::1', 'e000::1', 'c000::1',
   ];
   const allowed = [
     '8.8.8.8', '1.1.1.1', '93.184.216.34', '172.15.255.255', '172.32.0.1', '100.63.255.255', '100.128.0.1',
-    '192.169.0.1', '169.253.255.255', '2606:4700:4700::1111', '2a00:1450:4001:80b::200e', '::ffff:8.8.8.8',
-    '64:ff9b::808:808', '2002:808:808::1',
+    '192.169.0.1', '169.253.255.255', '192.88.98.1', '192.88.100.1', '2606:4700:4700::1111', '2a00:1450:4001:80b::200e',
+    '::ffff:8.8.8.8', '2002:808:808::1', '2001:4860:4860::8888', '2001:200::1', '3fff:ffff::1',
   ];
   it.each(blocked)('blocks %s', (ip) => {
     expect(isPublicAddress(ip)).toBe(false);
@@ -36,6 +52,8 @@ describe('classifyAddress', () => {
 let server: Server;
 let port = 0;
 const hits: string[] = [];
+let inFlight = 0;
+let maxInFlight = 0;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -57,6 +75,12 @@ beforeAll(async () => {
     }
     if (url === '/gzip') { res.writeHead(200, { 'content-encoding': 'gzip' }); res.end(gzipSync('compressed hello')); return; }
     if (url === '/hang') return; // never answers
+    if (url.startsWith('/slow')) {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      setTimeout(() => { inFlight--; res.writeHead(200); res.end('slow'); }, 150);
+      return;
+    }
     res.writeHead(404); res.end();
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
@@ -71,6 +95,7 @@ afterAll(async () => {
 afterEach(() => {
   hits.length = 0;
   delete process.env['MINDBASE_ALLOW_PRIVATE_FETCH'];
+  delete process.env['MINDBASE_FETCH_CONCURRENCY'];
 });
 
 /** Test resolver with fixed answers; records every lookup. */
@@ -200,5 +225,95 @@ describe('private fetch escape hatch', () => {
       process.env['MINDBASE_ALLOW_PRIVATE_FETCH'] = v;
       await expectCode(safeFetch(`http://127.0.0.1:${port}/hello`), 'blocked');
     }
+  });
+});
+
+describe('redirectTarget (audit LBV2-13)', () => {
+  it('refuses an https → http downgrade by default', () => {
+    expect(() => redirectTarget(new URL('https://a.example/x'), 'http://b.example/y', {})).toThrow(SafeFetchError);
+    expect(() => redirectTarget(new URL('https://a.example/x'), 'http://a.example/y', {})).toThrow(/downgrade/i);
+  });
+
+  it('allows the downgrade only when explicitly enabled, and http → https always', () => {
+    expect(redirectTarget(new URL('https://a.example/x'), 'http://a.example/y', { allowHttpsDowngrade: true }).href).toBe('http://a.example/y');
+    expect(redirectTarget(new URL('http://a.example/x'), 'https://a.example/y', {}).href).toBe('https://a.example/y');
+  });
+
+  it('strips userinfo from redirect targets', () => {
+    const next = redirectTarget(new URL('https://a.example/x'), 'https://user:pass@b.example/y', {});
+    expect(next.username).toBe('');
+    expect(next.password).toBe('');
+    expect(next.href).toBe('https://b.example/y');
+  });
+
+  it('resolves relative locations and still refuses other schemes', () => {
+    expect(redirectTarget(new URL('https://a.example/dir/x'), '../y', {}).href).toBe('https://a.example/y');
+    expect(() => redirectTarget(new URL('https://a.example/'), 'javascript:alert(1)', {})).toThrow(SafeFetchError);
+  });
+});
+
+describe('fetch concurrency limit (audit LBV2-13)', () => {
+  it('validates MINDBASE_FETCH_CONCURRENCY', () => {
+    expect(readFetchConcurrency({})).toBe(4);
+    expect(readFetchConcurrency({ MINDBASE_FETCH_CONCURRENCY: '' })).toBe(4);
+    expect(readFetchConcurrency({ MINDBASE_FETCH_CONCURRENCY: '8' })).toBe(8);
+    for (const v of ['0', '-1', 'abc', '1.5', '65', ' 4']) {
+      expect(() => readFetchConcurrency({ MINDBASE_FETCH_CONCURRENCY: v })).toThrow(/MINDBASE_FETCH_CONCURRENCY/);
+    }
+  });
+
+  it('runs at most MINDBASE_FETCH_CONCURRENCY fetches at once per process', async () => {
+    process.env['MINDBASE_FETCH_CONCURRENCY'] = '2';
+    inFlight = 0;
+    maxInFlight = 0;
+    const { resolve } = resolver({ 'start.test': ['127.0.0.1'] });
+    const results = await Promise.all(
+      [1, 2, 3, 4, 5].map((i) => safeFetch(`http://start.test:${port}/slow${i}`, { resolve, trustedHosts: ['start.test'] })),
+    );
+    expect(results.map((r) => r.status)).toEqual([200, 200, 200, 200, 200]);
+    expect(maxInFlight).toBe(2);
+  });
+
+  it('releases the slot when a fetch fails', async () => {
+    process.env['MINDBASE_FETCH_CONCURRENCY'] = '1';
+    for (let i = 0; i < 3; i++) await expectCode(safeFetch(`http://127.0.0.1:${port}/hello`), 'blocked');
+    const res = await safeFetch(`http://127.0.0.1:${port}/hello`, { allowPrivate: true });
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('fetchUntrusted (audit LBV2-13: no error oracle)', () => {
+  const logs: string[] = [];
+  const log = (m: string) => { logs.push(m); };
+
+  async function clientMessage(p: Promise<unknown>): Promise<string> {
+    const err = await p.then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(UntrustedFetchError);
+    return (err as Error).message;
+  }
+
+  it('returns one generic message for blocked, unresolvable, refused and non-2xx targets', async () => {
+    const { resolve } = resolver({ 'start.test': ['127.0.0.1'], 'internal.test': ['10.1.2.3'] });
+    const messages = [
+      await clientMessage(fetchUntrusted(`http://127.0.0.1:${port}/secret`, { log })),
+      await clientMessage(fetchUntrusted('http://internal.test/', { resolve, log })),
+      await clientMessage(fetchUntrusted('http://missing.test/', { resolve, log })),
+      await clientMessage(fetchUntrusted('http://127.0.0.1:1/', { allowPrivate: true, log })),
+      await clientMessage(fetchUntrusted(`http://start.test:${port}/nope`, { resolve, trustedHosts: ['start.test'], log })),
+      await clientMessage(fetchUntrusted('file:///etc/passwd', { log })),
+    ];
+    expect(new Set(messages)).toEqual(new Set([UNTRUSTED_FETCH_ERROR]));
+    expect(UNTRUSTED_FETCH_ERROR).toBe('URL not allowed or unreachable');
+    // Details stay in the server log.
+    expect(logs.join('\n')).toMatch(/blocked/);
+    expect(logs.join('\n')).toMatch(/404/);
+  });
+
+  it('keeps the detail on the error object for server-side use and accepts extra statuses', async () => {
+    const err = await fetchUntrusted('http://169.254.169.254/', { log }).then(() => null, (e: unknown) => e as UntrustedFetchError);
+    expect(err?.detail).toMatch(/blocked/);
+    const { resolve } = resolver({ 'start.test': ['127.0.0.1'] });
+    const res = await fetchUntrusted(`http://start.test:${port}/nope`, { resolve, trustedHosts: ['start.test'], log, acceptStatus: (s) => s === 404 });
+    expect(res.status).toBe(404);
   });
 });

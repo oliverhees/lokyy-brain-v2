@@ -6,9 +6,10 @@ import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
 import { resolveProjectId } from '../lib/resolve-project.js';
 import { extractPdfText } from '../lib/extract-pdf.js';
-import { projectPaths, isoToday, safeFetch, SafeFetchError, type SafeFetchResponse } from '@mindbase/core';
+import { projectPaths, isoToday, fetchUntrusted, UNTRUSTED_FETCH_ERROR, type SafeFetchResponse } from '@mindbase/core';
 
-const MAX_BYTES = 50 * 1024 * 1024; // 50MB
+const MAX_BYTES = 50 * 1024 * 1024; // 50MB, local files (stdio only)
+const REMOTE_MAX_BYTES = 20 * 1024 * 1024; // 20MB, URL downloads (server memory, LBV2-13)
 const RETURN_CHAR_CAP = 40_000;
 const ALLOWED_EXTS = new Set(['.pdf', '.md', '.txt']);
 
@@ -38,15 +39,13 @@ interface Fetched { buf: Buffer; filename: string; ext: string }
 async function fetchRemoteFile(url: string): Promise<Fetched | { error: string }> {
   let res: SafeFetchResponse;
   try {
-    // SSRF-safe: private/loopback/metadata targets are refused on every redirect hop (LBV2-13).
-    res = await safeFetch(url, { timeoutMs: 60_000, maxBytes: MAX_BYTES });
-  } catch (e) {
-    if (e instanceof SafeFetchError && e.code === 'too_large') {
-      return { error: 'Downloaded file is larger than the 50MB limit.' };
-    }
-    return { error: `Download failed: ${(e as Error).message}` };
+    // SSRF-safe: private/loopback/metadata targets are refused on every redirect hop, and every
+    // failure (policy, DNS, connection, status, size) gets one generic message (LBV2-13).
+    // Details are logged to stderr only.
+    res = await fetchUntrusted(url, { timeoutMs: 60_000, maxBytes: REMOTE_MAX_BYTES });
+  } catch {
+    return { error: `${UNTRUSTED_FETCH_ERROR} (downloads are limited to ${REMOTE_MAX_BYTES / 1024 / 1024}MB)` };
   }
-  if (!res.ok) return { error: `Download failed: HTTP ${res.status} from ${url}` };
 
   const ctype = (res.headers.get('content-type') ?? '').toLowerCase();
   const urlPath = new URL(res.url).pathname;

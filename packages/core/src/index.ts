@@ -25,8 +25,16 @@ export {
   ALLOW_PRIVATE_FETCH_ENV,
   DEFAULT_FETCH_MAX_BYTES,
   DEFAULT_FETCH_TIMEOUT_MS,
+  fetchUntrusted,
+  UntrustedFetchError,
+  UNTRUSTED_FETCH_ERROR,
+  redirectTarget,
+  readFetchConcurrency,
+  FETCH_CONCURRENCY_ENV,
+  DEFAULT_FETCH_CONCURRENCY,
 } from './net/safe-fetch';
 export type {
+  UntrustedFetchOptions,
   SafeFetchOptions,
   SafeFetchResponse,
   SafeFetchErrorCode,

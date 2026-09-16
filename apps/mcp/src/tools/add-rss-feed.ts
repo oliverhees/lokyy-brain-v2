@@ -1,7 +1,7 @@
 // apps/mcp/src/tools/add-rss-feed.ts
 import { z } from 'zod';
 import Parser from 'rss-parser';
-import { safeFetch } from '@mindbase/core';
+import { fetchUntrusted, UNTRUSTED_FETCH_ERROR } from '@mindbase/core';
 import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
 
@@ -47,11 +47,16 @@ export async function handle(ctx: Context, rawInput: unknown) {
     // Probe the feed URL to validate it and get the feed title
     let feedTitle: string;
     let siteUrl: string | undefined;
+    // SSRF-safe download, then parse (rss-parser's parseURL follows redirects anywhere).
+    // Fetch failures get one generic message without the URL (no internal-network oracle).
+    let body: string;
     try {
-      // SSRF-safe download, then parse (rss-parser's parseURL follows redirects anywhere).
-      const res = await safeFetch(url, { timeoutMs: 15_000, maxBytes: FEED_MAX_BYTES });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const probed = await probe.parseString(await res.text());
+      body = await (await fetchUntrusted(url, { timeoutMs: 15_000, maxBytes: FEED_MAX_BYTES })).text();
+    } catch {
+      return errorResult(UNTRUSTED_FETCH_ERROR);
+    }
+    try {
+      const probed = await probe.parseString(body);
       feedTitle = probed.title ?? url;
       siteUrl = probed.link;
     } catch (e) {
