@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import express, { Router } from 'express';
 import request from 'supertest';
-import { isCaptureDisabled, captureGate, serverFeatures, shouldStartCaptureWorker, shouldStartMdns } from './capture-gate';
+import { isCaptureDisabled, captureGate, serverFeatures, healthPayload, shouldStartCaptureWorker, shouldStartMdns } from './capture-gate';
 
 function appWith(env: NodeJS.ProcessEnv): express.Application {
   const app = express();
@@ -45,6 +45,10 @@ describe('capture gate (LBV2-9, MINDBASE_DISABLE_CAPTURE)', () => {
   it('reports the feature state for the web UI', () => {
     expect(serverFeatures({ MINDBASE_DISABLE_CAPTURE: '1' })).toEqual({ capture: false });
     expect(serverFeatures({})).toEqual({ capture: true });
+  });
+
+  it('health payload does not disclose the data directory (INFO)', () => {
+    expect(healthPayload({ MINDBASE_DISABLE_CAPTURE: '1' })).toEqual({ ok: true, features: { capture: false } });
   });
 
   it('does not start the capture worker or mDNS when disabled', () => {

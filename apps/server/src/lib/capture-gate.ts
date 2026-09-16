@@ -26,6 +26,11 @@ export function serverFeatures(env: NodeJS.ProcessEnv): ServerFeatures {
   return { capture: !isCaptureDisabled(env) };
 }
 
+/** GET /api/health body. Deliberately without dataDir (no filesystem layout disclosure). */
+export function healthPayload(env: NodeJS.ProcessEnv): { ok: true; features: ServerFeatures } {
+  return { ok: true, features: serverFeatures(env) };
+}
+
 export function shouldStartCaptureWorker(env: NodeJS.ProcessEnv): boolean {
   return !isCaptureDisabled(env);
 }
