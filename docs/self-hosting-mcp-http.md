@@ -219,10 +219,12 @@ Without the guard (local, single-user), `X-Mindbase-User` is used as before. If 
 | Variable | Default | Effect |
 |---|---|---|
 | `VAULT_IDENTITY_HEADER` | `x-authentik-username` | Name of the proxy-set identity header. Only read when `VAULT_PROXY_SECRET` is set. |
-| `VAULT_GROUPS_HEADER` | `x-authentik-groups` | Name of the proxy-set groups header. Authentik separates groups with `\|`; `,` is accepted too. A duplicated header grants no groups. Only read when `VAULT_PROXY_SECRET` is set. |
+| `VAULT_GROUPS_HEADER` | `x-authentik-groups` | Name of the proxy-set groups header. Groups are split on `\|` only (Authentik format); a comma is part of the group name. A duplicated header (sent twice, which Node joins with `, `) or any value containing `, ` grants no groups. Only read when `VAULT_PROXY_SECRET` is set. |
 | `VAULT_ADMIN_GROUPS` | unset | Comma-separated group names (exact match), for example `lokyy-admins,vault-firma-admin`. In guarded mode only members may change server configuration. **Unset or empty = nobody may** (fail closed). |
 
-The web server refuses to start if `VAULT_IDENTITY_HEADER` or `VAULT_GROUPS_HEADER` names a header the client controls or the server uses for something else (`x-mindbase-user`, `x-vault-proxy-secret`, `authorization`, `cookie`, `host`, `content-type`, `content-length`, `origin`, `referer`, `user-agent`), or if both variables name the same header. Add the groups header to Traefik's `authResponseHeaders` as well.
+The web server refuses to start if `VAULT_IDENTITY_HEADER` or `VAULT_GROUPS_HEADER` names a header the client controls or the server uses for something else (`x-mindbase-user`, `x-vault-proxy-secret`, `authorization`, `cookie`, `host`, `content-type`, `content-length`, `origin`, `referer`, `user-agent`), or if both variables name the same header.
+
+**Both trusted headers must be listed in Traefik's `authResponseHeaders`** (for example `X-authentik-username` and `X-authentik-groups`). Traefik then overwrites whatever the client sent. A header that is missing from the list is passed through from the client unchanged and can be forged.
 
 ### Configuration changes (admin groups)
 
@@ -240,13 +242,17 @@ In guarded mode, these requests need membership in a `VAULT_ADMIN_GROUPS` group,
 
 `PUT /api/config` merges the request onto the stored configuration, so a partial request does not remove other settings. The sections `dailyBrief`, `rss` and `srs` are merged field by field. `googleTokens` in the request is ignored; only the Google OAuth callback sets them. A stored secret is kept when the request sends `********` or leaves the field out, and replaced when the request sends any other value (an empty string clears it). A masked `baseUrl` sent back unchanged keeps the stored `baseUrl`.
 
-**Re-entering the key when the destination changes:** the stored LLM key is kept only if `provider` and `baseUrl` stay the same (surrounding spaces and trailing `/` do not count as a change). If either changes and the request does not contain a new key, `PUT /api/config` answers `400 Re-enter the API key when changing provider or endpoint` and saves nothing. The SMTP password follows the same rule when `dailyBrief.smtp.host` changes. `POST /api/config/test` uses the stored key for `********` only for the stored provider and `baseUrl`; otherwise it answers the same `400` without contacting the endpoint. This stops a user from sending the stored key to a server of their choice.
+**Re-entering the key when the destination changes:** the stored LLM key is kept only if `provider` and `baseUrl` stay the same (surrounding spaces and trailing `/` do not count as a change). If either changes and the request does not contain a new key, `PUT /api/config` answers `400 Re-enter the API key when changing provider or endpoint` and saves nothing. The SMTP password follows the same rule when `dailyBrief.smtp.host`, `port` or `secure` changes. A non-object value (for example `null`) for `dailyBrief`, `rss` or `srs` is ignored and the stored section is kept. `POST /api/config/test` calls the stored `baseUrl` when it receives the masked form of it. `POST /api/config/test` uses the stored key for `********` only for the stored provider and `baseUrl`; otherwise it answers the same `400` without contacting the endpoint. This stops a user from sending the stored key to a server of their choice.
 
 `POST /api/config/test` returns only `Connection test failed` when the test fails; the upstream error text is written to the server log.
 
 A key whose literal value is `********` cannot be saved, because it is indistinguishable from the mask (accepted limitation).
 
 `GET /api/health` no longer returns the data directory.
+
+### Google Drive connect (OAuth)
+
+`/api/google/auth/start` and `/api/google/auth/url` create a random, single-use `state` (256 bit) and a PKCE `code_verifier` with an S256 `code_challenge`. Pending states are kept in server memory for 10 minutes, at most 100 at a time (the oldest is dropped). `/api/google/auth/callback` answers `400 Invalid OAuth state` for a missing, unknown, expired or already used `state` and does not exchange the code. This blocks login CSRF, where an attacker's authorization code would link the vault to the attacker's Drive. A server restart invalidates pending logins; start the connection again.
 
 ## Capture disabled
 
