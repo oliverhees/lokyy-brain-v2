@@ -12,6 +12,9 @@ export type AccessProfile = 'full' | 'readonly';
 // list_chats, recall_chat (other users' chat history). Excluded because they call the
 // LLM/embedding API or write shared caches: ask_wiki, semantic_search, synthesize_topic,
 // find_contradictions, find_gaps, get_pulse, generate_daily_brief.
+// Removed in LBV2-12 (fail closed): mindbase_status, mindbase_gather_sources and
+// mindbase_validate_structure read the data dir with raw node:fs, bypassing the reader
+// view, and expose file names, mtimes and absolute project paths.
 export const READ_ONLY_TOOL_NAMES: readonly string[] = Object.freeze([
   'search_wiki',
   'search_all_projects',
@@ -25,9 +28,6 @@ export const READ_ONLY_TOOL_NAMES: readonly string[] = Object.freeze([
   'export_subgraph',
   'list_feeds',
   'list_review_cards',
-  'mindbase_status',
-  'mindbase_gather_sources',
-  'mindbase_validate_structure',
 ]);
 
 // Module-private lookup set: nothing outside this module can add names at runtime.

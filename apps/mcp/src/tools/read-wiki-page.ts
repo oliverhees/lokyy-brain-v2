@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
 import type { MetaJson } from '@mindbase/core';
+import { isSafeSlug } from '../lib/slug.js';
 
 const inputSchema = z.object({ slug: z.string().min(1) });
 
@@ -22,6 +23,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
   const { slug } = parsed.data;
 
   try {
+    if (!isSafeSlug(slug)) throw new Error('invalid slug'); // handled exactly like a missing page
     const body = await ctx.store.readText(`wiki/notes/${slug}.md`);
     let frontmatter: Partial<MetaJson> = {};
     try {

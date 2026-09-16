@@ -21,8 +21,9 @@ const RO = 'read-token-0123456789abcdef-0123456789';
 const PORT = 20000 + Math.floor(Math.random() * 1000);
 const URL_MCP = `http://127.0.0.1:${PORT}/mcp`;
 
-const CANARIES = ['CANARYINT', 'CANARYPII', 'CANARYMETA', 'canarytag'];
-const HIDDEN = ['internal-page', 'pii-page', 'broken-meta-page'];
+const CANARIES = ['CANARYINT', 'CANARYPII', 'CANARYMETA', 'canarytag', 'CANARYPROJ', 'CANARYCTX', 'CANARYSRC', 'CANARYRAW',
+  'CANARYCONCEPT', 'CANARYFLIP', 'CANARYCARD'];
+const HIDDEN = ['internal-page', 'pii-page', 'broken-meta-page', 'flip-page', 'proj-public'];
 
 const dataDir = mkdtempSync(join(tmpdir(), 'mb-mcp-vis-'));
 const notesDir = join(dataDir, 'wiki', 'notes');
@@ -35,7 +36,28 @@ function page(slug, title, body, extra = {}) {
     created: now, updated: now, word_count: 5, project: 'p1', sources: ['shared-source'], tags: ['shared'], ...extra,
   }));
 }
-page('public-page', 'Public Guide', '# Public Guide\n\nA shared guide. See [[internal-page]] and [[pii-page]] and [[broken-meta-page]].');
+page('public-page', 'Public Guide', '# Public Guide\n\nA shared guide. See [[internal-page]] and [[pii-page]] and [[broken-meta-page]] and [[nothere-page]].');
+// F1 fixtures: data outside the root wiki that a reader must never reach.
+const projNotes = join(dataDir, 'projects', 'p1', 'wiki', 'notes');
+mkdirSync(projNotes, { recursive: true });
+const metaJson = (id, title, extra = {}) => JSON.stringify({ id, title, type: 'concept', one_liner: title, edit_state: 'ai_generated',
+  created: now, updated: now, word_count: 3, sources: [], tags: [], ...extra });
+writeFileSync(join(projNotes, 'pii-page.md'), '# Project pii\n\nCANARYPROJ body');
+writeFileSync(join(projNotes, 'pii-page.meta.json'), metaJson('pii-page', 'CANARYPROJ title', { visibility: 'pii' }));
+writeFileSync(join(projNotes, 'proj-public.md'), '# Project public\n\nCANARYPROJ public body');
+writeFileSync(join(projNotes, 'proj-public.meta.json'), metaJson('proj-public', 'CANARYPROJ public'));
+writeFileSync(join(dataDir, 'projects', 'p1', 'context.md'), '# Context\n\nCANARYCTX');
+mkdirSync(join(dataDir, 'projects', 'p1', 'sources', 'contributors', 'alice'), { recursive: true });
+writeFileSync(join(dataDir, 'projects', 'p1', 'sources', 'contributors', 'alice', 'note.md'), 'CANARYSRC');
+mkdirSync(join(dataDir, 'raw'), { recursive: true });
+writeFileSync(join(dataDir, 'raw', 'dump.md'), 'CANARYRAW');
+// F3 fixtures: hidden concept with a public note of the same slug; a page flipped to pii after the index is built.
+const conceptsDir = join(dataDir, 'wiki', 'concepts');
+mkdirSync(conceptsDir, { recursive: true });
+writeFileSync(join(conceptsDir, 'dup-page.md'), '# Dup concept\n\nCANARYCONCEPT shared guide');
+writeFileSync(join(conceptsDir, 'dup-page.meta.json'), metaJson('dup-page', 'CANARYCONCEPT title', { visibility: 'pii' }));
+page('dup-page', 'Dup Public', '# Dup Public\n\nPublic dup note.');
+page('flip-page', 'Flip Page', '# Flip\n\nCANARYFLIP body shared guide.');
 page('second-public', 'Second Public', '# Second Public\n\nAnother shared guide linking [[public-page]].', { tags: ['shared', 'other'] });
 page('internal-page', 'Internal CANARYINT Title', '# Internal\n\nCANARYINT body shared guide [[public-page]] [[pii-page]].',
   { visibility: 'internal', tags: ['shared', 'canarytag-internal'], one_liner: 'CANARYINT one liner' });
@@ -49,7 +71,9 @@ const card = (id, slug, q) => ({ id, question: q, answer: q, source_slug: slug, 
   interval: 1, ease_factor: 2.5, repetitions: 0, due_at: '2000-01-01T00:00:00.000Z', review_history: [], archived: false });
 writeFileSync(join(dataDir, 'srs', 'cards.json'), JSON.stringify({ cards: [
   card('c1', 'public-page', 'Public question'), card('c2', 'internal-page', 'CANARYINT question'), card('c3', 'pii-page', 'CANARYPII question'),
+  { ...card('c4', undefined, 'CANARYCARD manual question'), created_via: 'manual' },
 ] }));
+const flipToPii = () => writeFileSync(join(notesDir, 'flip-page.meta.json'), metaJson('flip-page', 'Flip Page', { visibility: 'pii', project: 'p1' }));
 
 let exitCode = 0;
 const ok = (msg) => console.log(`OK: ${msg}`);
@@ -106,10 +130,17 @@ const TOOL_CALLS = [
   ['export_subgraph', { slug: 'public-page', depth: 3 }], ['export_subgraph', { slug: 'default/public-page', depth: 3 }],
   ['export_subgraph', { slug: 'default/internal-page' }],
   ['list_feeds', {}], ['list_review_cards', {}], ['list_review_cards', { due_only: false, limit: 100 }],
-  ['mindbase_status', {}], ['mindbase_gather_sources', {}], ['mindbase_validate_structure', {}],
+  // F1 traversal attempts (must fail exactly like a missing page)
+  ['read_wiki_page', { slug: '../../projects/p1/wiki/notes/pii-page' }], ['read_wiki_page', { slug: '../../projects/p1/wiki/notes/proj-public' }],
+  ['read_wiki_page', { slug: '../../projects/p1/context' }], ['read_wiki_page', { slug: '../../raw/dump' }],
+  ['read_wiki_page', { slug: '../../projects/p1/sources/contributors/alice/note' }], ['read_wiki_page', { slug: '..\\..\\raw\\dump' }],
+  ['read_wiki_page', { slug: 'dup-page' }], ['read_wiki_page', { slug: 'flip-page' }],
+  ['find_related', { slug: 'p1/pii-page' }], ['export_subgraph', { slug: 'p1/proj-public' }], ['suggest_links', { slug: 'dup-page' }],
 ];
 const RESOURCE_URIS = ['mindbase://recent', 'mindbase://hubs', 'mindbase://orphans', 'mindbase://insights',
-  'mindbase://wiki/public-page', 'mindbase://wiki/internal-page', 'mindbase://wiki/pii-page', 'mindbase://wiki/broken-meta-page'];
+  'mindbase://wiki/public-page', 'mindbase://wiki/internal-page', 'mindbase://wiki/pii-page', 'mindbase://wiki/broken-meta-page',
+  'mindbase://wiki/../../projects/p1/wiki/notes/pii-page', 'mindbase://wiki/../../projects/p1/context', 'mindbase://wiki/../../raw/dump',
+  'mindbase://wiki/flip-page'];
 
 async function visibilityChecks() {
   const proc = startServer({ MCP_HTTP_TOKEN: FULL, MCP_HTTP_READONLY_TOKEN: RO });
@@ -117,6 +148,7 @@ async function visibilityChecks() {
   proc.stderr.on('data', (c) => { stderr += c.toString(); });
   try {
     if (!(await waitForPort(20000))) { fail(`server did not listen\n${stderr}`); return; }
+    flipToPii(); // index and search index were built while flip-page was public
     const full = await connect(FULL);
     const ro = await connect(RO);
     const fullTools = (await full.listTools()).tools.map((t) => t.name);
@@ -150,7 +182,9 @@ async function visibilityChecks() {
     let pubJson = {};
     try { pubJson = JSON.parse(pub); } catch { /* checked below */ }
     const linkLists = JSON.stringify([pubJson.incoming ?? null, pubJson.outgoing ?? null]);
-    check(!HIDDEN.some((s) => linkLists.includes(s)), 'readonly: public page link lists omit hidden pages', linkLists);
+    const sameAsMissing = (text, hiddenSlug) => text.includes(hiddenSlug) === text.includes('nothere-page');
+    check(['internal-page', 'pii-page', 'broken-meta-page'].every((s) => sameAsMissing(linkLists, s)),
+      'readonly: public page link lists treat hidden targets exactly like missing ones', linkLists);
     check((await call(ro, 'search_wiki', { query: 'shared guide', limit: 50 })).includes('public-page'), 'readonly: search still finds public page');
 
     // Structured slug lists never mention hidden slugs. Snippets/bodies of PUBLIC pages may
@@ -171,11 +205,21 @@ async function visibilityChecks() {
     const slugLeaks = HIDDEN.filter((s) => structured.includes(s));
     check(slugLeaks.length === 0, 'readonly: search/list/graph results omit hidden slugs', slugLeaks.join(', '));
     const insights = await call(ro, 'get_graph_insights', {});
-    check(!HIDDEN.some((s) => insights.includes(s)), 'readonly: graph insights (incl. broken links) omit hidden slugs', insights.slice(0, 300));
+    let brokenTargets = [];
+    try { brokenTargets = JSON.parse(insights).broken_links.map((b) => b.target); } catch { brokenTargets = [insights]; }
+    check(['internal-page', 'pii-page', 'broken-meta-page'].every((s) => brokenTargets.some((t) => t.endsWith(`/${s}`)))
+      && brokenTargets.some((t) => t.endsWith('/nothere-page')), 'readonly: hidden link targets are reported as broken, like missing ones', JSON.stringify(brokenTargets));
+    let insightsNoBroken = insights;
+    try { insightsNoBroken = JSON.stringify({ ...JSON.parse(insights), broken_links: undefined }); } catch { /* keep */ }
+    check(!HIDDEN.some((s) => insightsNoBroken.includes(s)), 'readonly: graph insights omit hidden slugs outside broken links', insightsNoBroken.slice(0, 300));
     const subgraph = await call(ro, 'export_subgraph', { slug: 'default/public-page', depth: 3 });
     let pagesIncluded = '';
     try { pagesIncluded = JSON.stringify(JSON.parse(subgraph).pages_included); } catch { pagesIncluded = subgraph; }
-    check(!HIDDEN.some((s) => pagesIncluded.includes(s)), 'readonly: export_subgraph pages_included omits hidden pages', pagesIncluded);
+    // Link targets that are hidden appear exactly like link targets that do not exist (F2); unlinked hidden pages never appear.
+    const linkedHidden = ['internal-page', 'pii-page', 'broken-meta-page'];
+    check(linkedHidden.every((h) => pagesIncluded.includes(h) === pagesIncluded.includes('nothere-page'))
+      && !['flip-page', 'proj-public', 'dup-page'].some((h) => pagesIncluded.includes(h)) && leaks(subgraph).length === 0,
+    'readonly: export_subgraph treats hidden link targets like missing ones', pagesIncluded);
 
     // No existence oracle: hidden read == nonexistent read (slug normalized).
     const norm = (text, slug) => text.split(slug).join('<slug>');
@@ -190,6 +234,17 @@ async function visibilityChecks() {
       const m = norm(await call(ro, tool, { slug: missingSlug }), missingSlug);
       check(h === m, `readonly: ${tool}(${hiddenSlug}) indistinguishable from missing page`, `${h.slice(0, 160)} vs ${m.slice(0, 160)}`);
     }
+    for (const traversal of ['../../projects/p1/wiki/notes/pii-page', '../../projects/p1/context', '../../raw/dump', 'flip-page']) {
+      const t = norm(await call(ro, 'read_wiki_page', { slug: traversal }), traversal);
+      const m = norm(await call(ro, 'read_wiki_page', { slug: 'nothere-page' }), 'nothere-page');
+      check(t === m, `readonly: read_wiki_page(${traversal}) indistinguishable from missing page`, `${t.slice(0, 160)} vs ${m.slice(0, 160)}`);
+    }
+    const dup = await call(ro, 'read_wiki_page', { slug: 'dup-page' });
+    check(dup.includes('Dup Public') && !dup.includes('CANARYCONCEPT'), 'readonly: public note readable despite hidden concept with same slug', dup.slice(0, 160));
+    // F4: reader search results carry rank only, no index statistics.
+    let roHits = [];
+    try { roHits = JSON.parse(await call(ro, 'search_wiki', { query: 'shared guide', limit: 50 })); } catch { /* empty */ }
+    check(roHits.length > 0 && roHits.every((h, i) => h.score === roHits.length - i), 'readonly: search scores are rank-only', JSON.stringify(roHits.map((h) => h.score)));
     const hiddenRes = norm(await readRes(ro, 'mindbase://wiki/internal-page'), 'internal-page');
     const missingRes = norm(await readRes(ro, 'mindbase://wiki/nothere-page'), 'nothere-page');
     check(hiddenRes.startsWith('THROWN') && hiddenRes === missingRes, 'readonly: hidden wiki resource read indistinguishable from missing', `${hiddenRes} vs ${missingRes}`);
@@ -203,7 +258,9 @@ async function visibilityChecks() {
     for (const uri of RESOURCE_URIS) {
       const text = await readRes(ro, uri);
       if (leaks(text).length > 0) resLeaks.push(`${uri} → ${leaks(text).join(',')}`);
-      if (['mindbase://recent', 'mindbase://hubs', 'mindbase://orphans', 'mindbase://insights'].includes(uri) && HIDDEN.some((s) => text.includes(s))) {
+      const linkedLikeMissing = uri === 'mindbase://insights' && text.includes('nothere-page');
+      const hiddenHere = HIDDEN.filter((s) => text.includes(s) && !(linkedLikeMissing && ['internal-page', 'pii-page', 'broken-meta-page'].includes(s)));
+      if (['mindbase://recent', 'mindbase://hubs', 'mindbase://orphans', 'mindbase://insights'].includes(uri) && hiddenHere.length > 0) {
         resLeaks.push(`${uri} → hidden slug`);
       }
     }
@@ -283,8 +340,40 @@ async function sessionCapChecks() {
 
 async function allowlistChecks() {
   check(!('READ_ONLY_TOOLS' in mcpIndex), 'allowlist: mutable READ_ONLY_TOOLS Set is no longer exported');
+  const fsTools = ['mindbase_status', 'mindbase_gather_sources', 'mindbase_validate_structure'];
+  check(fsTools.every((n) => !mcpIndex.READ_ONLY_TOOL_NAMES.includes(n)), 'allowlist: raw-filesystem tools are not allowlisted');
+  // F7: the reader context is built from plain objects and carries no unused raw members.
+  const { createReaderView } = mcpIndex;
+  const secret = { apiKey: 'CANARYKEY' };
+  const base = { dataDir: '/abs/secret/dir', config: secret, synthesisCache: {}, templates: {}, feeds: { summaries: async () => [] },
+    store: {}, searchIndex: { search: () => [] }, wikiIndex: { buildGraph: () => ({ nodes: new Map(), edges: [], incoming: new Map(), outgoing: new Map() }), allPages: () => [], getPage: () => null },
+    cards: { list: async () => [] }, getAdapter: () => null, reindex: async () => {}, mcpClient: 'x', allowLocalFilePaths: true };
+  if (typeof createReaderView !== 'function') { fail('createReaderView is not exported'); return; }
+  const view = createReaderView(base).ctx;
+  const probe = (k) => { try { return view[k]; } catch { return undefined; } };
+  const { types } = await import('node:util');
+  check(['config', 'synthesisCache', 'templates', 'dataDir'].every((k) => probe(k) === undefined)
+    && !JSON.stringify(Object.keys(view)).includes('config'), 'reader ctx: config/synthesisCache/templates/dataDir not exposed');
+  check(!['store', 'searchIndex', 'wikiIndex', 'cards', 'feeds'].some((k) => types.isProxy(view[k])), 'reader ctx: members are plain objects, not proxies');
+  // F3/F5: visibility comes from meta on disk keyed by (project, layer, slug), never from index rows.
+  const fsp = await import('node:fs/promises');
+  const fsStore = { readText: (q) => fsp.readFile(join(dataDir, q), 'utf-8'), readJSON: async (q) => JSON.parse(await fsp.readFile(join(dataDir, q), 'utf-8')),
+    listDir: async (q) => (await fsp.readdir(join(dataDir, q), { withFileTypes: true })).map((d) => ({ name: d.name, kind: d.isDirectory() ? 'directory' : 'file' })) };
+  const row = (slug, projectId, visibility = null, title = slug) => ({ slug, path: `wiki/notes/${slug}.md`, title, type: 'concept', kind: null,
+    content_hash: 'h', word_count: 1, inbound_count: 0, outbound_count: 0, tags: [], visibility, project: null, project_id: projectId, summary: null });
+  const rows = [row('public-page', 'default'), row('public-page', 'p1', null, 'CANARYROW'), row('dup-page', 'default'), row('internal-page', 'default', null)];
+  const cards = [{ id: 'a', source_slug: 'public-page', question: 'ok' }, { id: 'b', source_slug: 'dup-page', question: 'CANARYCARD dup' }, { id: 'c', question: 'CANARYCARD none' }];
+  const rv = createReaderView({ ...base, store: fsStore, cards: { list: async () => cards },
+    wikiIndex: { allPages: () => rows, getPage: (sl) => rows.find((r) => r.slug === sl) ?? null,
+      buildGraph: () => ({ nodes: new Map(rows.map((r) => [`${r.project_id}/${r.slug}`, { slug: r.slug, path: r.path, title: r.title, projectId: r.project_id, tags: [] }])), edges: [], incoming: new Map(), outgoing: new Map() }) } });
+  await rv.refresh();
+  const seen = JSON.stringify([rv.ctx.wikiIndex.allPages(), rv.ctx.wikiIndex.getPage('internal-page'), [...rv.ctx.wikiIndex.buildGraph().nodes.keys()]]);
+  check(!seen.includes('CANARYROW') && !seen.includes('dup-page') && !seen.includes('internal-page') && seen.includes('default/public-page'),
+    'reader index: stale rows, other-project rows and slugs hidden in any layer are filtered', seen);
+  const cardText = JSON.stringify(await rv.ctx.cards.list());
+  check(!cardText.includes('CANARYCARD') && cardText.includes('"a"'), 'reader cards: cards without source_slug or with a hidden-layer slug are hidden', cardText);
   const names = mcpIndex.READ_ONLY_TOOL_NAMES;
-  check(Array.isArray(names) && names.length === 15 && Object.isFrozen(names), 'allowlist: READ_ONLY_TOOL_NAMES is a frozen array of 15');
+  check(Array.isArray(names) && names.length === 12 && Object.isFrozen(names), 'allowlist: READ_ONLY_TOOL_NAMES is a frozen array of 12');
   try { names.push('create_note'); } catch { /* frozen */ }
   const allowed = mcpIndex.isToolAllowed;
   check(typeof allowed === 'function' && allowed('readonly', 'create_note') === false && allowed('readonly', 'search_wiki') === true

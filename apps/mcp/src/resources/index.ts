@@ -5,6 +5,7 @@ import type { Context } from '../context.js';
 import type { MetaJson } from '@mindbase/core';
 import { getHubs, getOrphans, generateInsights, renderInsightsMarkdown } from '@mindbase/core';
 import type { AccessProfile } from '../access.js';
+import { isSafeSlug } from '../lib/slug.js';
 
 /** @param beforeRequest refreshes the read-only visibility snapshot before each request. */
 export function registerResources(
@@ -67,6 +68,7 @@ export function registerResources(
     const wikiMatch = uri.match(/^mindbase:\/\/wiki\/(.+)$/);
     if (wikiMatch) {
       const slug = wikiMatch[1]!;
+      if (!isSafeSlug(slug)) throw Object.assign(new Error('Not found: requested path'), { code: 'ENOENT' });
       const body = await ctx.store.readText(`wiki/notes/${slug}.md`);
       return { contents: [{ uri, mimeType: 'text/markdown', text: body }] };
     }

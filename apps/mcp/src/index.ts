@@ -9,6 +9,7 @@ import type { AccessProfile } from './access.js';
 import { createReaderView } from './visibility.js';
 
 export { READ_ONLY_TOOL_NAMES, isToolAllowed } from './access.js';
+export { createReaderView } from './visibility.js';
 export type { AccessProfile } from './access.js';
 
 export interface RunOptions {
