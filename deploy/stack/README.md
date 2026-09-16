@@ -8,10 +8,11 @@ For the vault container itself (environment variables, access profiles, visibili
 
 ```bash
 cd deploy/stack
-cp .env.example .env
+cp .env.example .env && chmod 600 .env
 for k in $(grep -oE '^[A-Z_]+' .env.example); do sed -i "s|^$k=.*|$k=$(openssl rand -hex 32)|" .env; done
-docker compose up -d --build
-tests/isolation.sh
+docker compose up -d --build     # first build takes a few minutes
+tests/wait-ready.sh              # healthy services, blueprint applied, routes protected, signup closed
+tests/isolation.sh               # also waits on its own (WAIT_TIMEOUT, default 300 s)
 ```
 
 | URL | What |
@@ -24,7 +25,7 @@ tests/isolation.sh
 
 Demo users and groups come from `authentik/blueprints/lokyy-vaults.yaml`: `anna` is in `vault-firma-read`, `ben` in `vault-firma-write`. Passwords are `DEMO_PASS_ANNA` / `DEMO_PASS_BEN`.
 
-On a fresh start the blueprint can report status `error` once, because Authentik's default flows are not created yet. Re-apply it:
+On a fresh start Authentik applies the blueprint in the background; right after `up` the vault routes answer `404` until it is done, which is why `tests/wait-ready.sh` waits for it. If the blueprint ends in status `error` (seen once during development, when Authentik's default flows did not exist yet), re-apply it:
 
 ```bash
 docker compose exec authentik-worker ak apply_blueprint custom/lokyy-vaults.yaml
@@ -47,15 +48,16 @@ Networks use explicit `10.231.x.0/28` subnets because the default Docker address
 
 ## Attack tests
 
-`tests/isolation.sh` (37 checks) logs in through the real Authentik flow (`tests/login.sh`) and verifies:
+`tests/isolation.sh` (59 checks) logs in through the real Authentik flow (`tests/login.sh`) and verifies:
 
 1. Anonymous requests are redirected to the login.
 2. Browser isolation: each user reaches only their own vault; readers are denied the company vault web UI; only admins reach MetaMCP.
 3. Header forgery: forged `X-authentik-username` is denied; a client-supplied `X-Vault-Proxy-Secret` is overwritten; the proxy secret alone is not a login.
 4. Direct container access: MetaMCP gets `403` on a vault web port and `401` on MCP without a token; tokens do not work across vaults.
 5. Company vault read-only profile: 12 tools, `create_note` rejected, session bound to the read-only token, full token still sees all 50 tools.
-6. Lateral movement from a vault (e.g. SSRF): other vaults, Authentik and databases unreachable; MetaMCP reachable but authenticated and closed for signup; internet (EUrouter) reachable.
-7. Only Traefik publishes a port, bound to `127.0.0.1`.
+6. Lateral movement from a vault (e.g. SSRF): other vaults, Authentik and databases unreachable by name; MetaMCP reachable but authenticated, and a signup attempt creates no account; internet (EUrouter) reachable.
+7. Network topology, independent of DNS: each `web-<vault>` / `mcp-<vault>` network has exactly the expected two members, each vault joins exactly its three networks, egress has inter-container traffic disabled, and every other vault is unreachable on every one of its IPs and ports.
+8. Only Traefik publishes a port, bound to `127.0.0.1`.
 
 ## Known limitations
 
@@ -63,3 +65,6 @@ Networks use explicit `10.231.x.0/28` subnets because the default Docker address
 - MetaMCP 2.4.22's tool deactivation is a fail-open denylist — never rely on it alone (see LBV2-4).
 - `X-Mindbase-User` is not yet set by the proxy from the Authentik identity (LBV2-9).
 - MetaMCP namespaces, endpoints and API keys are not provisioned automatically yet.
+- Vaults can reach services published on the Docker host through the egress gateway (and cloud metadata endpoints, if any). Harmless on a developer machine, relevant for the Coolify template (LBV2-16).
+- The stack suite does not re-test the `internal`/`pii` visibility rules; those are covered by `apps/mcp/test/http-readonly-visibility.mjs`.
+- Traefik mounts the Docker socket (read-only) for label discovery.

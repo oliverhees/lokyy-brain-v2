@@ -4,6 +4,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 set -a; . ./.env; set +a
+tests/wait-ready.sh "${WAIT_TIMEOUT:-300}" || exit 1
 
 pass=0 fail=0
 ok()  { echo "PASS $1"; pass=$((pass+1)); }
@@ -47,6 +48,8 @@ expect "ben (writer) → firma web"  "$(access "$jar_ben"  "$(printf $V firma)/a
 expect "anna → metamcp admin" "$(access "$jar_anna" http://mcp.localhost:18080/api/health)" "DENIED"
 
 echo "== 3. Header forgery through Traefik"
+# Note: vaults do not read X-authentik-username yet (LBV2-9); this guards against a future
+# change that trusts identity headers without Traefik overwriting them.
 expect "anna → ben with forged X-authentik-username: ben" \
   "$(access "$jar_anna" "$(printf $V ben)/api/config" -H 'X-authentik-username: ben')" "DENIED"
 expect "anna → own vault with wrong X-Vault-Proxy-Secret (Traefik must overwrite)" \
@@ -92,12 +95,35 @@ done
 # Its surface must stay authenticated and closed for self-registration.
 expect "vault-anna → metamcp tRPC without login" \
   "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://metamcp:12008/trpc/frontend.mcpServers.list")" "401"
-expect "vault-anna → metamcp self-registration" \
-  "$(in_c vault-anna "curl -s --max-time 5 -X POST -H 'content-type: application/json' -d '{\"email\":\"probe@evil.test\",\"password\":\"Passw0rd!Passw0rd\",\"name\":\"p\"}' http://metamcp:12008/api/auth/sign-up/email | grep -o FAILED_TO_CREATE_USER")" "FAILED_TO_CREATE_USER"
+users_before=$(docker compose exec -T metamcp-db psql -U metamcp -d metamcp -tAc "select count(*) from users")
+in_c vault-anna "curl -s --max-time 5 -X POST -H 'content-type: application/json' -d '{\"email\":\"probe@evil.test\",\"password\":\"Passw0rd!Passw0rd\",\"name\":\"p\"}' http://metamcp:12008/api/auth/sign-up/email" >/dev/null
+users_after=$(docker compose exec -T metamcp-db psql -U metamcp -d metamcp -tAc "select count(*) from users")
+docker compose exec -T metamcp-db psql -U metamcp -d metamcp -qc "delete from sessions where user_id in (select id from users where email='probe@evil.test'); delete from accounts where user_id in (select id from users where email='probe@evil.test'); delete from users where email='probe@evil.test'" >/dev/null
+expect "vault-anna → metamcp self-registration creates no account (users $users_before → $users_after)" \
+  "$([[ "$users_before" == "$users_after" ]] && echo unchanged || echo CREATED)" "unchanged"
 expect "vault-anna → traefik → ben (no session)" \
   "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Host: ben.vault.localhost:18080' http://traefik/api/config")" "302"
 expect "vault-anna → internet (EUrouter must stay reachable)" \
   "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://www.eurouter.ai/")" "200|301|302|307|308"
+
+echo "== 5b. Network topology (name-independent)"
+members() { docker network inspect "lokyy-stack_$1" --format '{{range .Containers}}{{.Name}} {{end}}' | tr ' ' '\n' | sed -E 's/^lokyy-stack-//; s/-[0-9]+$//' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//'; }
+for v in anna ben firma; do
+  expect "web-$v members" "$(members web-$v)" "traefik vault-$v"
+  expect "mcp-$v members" "$(members mcp-$v)" "metamcp vault-$v"
+  expect "vault-$v networks" "$(docker inspect "lokyy-stack-vault-$v-1" --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed 's/^lokyy-stack_//' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')" "egress mcp-$v web-$v"
+done
+expect "egress inter-container traffic disabled" \
+  "$(docker network inspect lokyy-stack_egress --format '{{index .Options "com.docker.network.bridge.enable_icc"}}')" "false"
+# Probe every other vault by IP on every network, so a shared network is caught even if DNS points elsewhere.
+for target in ben firma; do
+  for ip in $(docker inspect "lokyy-stack-vault-$target-1" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}'); do
+    for port in 4321 4322; do
+      expect "vault-anna → vault-$target $ip:$port" \
+        "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://$ip:$port/ || true")" "000"
+    done
+  done
+done
 
 echo "== 6. Nothing but Traefik is published on the host"
 published=$(docker compose ps --format json | jq -r 'select(.Service != "traefik") | .Service as $s | (.Publishers // [])[] | select(.PublishedPort != 0) | "\($s):\(.PublishedPort)"' || true)
