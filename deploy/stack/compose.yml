@@ -161,6 +161,8 @@ services:
     environment:
       <<: *vault-env
       MCP_HTTP_TOKEN: ${MCP_TOKEN_FIRMA:?set in .env}
+      # Readers of the company vault (group vault-firma-read) get this token via MetaMCP: 12 read tools, no internal/pii pages
+      MCP_HTTP_READONLY_TOKEN: ${MCP_READONLY_TOKEN_FIRMA:?set in .env}
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-firma:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_FIRMA:?set in .env}
     volumes: [vault-firma:/data]
