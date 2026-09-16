@@ -35,7 +35,11 @@ RUN CI=true pnpm install --prod --frozen-lockfile \
  && rm -rf node_modules/.pnpm/*linuxmusl* node_modules/.pnpm/*-musl@* \
            node_modules/.pnpm/onnxruntime-node@*/node_modules/onnxruntime-node/bin/napi-v3/darwin \
            node_modules/.pnpm/onnxruntime-node@*/node_modules/onnxruntime-node/bin/napi-v3/win32 \
- && find node_modules/.pnpm -type f \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \) -delete
+ && find node_modules/.pnpm -type f \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \) -delete \
+ # Symlinks left dangling by the removals above and by workspace links whose
+ # targets are not shipped (@mindbase/core is bundled into server.mjs).
+ && rm -f node_modules/.pnpm/node_modules/@mindbase/core apps/server/node_modules/@mindbase/core \
+ && find node_modules apps/server/node_modules apps/mcp/node_modules -xtype l -delete
 
 FROM node:20-bookworm-slim
 RUN apt-get update \

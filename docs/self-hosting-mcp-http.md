@@ -57,7 +57,7 @@ The container runs as the non-root user `vault` (uid 10001) under `tini`.
 | `docker image ls` disk usage | 1.82 GB | 800 MB |
 | Content size (compressed layers) | 367 MB | 179 MB |
 
-About 200 MB of the remaining `node_modules` is `googleapis` (used by the Google Drive import). The web server needs no build step at runtime and starts in a few seconds.
+The remaining `node_modules` is about 360 MB; the largest parts are `onnxruntime-node` and `@xenova/transformers` (embeddings), `pdfjs-dist`, `tesseract.js-core` and `googleapis` (37 MB, Google Drive import). The web server needs no build step at runtime and starts in a few seconds.
 
 `deploy/build-server.mjs` rewrites `import.meta.dirname` in server sources to the original source directory, so `schema/`, `apps/web/dist` and `.env` resolve as they do in development. The build fails if server code uses `import.meta.url`, `import.meta.filename`, `__dirname` or `__filename`, because those would silently point to `dist/` in the bundle.
 

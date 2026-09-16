@@ -12,7 +12,7 @@
 //   depths; a plain bundle would collapse all of them onto dist/.
 // - Other file-location primitives (`import.meta.url`, `import.meta.filename`,
 //   `__dirname`, `__filename`) would silently change meaning in a bundle, so the
-//   build fails if server code starts using them. Extend the rewrite if needed.
+//   build fails if server or bundled @mindbase/core code starts using them. Extend the rewrite if needed.
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -23,6 +23,8 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { build } = createRequire(path.join(repo, 'apps/app/package.json'))('esbuild');
 
 const serverSrc = path.join(repo, 'apps/server/src') + path.sep;
+// Every first-party source tree that ends up inside the bundle.
+const firstPartySrc = [serverSrc, ...['packages/core/src', 'packages/core/dist'].map((d) => path.join(repo, d) + path.sep)];
 const outfile = path.join(repo, 'apps/server/dist/server.mjs');
 const forbidden = /\bimport\.meta\.(url|filename)\b|\b__dirname\b|\b__filename\b/;
 
@@ -43,8 +45,8 @@ const externalServerDeps = {
 const importMetaDirname = {
   name: 'import-meta-dirname',
   setup(b) {
-    b.onLoad({ filter: /\.[cm]?tsx?$/ }, async (args) => {
-      if (!args.path.startsWith(serverSrc)) return undefined;
+    b.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
+      if (!firstPartySrc.some((root) => args.path.startsWith(root))) return undefined;
       const source = await readFile(args.path, 'utf8');
       const rel = path.relative(repo, args.path);
       const hit = source.match(forbidden);
@@ -54,7 +56,7 @@ const importMetaDirname = {
       const dir = path.relative(repo, path.dirname(args.path)).split(path.sep).join('/');
       return {
         contents: source.replaceAll('import.meta.dirname', `__mbJoin(__mbAppRoot, ${JSON.stringify(dir)})`),
-        loader: 'ts',
+        loader: path.extname(args.path).slice(1).replace(/^[cm]/, ''),
       };
     });
   },
