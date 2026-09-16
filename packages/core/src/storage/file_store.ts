@@ -21,8 +21,19 @@ export interface TrashEntry {
 export class FileStore implements Store {
   constructor(private rootDir: string) {}
 
+  /**
+   * Maps a store-relative path to an absolute path. Leading slashes stay relative to
+   * the root (same as the previous path.join behaviour); anything that would leave the
+   * root via `..` is refused, because slugs and ids reach this from MCP clients and
+   * HTTP requests.
+   */
   private resolve(filePath: string): string {
-    return nodePath.join(this.rootDir, filePath);
+    const root = nodePath.resolve(this.rootDir);
+    const full = nodePath.resolve(root, `.${nodePath.sep}${filePath}`);
+    if (full !== root && !full.startsWith(root + nodePath.sep)) {
+      throw new Error('Path is outside the store root');
+    }
+    return full;
   }
 
   async writeText(path: string, content: string): Promise<void> {

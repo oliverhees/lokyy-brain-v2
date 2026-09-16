@@ -18,6 +18,46 @@ describe('FileStore', () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  describe('path containment (LBV2-11)', () => {
+    const escapes = ['../secret.md', '../../etc/passwd', 'wiki/../../secret.md', 'wiki/notes/../../../secret.md', '..'];
+
+    beforeEach(async () => {
+      await fs.writeFile(path.join(tmpDir, '..', 'secret.md'), 'TOP SECRET');
+    });
+    afterEach(async () => {
+      await fs.rm(path.join(tmpDir, '..', 'secret.md'), { force: true });
+    });
+
+    it.each(escapes)('rejects reads outside the root: %s', async (p) => {
+      await expect(store.readText(p)).rejects.toThrow(/outside/);
+      await expect(store.readBinary(p)).rejects.toThrow(/outside/);
+      expect(await store.exists(p)).toBe(false);
+      expect(await store.listDir(p)).toEqual([]);
+    });
+
+    it.each(escapes)('rejects writes and deletes outside the root: %s', async (p) => {
+      await expect(store.writeText(p, 'x')).rejects.toThrow(/outside/);
+      await expect(store.writeBinary(p, new Uint8Array([1]))).rejects.toThrow(/outside/);
+      await expect(store.remove(p)).rejects.toThrow(/outside/);
+      expect(await fs.readFile(path.join(tmpDir, '..', 'secret.md'), 'utf-8')).toBe('TOP SECRET');
+    });
+
+    it('keeps leading slashes relative to the root (never reads the host path)', async () => {
+      await store.writeText('/etc/passwd', 'inside the store');
+      expect(await fs.readFile(path.join(tmpDir, 'etc', 'passwd'), 'utf-8')).toBe('inside the store');
+    });
+
+    it('still allows dot segments that stay inside the root', async () => {
+      await store.writeText('wiki/notes/../hello.md', 'inside');
+      expect(await store.readText('wiki/hello.md')).toBe('inside');
+    });
+
+    it('allows the root itself for listing', async () => {
+      await store.writeText('a.md', 'x');
+      expect((await store.listDir('')).map((e) => e.name)).toContain('a.md');
+    });
+  });
+
   it('writes and reads a text file', async () => {
     await store.writeText('hello.md', '# Hello');
     expect(await store.readText('hello.md')).toBe('# Hello');
