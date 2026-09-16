@@ -1,18 +1,25 @@
 import { userInfo } from 'node:os';
 import type { NextFunction, Request, Response } from 'express';
 import { isValidUsername, USERNAME_MAX_LENGTH } from '@mindbase/core';
+import { identityHeaderName, isGuarded } from './proxy-identity';
+
+export { DEFAULT_IDENTITY_HEADER } from './proxy-identity';
 
 /** The attribution header (client-sent or proxy-set) is not a valid contributor username. */
 export class InvalidUserError extends Error {
   constructor(message = 'Invalid X-Mindbase-User header') { super(message); }
 }
 
-/** Default proxy identity header (Authentik forward-auth, copied upstream by Traefik). */
-export const DEFAULT_IDENTITY_HEADER = 'x-authentik-username';
-/** Attribution used in guarded mode when the proxy did not supply an identity. */
-export const UNKNOWN_USER = 'unknown';
+/** Guarded mode, but the proxy did not supply an identity (misconfigured proxy). */
+export class MissingIdentityError extends Error {
+  constructor() { super('Unauthenticated'); }
+}
+
+/** Names no proxy identity may carry (compared case-insensitively). */
+export const RESERVED_USERNAMES: ReadonlySet<string> = new Set(['unknown']);
 /** Last-resort name when an OS username sanitizes to nothing. */
 const FALLBACK_OS_USER = 'user';
+const MISSING_IDENTITY_LOG_INTERVAL_MS = 60_000;
 
 export interface ResolveUserOptions {
   env?: NodeJS.ProcessEnv;
@@ -22,7 +29,18 @@ export interface ResolveUserOptions {
 
 type HeaderBag = { headers: Record<string, string | string[] | undefined> };
 
-let warnedMissingIdentity = false;
+let missingIdentityCount = 0;
+let missingIdentityLoggedAt = 0;
+
+/** Logs every occurrence, but at most one line per interval (with the count since the last line). */
+function logMissingIdentity(header: string): void {
+  missingIdentityCount += 1;
+  const now = Date.now();
+  if (now - missingIdentityLoggedAt < MISSING_IDENTITY_LOG_INTERVAL_MS) return;
+  console.warn(`[user-attribution] proxy identity header "${header}" missing; answered 401 (${missingIdentityCount} time(s) since last log)`);
+  missingIdentityLoggedAt = now;
+  missingIdentityCount = 0;
+}
 
 /**
  * Deterministically maps an arbitrary name (e.g. an OS account like
@@ -32,15 +50,6 @@ export function sanitizeUsername(name: string): string {
   let s = name.normalize('NFC').replace(/[^\p{L}\p{N}_.-]/gu, '_');
   s = s.replace(/\.{2,}/g, '.').replace(/^[.-]+/, '').slice(0, USERNAME_MAX_LENGTH);
   return isValidUsername(s) ? s : FALLBACK_OS_USER;
-}
-
-function identityHeaderName(env: NodeJS.ProcessEnv): string {
-  return env['VAULT_IDENTITY_HEADER']?.trim().toLowerCase() || DEFAULT_IDENTITY_HEADER;
-}
-
-/** Guarded mode = the proxy shared-secret guard is active (see proxy-secret.ts). */
-function isGuarded(env: NodeJS.ProcessEnv): boolean {
-  return !!env['VAULT_PROXY_SECRET'];
 }
 
 function osFallback(osUsername: () => string): string {
@@ -58,7 +67,7 @@ function osFallback(osUsername: () => string): string {
  *
  * - Guarded mode (VAULT_PROXY_SECRET set): only the proxy-set identity header
  *   (VAULT_IDENTITY_HEADER, default x-authentik-username) counts; a client
- *   X-Mindbase-User is ignored. Missing identity → UNKNOWN_USER.
+ *   X-Mindbase-User is ignored. Missing identity → MissingIdentityError (401).
  * - Otherwise: X-Mindbase-User, or the sanitized OS user when absent/empty.
  */
 export function resolveUser(req: HeaderBag, options: ResolveUserOptions = {}): string {
@@ -68,13 +77,12 @@ export function resolveUser(req: HeaderBag, options: ResolveUserOptions = {}): s
     const header = identityHeaderName(env);
     const raw = req.headers[header];
     if (raw === undefined || raw === '') {
-      if (!warnedMissingIdentity) {
-        warnedMissingIdentity = true;
-        console.warn(`[user-attribution] proxy identity header "${header}" missing; attributing to "${UNKNOWN_USER}"`);
-      }
-      return UNKNOWN_USER;
+      logMissingIdentity(header);
+      throw new MissingIdentityError();
     }
-    if (typeof raw !== 'string' || !isValidUsername(raw)) throw new InvalidUserError('Invalid identity header');
+    if (typeof raw !== 'string' || !isValidUsername(raw) || RESERVED_USERNAMES.has(raw.toLowerCase())) {
+      throw new InvalidUserError('Invalid identity header');
+    }
     return raw;
   }
 
@@ -86,11 +94,15 @@ export function resolveUser(req: HeaderBag, options: ResolveUserOptions = {}): s
   return osFallback(options.osUsername ?? (() => userInfo().username));
 }
 
-/** Router middleware: answers 400 for an invalid attribution header before any handler runs. */
+/** Router middleware: 401 for a missing proxy identity, 400 for an invalid name, before any handler runs. */
 export function rejectInvalidUser(req: Request, res: Response, next: NextFunction): void {
   try {
     resolveUser(req);
   } catch (e) {
+    if (e instanceof MissingIdentityError) {
+      res.status(401).json({ error: e.message });
+      return;
+    }
     if (!(e instanceof InvalidUserError)) throw e;
     res.status(400).json({ error: e.message });
     return;

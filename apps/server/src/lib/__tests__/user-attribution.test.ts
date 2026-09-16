@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isValidUsername } from '@mindbase/core';
-import { resolveUser, rejectInvalidUser, InvalidUserError, UNKNOWN_USER, sanitizeUsername } from '../user-attribution.js';
+import { resolveUser, rejectInvalidUser, InvalidUserError, MissingIdentityError, RESERVED_USERNAMES, sanitizeUsername } from '../user-attribution.js';
 
 describe('resolveUser — trusted proxy identity (LBV2-9)', () => {
   const guarded = { VAULT_PROXY_SECRET: 'x'.repeat(32) } as NodeJS.ProcessEnv;
@@ -25,10 +25,31 @@ describe('resolveUser — trusted proxy identity (LBV2-9)', () => {
     expect(resolveUser(req, { env })).toBe('carol');
   });
 
-  it('falls back to the fixed user "unknown" when the identity header is missing or empty', () => {
-    expect(UNKNOWN_USER).toBe('unknown');
-    expect(resolveUser({ headers: { 'x-mindbase-user': 'ceo' } }, { env: guarded })).toBe('unknown');
-    expect(resolveUser({ headers: { 'x-authentik-username': '' } }, { env: guarded })).toBe('unknown');
+  it('throws MissingIdentityError (fail closed) when the identity header is missing or empty', () => {
+    expect(() => resolveUser({ headers: { 'x-mindbase-user': 'ceo' } }, { env: guarded })).toThrow(MissingIdentityError);
+    expect(() => resolveUser({ headers: { 'x-authentik-username': '' } }, { env: guarded })).toThrow(MissingIdentityError);
+  });
+
+  it('middleware answers 401 when the identity header is missing in guarded mode', () => {
+    const prev = process.env['VAULT_PROXY_SECRET'];
+    process.env['VAULT_PROXY_SECRET'] = 'x'.repeat(32);
+    try {
+      const out: { status?: number; body?: unknown; nextCalled: boolean } = { nextCalled: false };
+      const res = {
+        status(code: number) { out.status = code; return this; },
+        json(body: unknown) { out.body = body; return this; },
+      };
+      rejectInvalidUser({ headers: { 'x-mindbase-user': 'ceo' } } as never, res as never, () => { out.nextCalled = true; });
+      expect(out).toEqual({ status: 401, body: { error: 'Unauthenticated' }, nextCalled: false });
+    } finally {
+      if (prev === undefined) delete process.env['VAULT_PROXY_SECRET'];
+      else process.env['VAULT_PROXY_SECRET'] = prev;
+    }
+  });
+
+  it.each(['unknown', 'Unknown', 'UNKNOWN'])('rejects the reserved identity %j', (value) => {
+    expect(RESERVED_USERNAMES.has('unknown')).toBe(true);
+    expect(() => resolveUser({ headers: { 'x-authentik-username': value } }, { env: guarded })).toThrow(InvalidUserError);
   });
 
   it.each(['alice@example.com', '../x', 'a b'])('throws InvalidUserError for an invalid identity %j', (value) => {

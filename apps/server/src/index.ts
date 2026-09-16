@@ -57,7 +57,8 @@ import { SRSExtractor } from './lib/srs-worker';
 import { EmbeddingIndexer } from './lib/embedding-indexer';
 import { SynthesisWorker } from './lib/synthesis-worker';
 import { startMdns } from './lib/mdns';
-import { captureGate, serverFeatures, shouldStartCaptureWorker, shouldStartMdns } from './lib/capture-gate';
+import { captureGate, healthPayload, shouldStartCaptureWorker, shouldStartMdns } from './lib/capture-gate';
+import { assertTrustedHeaderConfig, requireConfigAdmin, requireConfigAdminAlways } from './lib/proxy-identity';
 
 const PORT = parseInt(process.env['PORT'] ?? '4321', 10);
 
@@ -97,6 +98,8 @@ function installSearchIndexCrashGuard(dataDir: string): void {
 }
 
 async function main() {
+  // Refuse to start when a trusted proxy header is configured to a client-controlled name.
+  assertTrustedHeaderConfig(process.env);
   const dataDir = await resolveDataDirAsync();
 
   const layoutAudit = await auditProjectLayouts(dataDir);
@@ -140,6 +143,13 @@ async function main() {
   // Must be the first middleware: rejects requests that did not come through the auth proxy.
   app.use(proxySecretGuard(readProxySecret(process.env)));
   app.use(express.json({ limit: '80mb' }));
+
+  // Guarded mode: server configuration changes need a VAULT_ADMIN_GROUPS member (fail closed).
+  app.use('/api/config', requireConfigAdmin(process.env));
+  app.use('/api/server', requireConfigAdmin(process.env));
+  app.use('/api/google/auth/callback', requireConfigAdminAlways(process.env));
+  app.use('/api/google/auth/disconnect', requireConfigAdminAlways(process.env));
+  app.use('/api/google/set-sync-folder', requireConfigAdminAlways(process.env));
 
   // API routes
   app.use('/api/ingest', ingestRoutes(ctx));
@@ -186,7 +196,7 @@ async function main() {
   app.use('/api/project/schema', projectSchemaRoutes(ctx));
   app.use('/api/project/suggestions', projectSuggestionsRoutes(ctx));
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, dataDir: ctx.dataDir, features: serverFeatures(process.env) });
+    res.json(healthPayload(process.env));
   });
 
   // Start background capture worker after all routes are wired (not when capture is disabled).
