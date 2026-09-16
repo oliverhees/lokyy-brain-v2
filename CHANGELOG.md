@@ -13,6 +13,10 @@
 - **File store paths** that would leave the data directory are refused; leading slashes stay relative to the data directory.
 - **Web API**: `POST /api/tree/research` accepts only plain slugs (`[a-z0-9-]`); an invalid `X-Mindbase-User` header returns 400; contributor usernames must be letters, digits, `_`, `-`, `.` (an OS username with `@` or spaces now fails for quick capture / contributor files); trash restore/delete reject ids not in the generated format and error messages no longer include ids or paths.
 - `mindbase_ingest_file` no longer accepts local file paths over the HTTP transport (stdio unchanged).
+- **SSRF protection for URL fetches** (LBV2-13): `mindbase_ingest_file` (URL mode), `add_rss_feed`, `POST /api/feeds`, `POST /api/ingest/text` with a URL, capture article extraction, the RSS worker and research web-search pages refuse targets that resolve to private, loopback, link-local (incl. `169.254.169.254`), CGNAT, ULA or reserved addresses, re-check every redirect (max 5), pin the connection to the checked address, and enforce timeout and size limits. **Ingesting from `localhost` or the LAN now fails** unless `MINDBASE_ALLOW_PRIVATE_FETCH=1` is set.
+- MCP HTTP accepts the `Authorization` scheme case-insensitively (`bearer <token>`).
+- The web server refuses to start when `VAULT_PROXY_SECRET` has leading or trailing whitespace (or is only whitespace).
+- Claude Code plugin manifest license now points to `NOTICE.md` (mixed MIT / PolyForm Noncommercial); the plugin README notes that it runs the upstream `mindbase-mcp` npm package without the fork's changes.
 
 ### Licensing
 - Fork modifications after `7aa8fcd` are licensed under PolyForm Noncommercial 1.0.0; upstream code remains MIT. See `NOTICE.md`.
