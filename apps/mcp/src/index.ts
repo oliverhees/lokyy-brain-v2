@@ -7,8 +7,22 @@ import { registerResources } from './resources/index.js';
 import { registerPrompts } from './prompts/index.js';
 import type { AccessProfile } from './access.js';
 import { createReaderView } from './visibility.js';
+import { acquireAll, readerLlmRateLimitFromEnv, SlidingWindow, type ReaderLlmRateLimit } from './lib/rate-limit.js';
 
 export { READ_ONLY_TOOL_NAMES, isToolAllowed } from './access.js';
+
+/** Parsed once at startup; an invalid value stops the process before it serves anything. */
+function loadReaderLlmRateLimit(): ReaderLlmRateLimit {
+  try {
+    return readerLlmRateLimitFromEnv();
+  } catch (e) {
+    process.stderr.write(`[mindbase-mcp] fatal: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+}
+const READER_LLM_RATE = loadReaderLlmRateLimit();
+/** Shared by every read-only session in this process, i.e. by the single read-only token. */
+const readerTokenLlmWindow = new SlidingWindow(READER_LLM_RATE.perToken, READER_LLM_RATE.windowMs);
 export { createReaderView } from './visibility.js';
 export type { AccessProfile } from './access.js';
 
@@ -72,8 +86,9 @@ Default playbook:
 1. \`search_wiki\` — fast keyword search; use first when you have specific terms
 2. \`search_all_projects\` / \`search_in_project\` — widen or narrow the search scope
 3. \`read_wiki_page\` — once you have a slug, pull the full page (body + wikilinks + frontmatter)
-4. \`find_related\` / \`export_subgraph\` — expand from a known page into its cluster
-5. \`list_recent\` — for "what's new" / "this week" questions
+4. \`ask_wiki\` — for complex questions: retrieves the relevant pages plus their linked neighbours and returns an answer with citations, written by the vault's configured LLM. Calls are rate limited; prefer \`search_wiki\` + \`read_wiki_page\` when a keyword lookup is enough
+5. \`find_related\` / \`export_subgraph\` — expand from a known page into its cluster
+6. \`list_recent\` — for "what's new" / "this week" questions
 
 Structure checks: \`find_orphans\`, \`suggest_links\`, \`get_graph_insights\` report on the wiki without modifying it.
 
@@ -102,7 +117,8 @@ export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>, pr
     registerResources(server, ctx, profile);
   } else {
     // Readers get a context that hides internal/pii pages; visibility is re-read per request.
-    const view = createReaderView(ctx);
+    const sessionLlmWindow = new SlidingWindow(READER_LLM_RATE.perSession, READER_LLM_RATE.windowMs);
+    const view = createReaderView(ctx, () => acquireAll([sessionLlmWindow, readerTokenLlmWindow]));
     registerTools(server, view.ctx, profile, view.refresh);
     registerResources(server, view.ctx, profile, view.refresh);
   }
