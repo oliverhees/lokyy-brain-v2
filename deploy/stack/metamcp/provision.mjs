@@ -22,7 +22,7 @@ const EMAIL_DOMAIN = 'users.lokyy.local';
 const KEY_NAME = 'lokyy';
 // Mirror of READ_ONLY_TOOL_NAMES in apps/mcp/src/access.ts (tests/metamcp-attacks.sh checks they match).
 const READ_TOOLS = new Set(['search_wiki', 'search_all_projects', 'search_in_project', 'read_wiki_page', 'list_recent',
-  'find_related', 'get_graph_insights', 'find_orphans', 'suggest_links', 'export_subgraph', 'list_feeds', 'list_review_cards']);
+  'find_related', 'get_graph_insights', 'find_orphans', 'suggest_links', 'export_subgraph', 'list_feeds', 'list_review_cards', 'ask_wiki']);
 
 const log = (...a) => console.error('[provision]', ...a);
 const fail = (msg) => { throw new Error(msg); };

@@ -99,8 +99,8 @@ expect "ben opens a session with his key" "$([[ -n $sb ]] && echo yes || echo no
 tools anna "$ANNA" "$sa" >"$tmp/anna.tools"; tools ben "$BEN" "$sb" >"$tmp/ben.tools"
 allow=$(sed -n "/^export const READ_ONLY_TOOL_NAMES/,/]);/p" ../../apps/mcp/src/access.ts | grep -oE "'[a-z_]+'" | tr -d "'" | sort)
 expect "anna sees only her vault + company servers" "$(sed 's/__.*//' "$tmp/anna.tools" | sort -u | tr '\n' ' ' | sed 's/ $//')" "anna-firma anna-vault"
-expect "anna's company tools == vault read allowlist (12)" \
-  "$([[ "$(sed -n 's/^anna-firma__//p' "$tmp/anna.tools")" == "$allow" ]] && echo "equal $(grep -c '^anna-firma__' "$tmp/anna.tools")" || echo "DIFF: $(sed -n 's/^anna-firma__//p' "$tmp/anna.tools" | tr '\n' ' ')")" "equal 12"
+expect "anna's company tools == vault read allowlist (13)" \
+  "$([[ "$(sed -n 's/^anna-firma__//p' "$tmp/anna.tools")" == "$allow" ]] && echo "equal $(grep -c '^anna-firma__' "$tmp/anna.tools")" || echo "DIFF: $(sed -n 's/^anna-firma__//p' "$tmp/anna.tools" | tr '\n' ' ')")" "equal 13"
 expect "anna's own vault exposes the full tool set" "$(grep -c '^anna-vault__' "$tmp/anna.tools")" "50"
 expect "ben sees only his vault + company servers" "$(sed 's/__.*//' "$tmp/ben.tools" | sort -u | tr '\n' ' ' | sed 's/ $//')" "ben-firma ben-vault"
 expect "ben's company tools are the full set (writer)" "$(grep -c '^ben-firma__' "$tmp/ben.tools")" "50"

@@ -45,7 +45,7 @@ docker compose exec authentik-worker ak apply_blueprint custom/lokyy-vaults.yaml
 | MCP access | Per-vault `MCP_HTTP_TOKEN`, known only to MetaMCP; `MCP_HTTP_ALLOWED_HOSTS=mcp.vault-<vault>:4322` |
 | Identity for the vault web server | Traefik forward-auth `authResponseHeaders` delete any client `X-authentik-username` / `X-authentik-groups` and set Authentik's values; the `vault-identity` middleware strips `X-Mindbase-User`. The vault trusts these headers only behind the proxy secret (LBV2-9) |
 | Vault administration (config writes) | `VAULT_ADMIN_GROUPS=vault-<vault>-admin,lokyy-admins`, checked against the proxy-set groups header |
-| Readers of the company vault | `MCP_HTTP_READONLY_TOKEN` on `vault-firma`: 12 read tools, no `internal`/`pii` pages, enforced inside the vault (fail closed). MetaMCP's own tool deactivation is only a second layer |
+| Readers of the company vault | `MCP_HTTP_READONLY_TOKEN` on `vault-firma`: 13 read tools (incl. rate-limited `ask_wiki`), no `internal`/`pii` pages, enforced inside the vault (fail closed). MetaMCP's own tool deactivation is only a second layer |
 | MCP clients (AI tools) | One MetaMCP endpoint per user, API key only (no OAuth, no key in the query string). Traefik routes only `/metamcp/<endpoint>/mcp` |
 | MetaMCP accounts | `metamcp-init` creates the admin and closes self-registration (open by default in MetaMCP 2.4.22) |
 
@@ -78,7 +78,7 @@ Users removed from the file lose their account, endpoint and key. `metamcp/provi
 
 Why one MetaMCP account per user: MetaMCP 2.4.22 only checks that an API key and an endpoint have the same owner. With admin-owned endpoints and keys, anna's key would open ben's endpoint, and any key opens a public endpoint.
 
-Second layer for readers: MetaMCP's tool deactivation is a denylist that fails open (unknown mapping, unparsable name, lookup error: allowed), and MetaMCP deletes tools a server no longer lists, so write tools cannot be deactivated in advance. The real boundary is the read-only token: the vault exposes 12 read tools and answers `Tool not available` to everything else. Provisioning adds a tripwire: it lists each reader's tools through the endpoint and, if the company server shows any tool outside the read allowlist, marks it INACTIVE in MetaMCP and exits with an error.
+Second layer for readers: MetaMCP's tool deactivation is a denylist that fails open (unknown mapping, unparsable name, lookup error: allowed), and MetaMCP deletes tools a server no longer lists, so write tools cannot be deactivated in advance. The real boundary is the read-only token: the vault exposes 13 read tools and answers `Tool not available` to everything else. Provisioning adds a tripwire: it lists each reader's tools through the endpoint and, if the company server shows any tool outside the read allowlist, marks it INACTIVE in MetaMCP and exits with an error.
 
 ## LLM via EUrouter (LBV2-5)
 
@@ -113,7 +113,7 @@ The embedding model does not work in the image: `@xenova/transformers` tries to 
 3. Header forgery: forged `X-authentik-username` is denied; a client-supplied `X-Vault-Proxy-Secret` is overwritten; the proxy secret alone is not a login.
    Identity headers as the vault receives them are checked with a test-only `traefik/whoami` behind anna's router chain (`tests/echo.override.yml`, started and removed by the test): client `X-authentik-username` (any case, duplicated, underscore variant) and `X-authentik-groups` are replaced by Authentik's values, `X-Mindbase-User` is stripped, forged headers without a session get the login redirect.
 4. Direct container access: MetaMCP gets `403` on a vault web port and `401` on MCP without a token; tokens do not work across vaults.
-5. Company vault read-only profile: 12 tools, `create_note` rejected, session bound to the read-only token, full token still sees all 50 tools.
+5. Company vault read-only profile: 13 tools, `create_note` rejected, session bound to the read-only token, full token still sees all 50 tools.
 6. Lateral movement from a vault (e.g. SSRF): other vaults, Authentik and databases unreachable by name; MetaMCP reachable but authenticated, and a signup attempt creates no account; internet (EUrouter) reachable.
 7. Network topology, independent of DNS: each `web-<vault>` / `mcp-<vault>` network has exactly the expected two members, each vault joins exactly its three networks, egress has inter-container traffic disabled, and every other vault is unreachable on every one of its IPs and ports.
 8. Only Traefik publishes a port, bound to `127.0.0.1`.
@@ -122,10 +122,10 @@ The embedding model does not work in the image: `@xenova/transformers` tries to 
 
 0. Provisioning is idempotent (object counts and keys unchanged on re-run), output file mode 600 and gitignored, all objects private, provisioned accounts keep no login.
 1. No key or invented key: `401`; anna's key on ben's endpoint (header, Bearer): `403`; query-string keys disabled; only `/metamcp/<endpoint>/mcp` is routed.
-2. anna sees `anna-vault` (50 tools) and `anna-firma` with exactly the 12 read tools; ben sees `ben-vault` and `ben-firma` (50); nobody sees another user's servers.
+2. anna sees `anna-vault` (50 tools) and `anna-firma` with exactly the 13 read tools; ben sees `ben-vault` and `ben-firma` (50); nobody sees another user's servers.
 3. anna calling company write tools under 15 name variants (own prefix, ben's prefix, unprefixed, wrong case, extra underscores, nested prefixes, other tools) is rejected and nothing is written; writing to her own vault works.
 4. ben writes to the company vault.
-5. Fail-open cases: the reader's company server stores the read-only token, never the full one; with all MetaMCP tool mappings deleted, and with an unparsable name, the write is still rejected; replaying all 38 non-read tools with anna-firma's stored credential directly against the vault is rejected 38/38.
+5. Fail-open cases: the reader's company server stores the read-only token, never the full one; with all MetaMCP tool mappings deleted, and with an unparsable name, the write is still rejected; replaying all 37 non-read tools with anna-firma's stored credential directly against the vault is rejected 37/37.
 6. Key rotation and user removal: old key `401` also on an open session, removed user's key `401` everywhere, a re-added user gets a new working key.
 
 ## Known limitations

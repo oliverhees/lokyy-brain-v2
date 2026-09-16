@@ -114,7 +114,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-anna:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_ANNA:?set in .env}
       VAULT_ADMIN_GROUPS: vault-anna-admin,lokyy-admins
-    volumes: [vault-anna:/data]
+    volumes: [vault-anna:/data, models:/models]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-anna
@@ -142,7 +142,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-ben:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_BEN:?set in .env}
       VAULT_ADMIN_GROUPS: vault-ben-admin,lokyy-admins
-    volumes: [vault-ben:/data]
+    volumes: [vault-ben:/data, models:/models]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-ben
@@ -171,7 +171,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-firma:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_FIRMA:?set in .env}
       VAULT_ADMIN_GROUPS: vault-firma-admin,lokyy-admins
-    volumes: [vault-firma:/data]
+    volumes: [vault-firma:/data, models:/models]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-firma
@@ -314,6 +314,8 @@ networks:
 
 volumes:
   authentik-db:
+  # Shared embedding model cache (BGE-M3), read and written by every vault
+  models:
   metamcp-db:
   vault-anna:
   vault-ben:

@@ -113,7 +113,7 @@ ro_sid=$(grep -i '^mcp-session-id:' <<<"$ro_init" | awk '{print $2}' | tr -d '\r
 expect "firma read-only token opens a session" "$([[ -n "$ro_sid" ]] && echo yes || echo no)" "yes"
 mcp_post "$MCP_READONLY_TOKEN_FIRMA" '{"jsonrpc":"2.0","method":"notifications/initialized"}' "$ro_sid" >/dev/null
 ro_tools=$(mcp_post "$MCP_READONLY_TOKEN_FIRMA" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' "$ro_sid" | grep -o '"name":"[a-z_]*"' | sort -u | wc -l)
-expect "firma read-only tools/list has exactly 12 tools" "$ro_tools" "12"
+expect "firma read-only tools/list has exactly 13 tools" "$ro_tools" "13"
 ro_write=$(mcp_post "$MCP_READONLY_TOKEN_FIRMA" '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_note","arguments":{"title":"reader-attack"}}}' "$ro_sid" | grep -o 'Tool not available' | head -1)
 expect "firma read-only create_note rejected" "$ro_write" "Tool not available"
 expect "firma read-only session refuses full token (403)" \
