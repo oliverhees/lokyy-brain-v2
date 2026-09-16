@@ -57,6 +57,8 @@ import { SRSExtractor } from './lib/srs-worker';
 import { EmbeddingIndexer } from './lib/embedding-indexer';
 import { SynthesisWorker } from './lib/synthesis-worker';
 import { startMdns } from './lib/mdns';
+import { captureGate, healthPayload, shouldStartCaptureWorker, shouldStartMdns } from './lib/capture-gate';
+import { assertTrustedHeaderConfig, requireConfigAdmin } from './lib/proxy-identity';
 
 const PORT = parseInt(process.env['PORT'] ?? '4321', 10);
 
@@ -96,6 +98,8 @@ function installSearchIndexCrashGuard(dataDir: string): void {
 }
 
 async function main() {
+  // Refuse to start when a trusted proxy header is configured to a client-controlled name.
+  assertTrustedHeaderConfig(process.env);
   const dataDir = await resolveDataDirAsync();
 
   const layoutAudit = await auditProjectLayouts(dataDir);
@@ -140,6 +144,12 @@ async function main() {
   app.use(proxySecretGuard(readProxySecret(process.env)));
   app.use(express.json({ limit: '80mb' }));
 
+  // Guarded mode: server configuration changes need a VAULT_ADMIN_GROUPS member (fail closed).
+  app.use('/api/config', requireConfigAdmin(process.env));
+  app.use('/api/server', requireConfigAdmin(process.env));
+  // Google auth/url, auth/start, auth/callback, auth/disconnect and set-sync-folder are
+  // admin-gated inside googleRoutes (with the OAuth state bound to the initiator).
+
   // API routes
   app.use('/api/ingest', ingestRoutes(ctx));
   app.use('/api/compile', compileRoutes(ctx));
@@ -159,8 +169,9 @@ async function main() {
   app.use('/api/obsidian', obsidianRoutes(ctx));
   app.use('/api/agent-history', agentHistoryRoutes(ctx));
   app.use('/api/semantic-search', semanticSearchRoutes(ctx));
-  app.use('/api/capture', captureRoutes(ctx, ctx.devices, ctx.inbox));
-  app.use('/api/devices', devicesRoutes(ctx.devices));
+  // MINDBASE_DISABLE_CAPTURE=1 → capture + device pairing answer 404 (inbox stays: RSS uses it).
+  app.use('/api/capture', captureGate(process.env), captureRoutes(ctx, ctx.devices, ctx.inbox));
+  app.use('/api/devices', captureGate(process.env), devicesRoutes(ctx.devices));
   app.use('/api/inbox', inboxRoutes(ctx.inbox, captureWorker));
   app.use('/api/brief', briefRoutes(ctx, briefScheduler));
   app.use('/api/feeds', feedsRoutes(ctx, ctx.feeds, rssWorker));
@@ -184,11 +195,11 @@ async function main() {
   app.use('/api/project/schema', projectSchemaRoutes(ctx));
   app.use('/api/project/suggestions', projectSuggestionsRoutes(ctx));
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, dataDir: ctx.dataDir });
+    res.json(healthPayload(process.env));
   });
 
-  // Start background capture worker after all routes are wired.
-  captureWorker.start();
+  // Start background capture worker after all routes are wired (not when capture is disabled).
+  if (shouldStartCaptureWorker(process.env)) captureWorker.start();
 
   // Start brief scheduler (will no-op if not configured).
   briefScheduler.start();
@@ -236,7 +247,7 @@ async function main() {
     console.log(`MindBase server running at http://localhost:${PORT}`);
     console.log(`Data directory: ${ctx.dataDir}`);
 
-    if (process.env['MINDBASE_MDNS'] !== 'off') {
+    if (shouldStartMdns(process.env)) {
       try {
         startMdns(PORT);
         console.log(`[mdns] advertising on _mindbase._tcp local`);

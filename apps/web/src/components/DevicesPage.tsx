@@ -5,6 +5,8 @@ import { apiGet, apiDelete } from '../lib/api';
 
 export function DevicesPage({ onBack }: { onBack: () => void }) {
   const [devices, setDevices] = useState<Device[]>([]);
+  // null = still checking /api/health; false = MINDBASE_DISABLE_CAPTURE on the server.
+  const [captureEnabled, setCaptureEnabled] = useState<boolean | null>(null);
 
   async function load() {
     try {
@@ -14,10 +16,35 @@ export function DevicesPage({ onBack }: { onBack: () => void }) {
   }
 
   useEffect(() => {
+    let cancelled = false;
+    apiGet<{ features?: { capture?: boolean } }>('/health')
+      .then((h) => { if (!cancelled) setCaptureEnabled(h.features?.capture !== false); })
+      .catch(() => { if (!cancelled) setCaptureEnabled(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (captureEnabled !== true) return;
     void load();
     const t = setInterval(() => void load(), 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [captureEnabled]);
+
+  if (captureEnabled !== true) {
+    return (
+      <div className="flex flex-col h-full" style={{ background: 'var(--bg-sidebar)' }}>
+        <div className="px-4 py-3 flex items-center gap-3" style={{ borderBottom: '1px solid var(--border)' }}>
+          <button onClick={onBack} className="text-sm font-medium" style={{ color: 'var(--accent)' }}>←</button>
+          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Connected Devices</div>
+        </div>
+        {captureEnabled === false && (
+          <div className="p-4 text-sm" role="status" data-testid="capture-disabled" style={{ color: 'var(--text-mid)' }}>
+            Device pairing and capture are disabled on this server.
+          </div>
+        )}
+      </div>
+    );
+  }
 
   async function revoke(id: string) {
     if (!confirm('Revoke this device? It will need to pair again.')) return;
