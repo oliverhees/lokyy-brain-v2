@@ -8,3 +8,8 @@ apps/android
 .env.*
 !.env.example
 .pnpm-store
+.claude
+website
+docs
+coverage
+test-results

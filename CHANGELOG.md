@@ -3,8 +3,10 @@
 ## Unreleased — Lokyy Brain v2 fork
 
 ### Added
-- MCP over Streamable HTTP (`apps/mcp/dist/http.js`) with bearer token, session limits and Host allow-list; optional read-only token profile with a fail-closed allowlist of 12 tools and a reader view that hides `internal`/`pii` pages. See `docs/self-hosting-mcp-http.md`.
+- MCP over Streamable HTTP (`apps/mcp/dist/http.js`) with bearer token, session limits and Host allow-list; optional read-only token profile with a fail-closed allowlist of 13 tools and a reader view that hides `internal`/`pii` pages. See `docs/self-hosting-mcp-http.md`.
+- Readers may use `ask_wiki` (LBV2-18): retrieval runs only through the reader view, so only visible root-wiki pages are sent to the configured LLM provider; provider errors are generic; nothing is written. Only provider requests count against the rate limit: calls that never reach the provider (invalid input, unsafe slug, no visible page) are free; requests the provider answers with an error (e.g. HTTP 500) consume budget. Rate limited per read-only session (`MCP_HTTP_READONLY_LLM_RATE`, default 20) and for all read-only sessions together (`MCP_HTTP_READONLY_LLM_RATE_TOTAL`, default 60) per `MCP_HTTP_READONLY_LLM_WINDOW_MS` (default 10 min).
 - Source-built vault Docker image (`deploy/Dockerfile`).
+- Slim vault image (LBV2-6): multi-stage build with production-only dependencies and a compiled web server (`deploy/build-server.mjs`, no `tsx` at runtime). Image disk usage 1.82 GB -> 800 MB. Embedding models are cached in `/models` (mount a volume to keep them); `MINDBASE_PLUGIN_ROOT` is set in the image. See `docs/self-hosting-mcp-http.md#image-contents-and-size`.
 - Web server proxy shared-secret guard (`VAULT_PROXY_SECRET`, header `X-Vault-Proxy-Secret`); required by the Docker image (`VAULT_REQUIRE_PROXY_SECRET=1`). Unset outside the image = previous behaviour.
 
 - Trusted user attribution behind the proxy: with `VAULT_PROXY_SECRET` set, the contributor username comes only from the proxy identity header (`VAULT_IDENTITY_HEADER`, default `x-authentik-username`); a client `X-Mindbase-User` is ignored; a missing identity answers 401 on attributed routes; the name `unknown` is reserved.
@@ -12,11 +14,16 @@
 - `MINDBASE_DISABLE_CAPTURE=1`: `/api/capture` and `/api/devices` return 404, the capture worker and mDNS do not start, `/api/health` reports `features.capture`, and the Devices page shows a disabled notice.
 
 ### Changed — may affect existing (stdio / single-user) setups
-- **Slugs are validated for every MCP tool** (`slug`, `slugs`, `source_slug`, `target_slug`, `root`): a leading `/`, backslash, NUL, or a `.`/`..` path segment is rejected with `Invalid input: unsafe slug`. Previously e.g. `read_wiki_page {slug: "/flip"}` resolved to the page.
+- **Slugs are validated for every MCP tool** (`slug`, `slugs`, `source_slug`, `target_slug`, `root`, and since LBV2-18 `context_pages`, `raw_id`): a leading `/`, backslash, NUL, or a `.`/`..` path segment is rejected with `Invalid input: unsafe slug`. Previously e.g. `read_wiki_page {slug: "/flip"}` resolved to the page.
 - **Project ids** must be directory names (`[A-Za-z0-9][A-Za-z0-9_-]{0,127}`), also `currentProjectId` in `config.json`.
 - **File store paths** that would leave the data directory are refused; leading slashes stay relative to the data directory.
 - **Web API**: `POST /api/tree/research` accepts only plain slugs (`[a-z0-9-]`); an invalid `X-Mindbase-User` header returns 400; contributor usernames must be letters, digits, `_`, `-`, `.` (an OS username with `@` or spaces now fails for quick capture / contributor files); trash restore/delete reject ids not in the generated format and error messages no longer include ids or paths.
 - `mindbase_ingest_file` no longer accepts local file paths over the HTTP transport (stdio unchanged).
+- **`ask_wiki` for all profiles (LBV2-18):**
+  - `pages_read` now means "pages actually read and sent as context". Full clients previously also got candidate slugs that could not be read (missing pages, graph neighbours).
+  - `question` is limited to 2000 characters and `context_pages` to 20 entries (`Invalid input` otherwise); page bodies are cut at 8000 characters and the context block at 40000 characters.
+  - Slugs are also looked up in `wiki/concepts` (previously only `wiki/notes`, so concept pages were never used as context).
+  - Unexpected failures return `ask_wiki failed` without detail; the detail goes to the server log.
 
 - **`GET /api/config` masks secrets**: `apiKey`, `braveApiKey` and `dailyBrief.smtp.pass` are returned as `********` (plus `hasApiKey`), `googleTokens` is omitted. `PUT /api/config` keeps a stored secret when it receives the mask or no value. Scripts that read the key from this endpoint no longer get it. Credentials in `baseUrl` are masked too.
 - **Changing provider or `baseUrl` (or the SMTP host) requires re-entering the key**: otherwise `PUT /api/config` and `POST /api/config/test` answer 400, so a kept key can no longer be sent to a new endpoint.
