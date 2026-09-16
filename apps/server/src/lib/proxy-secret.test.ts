@@ -62,6 +62,16 @@ describe('readProxySecret', () => {
     expect(() => readProxySecret({ VAULT_PROXY_SECRET: 'short' })).toThrow(/at least/);
   });
 
+  it('fails closed when VAULT_REQUIRE_PROXY_SECRET is set but the secret is missing', () => {
+    expect(() => readProxySecret({ VAULT_REQUIRE_PROXY_SECRET: '1' })).toThrow(/required/);
+    expect(() => readProxySecret({ VAULT_REQUIRE_PROXY_SECRET: '1', VAULT_PROXY_SECRET: '' })).toThrow(/required/);
+  });
+
+  it('accepts surrounding whitespace the same way Node trims header values', async () => {
+    const res = await request(appWith(SECRET)).get('/api/config').set(PROXY_SECRET_HEADER, ` ${SECRET} `);
+    expect(res.status).toBe(200);
+  });
+
   it('returns a valid secret', () => {
     expect(readProxySecret({ VAULT_PROXY_SECRET: SECRET })).toBe(SECRET);
   });

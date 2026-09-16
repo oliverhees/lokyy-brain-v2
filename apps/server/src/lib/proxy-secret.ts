@@ -9,10 +9,19 @@ import type { RequestHandler } from 'express';
 export const PROXY_SECRET_HEADER = 'x-vault-proxy-secret';
 export const MIN_PROXY_SECRET_LENGTH = 32;
 
-/** Reads VAULT_PROXY_SECRET; undefined when unset, throws when too short. */
+/**
+ * Reads VAULT_PROXY_SECRET; undefined when unset, throws when too short.
+ * With VAULT_REQUIRE_PROXY_SECRET set (the self-hosted image does this), a
+ * missing secret aborts startup instead of silently disabling the guard.
+ */
 export function readProxySecret(env: NodeJS.ProcessEnv): string | undefined {
   const secret = env['VAULT_PROXY_SECRET'];
-  if (!secret) return undefined;
+  if (!secret) {
+    if (env['VAULT_REQUIRE_PROXY_SECRET']) {
+      throw new Error('VAULT_PROXY_SECRET is required (VAULT_REQUIRE_PROXY_SECRET is set)');
+    }
+    return undefined;
+  }
   if (secret.length < MIN_PROXY_SECRET_LENGTH) {
     throw new Error(`VAULT_PROXY_SECRET must be at least ${MIN_PROXY_SECRET_LENGTH} characters`);
   }
