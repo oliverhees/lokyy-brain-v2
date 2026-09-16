@@ -8,7 +8,7 @@
 - Web server proxy shared-secret guard (`VAULT_PROXY_SECRET`, header `X-Vault-Proxy-Secret`); required by the Docker image (`VAULT_REQUIRE_PROXY_SECRET=1`). Unset outside the image = previous behaviour.
 
 - Trusted user attribution behind the proxy: with `VAULT_PROXY_SECRET` set, the contributor username comes only from the proxy identity header (`VAULT_IDENTITY_HEADER`, default `x-authentik-username`); a client `X-Mindbase-User` is ignored; a missing identity answers 401 on attributed routes; the name `unknown` is reserved.
-- Admin groups for configuration changes in guarded mode: `VAULT_ADMIN_GROUPS` (fail closed when unset) matched against `VAULT_GROUPS_HEADER` (default `x-authentik-groups`, split on `|` only; a duplicated header grants no groups). Applies to non-GET `/api/config` and `/api/server` and to the Google OAuth callback, disconnect and sync-folder routes. Startup is refused if a trusted header is set to a client-controlled or reserved name.
+- Admin groups for configuration changes in guarded mode: `VAULT_ADMIN_GROUPS` (fail closed when unset) matched against `VAULT_GROUPS_HEADER` (default `x-authentik-groups`, split on `|` only; a duplicated header grants no groups). Applies to non-GET `/api/config` and `/api/server` and to the Google routes `auth/url`, `auth/start`, `auth/callback`, `auth/disconnect` and `set-sync-folder`. Startup is refused if a trusted header is set to a client-controlled or reserved name.
 - `MINDBASE_DISABLE_CAPTURE=1`: `/api/capture` and `/api/devices` return 404, the capture worker and mDNS do not start, `/api/health` reports `features.capture`, and the Devices page shows a disabled notice.
 
 ### Changed — may affect existing (stdio / single-user) setups
@@ -23,6 +23,7 @@
 - **`PUT /api/config` merges** onto the stored config instead of replacing it (partial saves no longer drop `dailyBrief`, `rss`, `srs`, Google sync settings); client-sent `googleTokens` are ignored.
 - **Google Drive OAuth** uses a single-use `state` and PKCE (S256), bound to the initiating identity and an HttpOnly browser cookie; a callback without a matching `state` answers 400. In guarded mode every auth step (url, start, callback) is admin-only. At most 3 pending states per identity.
 - The SMTP password is kept only while SMTP host, port and `secure` are unchanged; non-object `dailyBrief`/`rss`/`srs` values in `PUT /api/config` are ignored.
+- **Switching to a keyless provider (Ollama) without a key clears the stored cloud API key** (the chat model switch now sends only `provider` and `model`); enter the cloud key again when switching back. A new secret that contains `********` is rejected with 400. The web UI shows the server's error message for failed saves and connection tests.
 - `POST /api/config/test` returns a generic error message (details in the server log); `GET /api/health` no longer returns `dataDir`.
 - **OS username fallback is sanitized**: an OS account like `oliver@corp` is attributed as `oliver_corp` instead of failing with 500.
 
