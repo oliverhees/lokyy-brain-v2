@@ -64,7 +64,7 @@ umask 077
 /opt/lokyy/lokyy-brain-v2/deploy/coolify/gen-env.sh lokyy.example.de anna ben carl ops@example.de /opt/lokyy/lokyy-brain-v2 > /root/lokyy.env
 ```
 
-Usernames: **plain ASCII**, `^[a-z][a-z0-9-]*$`, no `@`, not `firma`/`auth`/`mcp` (the vault rejects `@` identities; provisioning and hostnames use the same name). Store `/root/lokyy.env` (mode 600) in the password manager as well; it is also the input for the scripts in sections 8–11.
+Usernames: **plain ASCII** (`a-z`, `0-9`, `-`), 2–31 characters, starting with a letter, no `--`, no trailing `-`, no `@`, no umlauts; reserved (any case): `unknown`, `firma`, `auth`, `mcp`. Same rule as provisioning; `gen-env.sh` enforces it and also validates domain, e-mail and assets path. Store `/root/lokyy.env` (mode 600) in the password manager as well; it is also the input for the scripts in sections 8–11.
 
 Set `COOLIFY_PROXY_IP` (mandatory) to the IP of the coolify-proxy container on the `coolify` network. The inner Traefik trusts `X-Forwarded-*` only from that single address (`/32`):
 
@@ -138,7 +138,7 @@ Right after the first start the vault routes answer `404` until Authentik has ap
 
 ## 7. Authentik: admin, beta users, groups
 
-General procedure: [`deploy/stack/README.md` → Add a user](../deploy/stack/README.md#add-a-user). Coolify differences: users get a **slot** (`u1`…`u3`) instead of an own vault service, access is the group `vault-u<n>-access` (no per-user blueprint binding), URLs are `https://<user>.vault.<domain>` instead of `http://<user>.vault.localhost:18080`, and a new slot user needs `VAULT_U<n>_USER` set in Coolify in `/root/lokyy.env` plus a redeploy (section 5)
+General procedure: [`deploy/stack/README.md` → Add a user](../deploy/stack/README.md#add-a-user). Differences on this server: each user gets a **slot** (`u1`…`u3`) instead of an own vault service; web access comes from membership in the group `vault-u<n>-access` (no per-user blueprint binding); URLs are `https://<user>.vault.<domain>` instead of `http://<user>.vault.localhost:18080`. For a new slot user, set `VAULT_U<n>_USER` in `/root/lokyy.env` and redeploy (section 5).
 
 1. `https://auth.<domain>/if/admin/` → login `akadmin` / `AUTHENTIK_ADMIN_PASS`. Set up MFA (TOTP/WebAuthn) for `akadmin` immediately.
 2. Directory → Users → Create for each beta user. **Username exactly as `VAULT_U<n>_USER`** (plain ASCII, no `@`), real e-mail. Send a recovery link instead of setting a password.
@@ -274,7 +274,7 @@ Container DNS uses Docker's embedded resolver inside the container namespace, so
 
 ## 16. Backup
 
-Named volumes (Coolify prefixes them with the resource UUID; list with `docker volume ls | grep -E 'vault-|authentik-db|metamcp-db'`):
+Named volumes are prefixed with the compose project name: with the default `-p lokyy` they are `lokyy_vault-u1`, `lokyy_authentik-db`, … (only a Coolify Raw Compose resource uses its UUID as prefix). List: `docker volume ls | grep -E '^local +lokyy_'`.
 
 | Volume | Content | Note |
 |---|---|---|
@@ -289,7 +289,7 @@ Named volumes (Coolify prefixes them with the resource UUID; list with `docker v
 docker exec <authentik-db> pg_dump -U authentik authentik | gzip > authentik-$(date +%F).sql.gz
 docker exec <metamcp-db> pg_dump -U metamcp metamcp | gzip | age -r <recipient> > metamcp-$(date +%F).sql.gz.age
 # vault data (stop the vault briefly for a consistent copy)
-docker stop <vault-u1> && docker run --rm -v <uuid>_vault-u1:/v:ro -v /backup:/b alpine tar czf /b/vault-u1-$(date +%F).tgz -C /v . && docker start <vault-u1>
+docker stop <vault-u1> && docker run --rm -v lokyy_vault-u1:/v:ro -v /backup:/b alpine tar czf /b/vault-u1-$(date +%F).tgz -C /v . && docker start <vault-u1>
 ```
 
 Keep backups encrypted and off the server (e.g. restic to a storage box); also back up `/root/lokyy.env` and `deploy/stack/.env` to the password manager. Test one restore before the beta starts.

@@ -36,4 +36,17 @@ check "metamcp outpost router pins forwarded headers" 'grep -qx "traefik.http.ro
 check "metamcp not on any vault network" '! q ".services.metamcp.networks | keys[]" | grep -qE "^(web|mcp)-(u[0-9]+|firma)$"'
 
 check "gen-env rejects duplicate usernames" '! "$dir/gen-env.sh" x.test anna anna carl e@x.test >/dev/null 2>&1'
+# Edge cases run under a UTF-8 locale on purpose: [a-z] must not match non-ASCII letters there.
+gen() { LC_ALL=C.UTF-8 LANG=C.UTF-8 "$dir/gen-env.sh" "$@" >/dev/null 2>&1; }
+for bad in unknown UNKNOWN Unknown änna a a--b -ab ab- 1ab abcdefghijklmnopqrstuvwxyzabcdef firma MCP 'an na' 'a@b'; do
+  check "gen-env rejects username '$bad'" '! gen x.test "$bad" ben carl e@x.test'
+done
+check "gen-env rejects non-ASCII under de_DE.UTF-8 and en_US.UTF-8" '! LC_ALL=de_DE.UTF-8 "$dir/gen-env.sh" x.test änna ben carl e@x.test >/dev/null 2>&1 && ! LC_ALL=en_US.UTF-8 "$dir/gen-env.sh" x.test änna ben carl e@x.test >/dev/null 2>&1'
+check "gen-env accepts 31-char username" 'gen x.test abcdefghijklmnopqrstuvwxyzabcde ben carl e@x.test'
+check "gen-env accepts a-b and ab" 'gen x.test a-b ab carl e@x.test'
+for bad in 'd.test;rm' nodot 'D.TEST' '.x.test' 'x..test' 'x.test.' ''; do
+  check "gen-env rejects domain '$bad'" '! gen "$bad" anna ben carl e@x.test'
+done
+check "gen-env rejects bad e-mail" '! gen x.test anna ben carl "e@x.test;id"'
+check "gen-env rejects relative assets dir" '! gen x.test anna ben carl e@x.test relative/dir'
 exit $fail
