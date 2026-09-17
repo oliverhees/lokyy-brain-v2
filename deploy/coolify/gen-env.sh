@@ -16,6 +16,10 @@ die() { echo "$1" >&2; exit 2; }
 # Domain: lower-case ASCII labels separated by single dots, at least one dot
 [[ $domain =~ ^[a-z0-9.-]+$ && $domain == *.* && $domain != .* && $domain != *. && $domain != *..* ]] \
   || die "domain '$domain' must be lower-case ASCII (a-z 0-9 . -) with at least one dot"
+IFS=. read -ra labels <<<"$domain"
+for l in "${labels[@]}"; do
+  [[ $l =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || die "domain '$domain': label '$l' must not start or end with '-'"
+done
 [[ $email =~ ^[A-Za-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]+$ ]] || die "invalid admin e-mail '$email'"
 [[ $assets =~ ^/[A-Za-z0-9._/-]+$ ]] || die "assets dir must be an absolute path without spaces or special characters"
 

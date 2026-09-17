@@ -44,7 +44,8 @@ done
 check "gen-env rejects non-ASCII under de_DE.UTF-8 and en_US.UTF-8" '! LC_ALL=de_DE.UTF-8 "$dir/gen-env.sh" x.test änna ben carl e@x.test >/dev/null 2>&1 && ! LC_ALL=en_US.UTF-8 "$dir/gen-env.sh" x.test änna ben carl e@x.test >/dev/null 2>&1'
 check "gen-env accepts 31-char username" 'gen x.test abcdefghijklmnopqrstuvwxyzabcde ben carl e@x.test'
 check "gen-env accepts a-b and ab" 'gen x.test a-b ab carl e@x.test'
-for bad in 'd.test;rm' nodot 'D.TEST' '.x.test' 'x..test' 'x.test.' ''; do
+check "gen-env accepts domains x.de and a-b.x.de" 'gen x.de anna ben carl e@x.test && gen a-b.x.de anna ben carl e@x.test'
+for bad in '-x.de' 'x-.de' 'a.-b.de' 'd.test;rm' nodot 'D.TEST' '.x.test' 'x..test' 'x.test.' ''; do
   check "gen-env rejects domain '$bad'" '! gen "$bad" anna ben carl e@x.test'
 done
 check "gen-env rejects bad e-mail" '! gen x.test anna ben carl "e@x.test;id"'
