@@ -1,6 +1,6 @@
 # Beta runbook: one company server on Coolify (LBV2-16)
 
-Scope: one server for one company, at most 15 users; the beta runs 3–5 users plus one company vault. The template is `deploy/coolify/compose.yml`. It is derived from the locally verified stack in `deploy/stack/` (see its README for the full security model and the attack suites). Nothing in this runbook has been run on a real Coolify server yet: steps marked **STAGING CHECK** must be done and recorded on the Plane item before beta users get access.
+Scope: one server for one company, at most 15 users; the beta runs 3–5 users plus one company vault. The template is `deploy/coolify/compose.yml`. It is derived from the locally verified stack in `deploy/stack/` (see its README for the full security model and the attack suites). Default deployment: plain `docker compose` on the host behind coolify-proxy (section 5). Nothing in this runbook has been run on a real server yet: steps marked **STAGING CHECK** must be done and recorded on the Plane item before beta users get access.
 
 ## 0. Differences to `deploy/stack`
 
@@ -10,7 +10,9 @@ Every difference is marked `COOLIFY:` in the compose file.
 |---|---|
 | Inner Traefik (`lokyy-traefik`) publishes no port; it joins the external `coolify` network and carries labels for Coolify's proxy (`https` entrypoint, `letsencrypt` resolver, HTTP→HTTPS redirect) | Coolify's proxy owns ports 80/443 and TLS. Keeping our own Traefik behind it keeps the verified routing model (forward-auth, per-vault networks, proxy secrets, mcp-gate) byte-for-byte; only `lokyy-traefik` touches the shared `coolify` network |
 | Provider constraint on label `lokyy.stack=<LOKYY_STACK_ID>` instead of `com.docker.compose.project` | Coolify sets the compose project name to the resource UUID |
-| `forwardedHeaders.trustedIPs=${COOLIFY_PROXY_CIDR}` on the inner entrypoint | Client IP and `X-Forwarded-Proto` come from coolify-proxy; only trust them from its network |
+| `forwardedHeaders.trustedIPs=${COOLIFY_PROXY_IP}/32` on the inner entrypoint | Client IP comes from coolify-proxy; trust forwarded headers only from that one container, not the whole shared `coolify` network |
+| Per-router `<router>-fwd` headers middleware before `authentik@docker` (vault routers, MetaMCP admin router) sets `X-Forwarded-Host` to the router's own host and `X-Forwarded-Proto=https` | Forward-auth selects the Authentik provider by `X-Forwarded-Host`; a forged value must not pick another vault's provider. The mcp-gate route has no forward-auth (API keys) and needs no pinning |
+| Deployed as plain `docker compose -p lokyy` on the host, not as a Coolify Compose resource | Coolify attaches a resource network to every service of a Compose resource, which would void the per-vault isolation |
 | `ratelimit.sourcecriterion.ipstrategy.depth=1` on the MCP endpoint rate limit | Behind a proxy every request has the proxy as TCP peer; without this all clients would share one bucket |
 | Networks have fixed `name:` values (`lokyy-*`) | `traefik.docker.network` labels must not depend on Coolify's generated project name |
 | Vault slots `u1`, `u2`, `u3` (+ `firma`) instead of `anna`/`ben`; hostname from `VAULT_U<n>_USER` | Service, token, network and group names must be static in compose; only the public hostname carries the user name |
@@ -51,7 +53,7 @@ cd /opt/lokyy && sudo git clone https://github.com/oliverhees/lokyy-brain-v2.git
 cd lokyy-brain-v2 && sudo git checkout <release-tag-or-branch>
 ```
 
-`LOKYY_ASSETS_DIR=/opt/lokyy/lokyy-brain-v2`. The Authentik blueprint, `deploy/stack/models` (prefetch manifest) and `deploy/stack/metamcp/init.sh` are mounted from here. Keep this checkout at the same commit Coolify deploys.
+`LOKYY_ASSETS_DIR=/opt/lokyy/lokyy-brain-v2`. The Authentik blueprint, `deploy/stack/models` (prefetch manifest) and `deploy/stack/metamcp/init.sh` are mounted from here. This checkout is also what section 5 builds and deploys.
 
 ## 4. Environment and secrets
 
@@ -64,31 +66,63 @@ umask 077
 
 Usernames: **plain ASCII**, `^[a-z][a-z0-9-]*$`, no `@`, not `firma`/`auth`/`mcp` (the vault rejects `@` identities; provisioning and hostnames use the same name). Store `/root/lokyy.env` (mode 600) in the password manager as well; it is also the input for the scripts in sections 8–11.
 
-Set `COOLIFY_PROXY_CIDR` to the subnet of the `coolify` network: `docker network inspect coolify -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'`.
+Set `COOLIFY_PROXY_IP` (mandatory) to the IP of the coolify-proxy container on the `coolify` network. The inner Traefik trusts `X-Forwarded-*` only from that single address (`/32`):
+
+```bash
+docker inspect coolify-proxy -f '{{(index .NetworkSettings.Networks "coolify").IPAddress}}'
+```
+
+The IP can change when coolify-proxy is recreated (Coolify upgrade, proxy restart from the UI). After such an event re-check it and, if changed, update the env file and run section 5 again. Headers from any other peer are overwritten by Traefik; `X-Forwarded-Host`/`-Proto` are additionally pinned per router (see section 0 and smoke test 14).
 
 Coolify's magic variables (`SERVICE_PASSWORD_*`, `SERVICE_FQDN_*`) are deliberately not used: rotation and provisioning need known variable names, and the hostnames are routed by `lokyy-traefik`, not by Coolify-generated domains.
 
-## 5. Coolify project
+## 5. Deploy: plain `docker compose` behind coolify-proxy (default)
 
-1. Projects → New → `lokyy-<company>` → environment `production`.
-2. Add resource → Public/Private Repository → `oliverhees/lokyy-brain-v2`, branch/tag as in section 3.
-3. Build pack **Docker Compose**, base directory `/`, compose file `/deploy/coolify/compose.yml`.
-4. Do **not** assign domains to any service in the Coolify UI (routing is done by the labels on `lokyy-traefik`). Leave "Connect to predefined network" **off**.
-5. Environment variables → Developer view → paste `/root/lokyy.env`. Mark all secrets as "locked/secret".
-6. Deploy.
-
-**STAGING CHECK (Coolify network rewrite):** Coolify's compose parser may add its own resource network to every service. That would put all vaults on one shared network and break isolation. After the first deploy:
+Coolify attaches its own resource network to **every** service of a Docker Compose resource. That would put all vaults, MetaMCP and the databases on one shared network and void the isolation model. Therefore the default is: **Coolify only provides the proxy and TLS; the stack runs as a plain compose project on the host.** Do not create a Coolify "Docker Compose" resource from this repository.
 
 ```bash
-for c in $(docker ps --filter label=lokyy.stack=lokyy -q) $(docker ps -q --filter name=vault-connector) ; do
-  docker inspect -f '{{.Name}} {{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$c"; done
+cd /opt/lokyy/lokyy-brain-v2
+docker compose -p lokyy --env-file /root/lokyy.env -f deploy/coolify/compose.yml up -d --build
 ```
 
-Expected: each `vault-*` is on exactly `lokyy-web-<slot>`, `lokyy-mcp-<slot>`, `lokyy-egress`; `metamcp` on `lokyy-edge`, `lokyy-metamcp-internal`, `lokyy-mcp-upstream`; only `lokyy-traefik` on `coolify`. Any extra network (e.g. a UUID-named one) = **stop, do not onboard users**. Fallback: deploy the same compose file with plain `docker compose -p lokyy --env-file /root/lokyy.env -f deploy/coolify/compose.yml up -d --build` on the server (Coolify then only provides the proxy/TLS) and record that decision as an ADR.
+coolify-proxy discovers `lokyy-traefik` through its labels (Docker provider, shared `coolify` network) and requests the certificates. Updates: `git pull` / `git checkout <tag>` in the checkout, then the same command.
+
+Documented alternative: a Coolify **"Docker Compose Empty" / Raw Compose Deployment** resource with this file's content, only if the network verification below passes unchanged. If it shows any extra network, delete that resource and use the default path.
+
+### Mandatory network verification (after every deploy, before any user access)
+
+```bash
+for s in lokyy-traefik authentik-server authentik-worker authentik-db metamcp metamcp-db mcp-gate vault-connector vault-u1 vault-u2 vault-u3 vault-firma; do
+  printf '%s: ' "$s"
+  docker inspect "$(docker compose -p lokyy -f deploy/coolify/compose.yml ps -q "$s")" \
+    -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sort | xargs
+done
+```
+
+Expected output, exactly (any additional network, e.g. a UUID-named one or `coolify` on another service = **stop, do not onboard users**):
+
+```
+lokyy-traefik: coolify lokyy-edge lokyy-web-firma lokyy-web-u1 lokyy-web-u2 lokyy-web-u3
+authentik-server: lokyy-authentik-internal lokyy-edge
+authentik-worker: lokyy-authentik-internal
+authentik-db: lokyy-authentik-internal
+metamcp: lokyy-edge lokyy-mcp-upstream lokyy-metamcp-internal
+metamcp-db: lokyy-metamcp-internal
+mcp-gate: lokyy-edge
+vault-connector: lokyy-mcp-firma lokyy-mcp-u1 lokyy-mcp-u2 lokyy-mcp-u3 lokyy-mcp-upstream
+vault-u1: lokyy-egress lokyy-mcp-u1 lokyy-web-u1
+vault-u2: lokyy-egress lokyy-mcp-u2 lokyy-web-u2
+vault-u3: lokyy-egress lokyy-mcp-u3 lokyy-web-u3
+vault-firma: lokyy-egress lokyy-mcp-firma lokyy-web-firma
+```
+
+Also check that each network has only the expected members, e.g. `docker network inspect lokyy-web-u1 -f '{{range .Containers}}{{.Name}} {{end}}'` → `lokyy-traefik` and `vault-u1` only. Record the output on the Plane item.
+
+Before deploying a changed template, run the static checks locally: `deploy/coolify/tests/config-check.sh` (renders the compose file with random values; asserts no published ports, network membership, pinned forwarded headers, `/32` trust).
 
 ## 6. First start
 
-Order is enforced by `depends_on`: `model-prefetch` downloads and verifies the model (several minutes, fails loudly on checksum mismatch or without internet) → vaults start; `metamcp` healthy → `mcp-gate`, `metamcp-init` (creates the MetaMCP admin and closes self-registration).
+Deploy with the section 5 command. Order is enforced by `depends_on`: `model-prefetch` downloads and verifies the model (several minutes, fails loudly on checksum mismatch or without internet) → vaults start; `metamcp` healthy → `mcp-gate`, `metamcp-init` (creates the MetaMCP admin and closes self-registration).
 
 Checks:
 
@@ -104,7 +138,7 @@ Right after the first start the vault routes answer `404` until Authentik has ap
 
 ## 7. Authentik: admin, beta users, groups
 
-General procedure: [`deploy/stack/README.md` → Add a user](../deploy/stack/README.md#add-a-user). Coolify differences: users get a **slot** (`u1`…`u3`) instead of an own vault service, access is the group `vault-u<n>-access` (no per-user blueprint binding), URLs are `https://<user>.vault.<domain>` instead of `http://<user>.vault.localhost:18080`, and a new slot user needs `VAULT_U<n>_USER` set in Coolify plus a redeploy.
+General procedure: [`deploy/stack/README.md` → Add a user](../deploy/stack/README.md#add-a-user). Coolify differences: users get a **slot** (`u1`…`u3`) instead of an own vault service, access is the group `vault-u<n>-access` (no per-user blueprint binding), URLs are `https://<user>.vault.<domain>` instead of `http://<user>.vault.localhost:18080`, and a new slot user needs `VAULT_U<n>_USER` set in Coolify in `/root/lokyy.env` plus a redeploy (section 5)
 
 1. `https://auth.<domain>/if/admin/` → login `akadmin` / `AUTHENTIK_ADMIN_PASS`. Set up MFA (TOTP/WebAuthn) for `akadmin` immediately.
 2. Directory → Users → Create for each beta user. **Username exactly as `VAULT_U<n>_USER`** (plain ASCII, no `@`), real e-mail. Send a recovery link instead of setting a password.
@@ -132,13 +166,14 @@ The provisioning scripts from `deploy/stack` run `docker compose` in `deploy/sta
 ```bash
 cd /opt/lokyy/lokyy-brain-v2/deploy/stack
 install -m 600 /root/lokyy.env .env                     # gitignored
-export COMPOSE_PROJECT_NAME=<coolify-resource-uuid>     # docker ps --filter name=metamcp --format '{{.Label "com.docker.compose.project"}}'
-export COMPOSE_FILE=/data/coolify/applications/<uuid>/docker-compose.yaml   # Coolify's rendered file
+export COMPOSE_PROJECT_NAME=lokyy
+export COMPOSE_FILE=/opt/lokyy/lokyy-brain-v2/deploy/coolify/compose.yml
 export METAMCP_PUBLIC_BASE=https://mcp.lokyy.example.de
 docker compose ps                                        # must list the Lokyy services
+docker compose exec metamcp true && echo exec-ok
 ```
 
-**STAGING CHECK:** confirm the rendered compose path and that `docker compose exec metamcp true` works with these variables. With the plain-compose fallback use `COMPOSE_PROJECT_NAME=lokyy` and `COMPOSE_FILE=../coolify/compose.yml`.
+(With the Raw Compose alternative, use the project name and rendered file path Coolify shows for the resource.)
 
 ## 9. users.json and MCP provisioning
 
@@ -153,7 +188,7 @@ USERS_FILE=users.beta.json metamcp/provision.sh
 
 ## 10. EUrouter key
 
-In `deploy/stack/.env` (server only), not in Coolify:
+In `deploy/stack/.env` (server only, never in `/root/lokyy.env`):
 
 ```bash
 EUROUTER_MODEL=qwen3.6-27b          # id from https://api.eurouter.ai/api/v1/models
@@ -194,6 +229,7 @@ The user sees two servers: `<user>-vault` (own vault, all tools) and `<user>-fir
 | 11 | `docker ps --format '{{.Names}} {{.Ports}}'` for Lokyy containers | no published host ports |
 | 12 | Host egress (section 14 rule applied): from a vault, `fetch('http://169.254.169.254/')` and `fetch('http://<host-ip>:8000/')` (Coolify UI) | both blocked; `fetch('https://api.eurouter.ai/api/v1/models')` works |
 | 13 | Chat with a text question in a vault (EUrouter key set) | answer; PDF chat: see limitations |
+| 14 | Forged forwarded host, no session: `curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" -H "X-Forwarded-Host: ben.vault.<domain>" https://anna.vault.<domain>/`; logged in as anna, the same request with anna's cookies against `ben` (`-H "X-Forwarded-Host: anna.vault.<domain>" https://ben.vault.<domain>/`) | `302` whose redirect names **anna's** host (first case) / `302` login or `403` (second case), never `200` from the other vault |
 
 ## 13. Sizing and memory (LBV2-20, measured)
 
@@ -231,7 +267,7 @@ Container DNS uses Docker's embedded resolver inside the container namespace, so
 
 ## 15. Rotation
 
-- Access secrets (MCP tokens, read-only token, proxy secrets) after suspected exposure, e.g. of the MetaMCP DB: generate new values for `MCP_TOKEN_*`, `MCP_READONLY_TOKEN_FIRMA`, `PROXY_SECRET_*` (`openssl rand -hex 32`), update them **in Coolify and in `deploy/stack/.env`**, redeploy in Coolify, then `metamcp/provision.sh --rotate-all` and hand out the new keys. MCP clients are down between redeploy and provisioning. (`deploy/stack/rotate-secrets.sh` only edits the local `.env` and restarts via compose; on Coolify the env lives in Coolify, so do the steps by hand.)
+- Access secrets (MCP tokens, read-only token, proxy secrets) after suspected exposure, e.g. of the MetaMCP DB: generate new values for `MCP_TOKEN_*`, `MCP_READONLY_TOKEN_FIRMA`, `PROXY_SECRET_*` (`openssl rand -hex 32`), update them **in `/root/lokyy.env` and `deploy/stack/.env`**, redeploy (section 5 command), then `metamcp/provision.sh --rotate-all` and hand out the new keys. MCP clients are down between redeploy and provisioning. (`deploy/stack/rotate-secrets.sh` edits only `deploy/stack/.env` and uses the local stack's compose file, so do the steps by hand.)
 - One user's API key: `USERS_FILE=users.beta.json metamcp/provision.sh --rotate <user>`.
 - Authentik secret key, DB passwords, `METAMCP_AUTH_SECRET`: separate maintenance window; changing Postgres passwords also requires `ALTER USER` inside the DB.
 - EUrouter keys: revoke at EUrouter, set new key, `llm/configure-eurouter.sh <vault>`.
@@ -260,9 +296,9 @@ Keep backups encrypted and off the server (e.g. restic to a storage box); also b
 
 ## 17. Rollback
 
-1. Coolify → Deployments → redeploy the previous successful deployment (same env). The `:beta` images are rebuilt from that commit; also `git checkout` the matching commit in `/opt/lokyy/lokyy-brain-v2` (blueprint/manifest must match).
+1. `git checkout <previous-tag>` in `/opt/lokyy/lokyy-brain-v2`, then the section 5 deploy command (`:beta` images are rebuilt from that commit; blueprint and manifest match automatically). Run the network verification again.
 2. Data-shape changes are not reversible by redeploy: restore volumes / DB dumps from section 16 (stop the stack first).
-3. Emergency stop (keeps data): Coolify → Stop. Volumes remain.
+3. Emergency stop (keeps data): `docker compose -p lokyy -f deploy/coolify/compose.yml stop`. Volumes remain.
 
 ## 18. Known limitations for the beta
 
@@ -273,4 +309,4 @@ Keep backups encrypted and off the server (e.g. restic to a storage box); also b
 - The stack attack suites are not yet runnable against the server (localhost URLs, demo users); only the manual smoke tests in section 12 apply.
 - Adding a vault slot (u4, u5) is a manual template change: copy a vault block, its `web-`/`mcp-` networks (new subnets), volumes, `vault-connector` networks/aliases/`CONNECTOR_VAULTS`, the `lokyy-traefik` networks and host rules, blueprint group/provider/application/binding/outpost entries, and the env variables.
 - Open hardening items are tracked in **LBV2-24**.
-- Coolify-specific items not verified yet (all marked **STAGING CHECK** above): network rewrite by Coolify's compose parser, rendered compose path for the scripts, Authentik cookie SameSite with the Google callback, groups header reaching the vault, host egress rules surviving restarts, `COOLIFY_PROXY_CIDR` value, coolify-proxy ignoring the inner routers (they use entrypoint `web`, which coolify-proxy does not have — expect "entryPoint web doesn't exist" warnings in its log and confirm no Lokyy host is served without passing `lokyy-traefik`).
+- Items not verified on a real server yet (marked **STAGING CHECK** above, plus the mandatory network verification in section 5): Authentik cookie SameSite with the Google callback, groups header reaching the vault, host egress rules surviving restarts, `COOLIFY_PROXY_IP` stability across proxy restarts, coolify-proxy ignoring the inner routers (they use entrypoint `web`, which coolify-proxy does not have — expect "entryPoint web doesn't exist" warnings in its log and confirm no Lokyy host is served without passing `lokyy-traefik`).
