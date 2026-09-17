@@ -137,7 +137,7 @@ The embedding model does not work in the image: `@xenova/transformers` tries to 
 
 ## Attack tests
 
-`tests/isolation.sh` (107 checks) logs in through the real Authentik flow (`tests/login.sh`) and verifies:
+`tests/isolation.sh` (117 checks) logs in through the real Authentik flow (`tests/login.sh`) and verifies:
 
 1. Anonymous requests are redirected to the login.
 2. Browser isolation: each user reaches only their own vault; readers are denied the company vault web UI; only admins reach MetaMCP.
@@ -149,7 +149,7 @@ The embedding model does not work in the image: `@xenova/transformers` tries to 
 7. Network topology, independent of DNS: each `web-<vault>` / `mcp-<vault>` network has exactly the expected two members, each vault joins exactly its three networks, egress has inter-container traffic disabled, and every other vault is unreachable on every one of its IPs and ports.
 8. Only Traefik publishes a port, bound to `127.0.0.1`.
 
-`tests/metamcp-attacks.sh` (90 checks, all through Traefik with the provisioned keys):
+`tests/metamcp-attacks.sh` (92 checks, all through Traefik with the provisioned keys):
 
 0. Provisioning is idempotent (object counts and keys unchanged on re-run), output file mode 600 and gitignored, all objects private, provisioned accounts keep no login.
 1. No key or invented key: `401`; anna's key on ben's endpoint (header, Bearer): `403`; query-string keys disabled; only `/metamcp/<endpoint>/mcp` is routed.
