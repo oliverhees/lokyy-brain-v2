@@ -57,7 +57,15 @@ describe('SetupWizard local models in guarded mode (LBV2-19)', () => {
     await render();
     const btn = localOption();
     expect(btn.disabled).toBe(true);
-    expect(container.textContent).toContain(LOCAL_MODELS_DISABLED_MESSAGE);
+    // QA a11y: the explanation is a separate, non-dimmed hint linked to the card.
+    const hintId = btn.getAttribute('aria-describedby');
+    expect(hintId).toBeTruthy();
+    const hint = document.getElementById(hintId!);
+    expect(hint?.textContent).toBe(LOCAL_MODELS_DISABLED_MESSAGE);
+    expect(hint?.closest('button')).toBeNull();
+    expect(btn.textContent).not.toContain(LOCAL_MODELS_DISABLED_MESSAGE);
+    // --text-mid is the lightest text token with >= 4.5:1 on the card in both themes.
+    expect(hint?.getAttribute('style')).toContain('var(--text-mid)');
     await act(async () => { btn.click(); });
     expect(container.querySelector('[data-testid="local-setup-step"]')).toBeNull();
     expect(calls.some((c) => c.includes('/ollama/status'))).toBe(false);
@@ -79,11 +87,14 @@ describe('SetupWizard local models in guarded mode (LBV2-19)', () => {
     expect(container.textContent).not.toContain('Checking your machine');
     const error = container.querySelector('[data-testid="local-state-error"]');
     expect(error?.textContent).toContain(LOCAL_MODELS_DISABLED_MESSAGE);
+    expect(error?.getAttribute('role')).toBe('alert');
 
     const back = [...(error?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.includes('Choose a cloud provider'));
     expect(back).toBeDefined();
     await act(async () => { back!.click(); });
     expect(container.querySelector('[data-testid="local-setup-step"]')).toBeNull();
     expect(localOption().disabled).toBe(true);
+    // Focus lands on the provider list heading, not on <body>.
+    expect(document.activeElement).toBe(container.querySelector('[data-testid="provider-heading"]'));
   });
 });
