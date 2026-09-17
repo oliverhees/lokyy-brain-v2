@@ -18,6 +18,8 @@ export class KeyReentryError extends ConfigInputError {
   constructor(what = 'API key') { super(`Re-enter the ${what} when changing provider or endpoint`); }
 }
 
+const ENTER_API_KEY_ERROR = 'No API key is stored for this provider; enter the API key';
+
 /** Providers that never use the LLM API key. Switching to one without a key clears the stored key. */
 const KEYLESS_PROVIDERS: ReadonlySet<string> = new Set(['ollama']);
 
@@ -74,6 +76,17 @@ function normalizeEndpoint(url: string | undefined): string {
   return (url ?? '').trim().replace(/\/+$/, '');
 }
 
+/** OpenAI's own API needs a key; any other base URL for the openai provider is a compatible custom endpoint. */
+function isKeylessCustomEndpoint(provider: string, baseUrl: string | undefined): boolean {
+  const url = normalizeEndpoint(baseUrl);
+  if (provider !== 'openai' || !url) return false;
+  try {
+    return new URL(url).hostname.toLowerCase() !== 'api.openai.com';
+  } catch {
+    return false;
+  }
+}
+
 /** True when the incoming value asks to keep the stored secret (mask or not a string). */
 function wantsStored(incoming: unknown): boolean {
   return typeof incoming !== 'string' || incoming === MASKED_SECRET;
@@ -128,6 +141,18 @@ export function mergeSecrets(incoming: Record<string, unknown>, stored: AtlasCon
     } else {
       merged.apiKey = stored.apiKey ?? '';
     }
+    // The client claims a stored key (mask) that does not exist, e.g. switching back from
+    // ollama to a cloud provider: refuse instead of saving a keyless cloud config (LBV2-14).
+    if (body['apiKey'] === MASKED_SECRET && !merged.apiKey && !KEYLESS_PROVIDERS.has(merged.provider)) {
+      throw new ConfigInputError(ENTER_API_KEY_ERROR);
+    }
+  }
+  // Any switch to a provider that needs a key must end with one (omitted, empty or masked key).
+  // Exception: an OpenAI-compatible custom endpoint (e.g. LM Studio) may run without a key. The key
+  // is then '' — a stored key never reaches it (the mask/omitted branch above refuses that).
+  if (merged.provider !== stored.provider && !merged.apiKey && !KEYLESS_PROVIDERS.has(merged.provider)
+    && !isKeylessCustomEndpoint(merged.provider, merged.baseUrl)) {
+    throw new ConfigInputError(ENTER_API_KEY_ERROR);
   }
 
   if (wantsStored(body['braveApiKey'])) {

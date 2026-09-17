@@ -11,6 +11,9 @@ export { slugify } from './storage/paths';
 export {
   isValidTrashEntryId,
   isValidUsername,
+  sanitizeUsername,
+  resolveContributorUsername,
+  USERNAME_RULES_ERROR,
   isValidIsoDate,
   isSafePathSegment,
   isPlainSlug,
@@ -43,10 +46,25 @@ export type {
   AddressClass,
 } from './net/safe-fetch';
 
+export {
+  LLM_ALLOWED_HOSTS_ENV,
+  LLM_HOST_NOT_ALLOWED_ERROR,
+  LlmHostNotAllowedError,
+  readLlmHostPolicy,
+  isLlmUrlAllowed,
+  assertLlmUrlAllowed,
+  effectiveLlmBaseUrl,
+  guardLlmFetch,
+  isVaultGuarded,
+  logLlmHostPolicy,
+} from './net/llm-host-policy';
+export type { LlmHostPolicy } from './net/llm-host-policy';
+
 /** Regex to detect LLM auto-save markers in responses: [AUTO_SAVE: title] */
 export const AUTO_SAVE_REGEX = /\[AUTO_SAVE:\s*(.+?)\]\s*$/;
 export { createAdapter } from './adapters/registry';
 export type { LLMAdapter, AdapterConfig } from './adapters/types';
+export { readLlmTimeoutMs, DEFAULT_LLM_TIMEOUT_MS, LLM_TIMEOUT_ERROR } from './adapters/timeout';
 export { SearchIndex } from './search/index';
 export type { SearchDoc, SearchResult } from './search/index';
 export { EmbeddingStore } from './search/embedding-store';

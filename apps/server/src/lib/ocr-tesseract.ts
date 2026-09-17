@@ -1,4 +1,5 @@
 import type { OCRAdapter, OCRResult } from '@mindbase/core';
+import { tesseractWorkerOptions } from './tesseract-cache';
 
 /**
  * tesseract.js (WASM) OCR backend.
@@ -34,7 +35,7 @@ export class TesseractWasmAdapter implements OCRAdapter {
 
     if (!this.workerPromise || this.currentLangs !== langs) {
       this.currentLangs = langs;
-      this.workerPromise = createWorker(langs);
+      this.workerPromise = createWorker(langs, undefined, tesseractWorkerOptions());
     }
     const worker = (await this.workerPromise) as Awaited<ReturnType<typeof createWorker>>;
 

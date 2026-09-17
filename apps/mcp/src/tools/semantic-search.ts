@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
-import type { MetaJson } from '@mindbase/core';
+import { guardLlmFetch, type MetaJson } from '@mindbase/core';
 
 const inputSchema = z.object({
   query: z.string().min(1),
@@ -30,7 +30,8 @@ function cosineSim(a: number[], b: number[]): number {
 
 async function getEmbeddings(texts: string[], baseUrl: string, apiKey: string): Promise<number[][]> {
   const url = `${baseUrl.replace(/\/+$/, '')}/v1/embeddings`;
-  const r = await fetch(url, {
+  // Config URL + API key: host allow-list and no off-host redirects (LBV2-19).
+  const r = await guardLlmFetch(fetch)(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ model: 'text-embedding-3-small', input: texts }),

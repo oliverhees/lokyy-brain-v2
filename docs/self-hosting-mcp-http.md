@@ -97,9 +97,11 @@ The server validates every integer variable at startup. A value that is not an i
 | `NODE_ENV` | `production` | Standard Node.js setting. |
 | `MINDBASE_ALLOW_PRIVATE_FETCH` | unset (protection on) | Only the exact value `1` turns off the SSRF address check for URL fetches in both the web server and the MCP server (see [Outbound URL fetches](#outbound-url-fetches-ssrf-protection)). Meant for local single-user setups that ingest from `localhost` or the LAN. Never set it in a multi-tenant or self-hosted container. |
 | `MINDBASE_FETCH_CONCURRENCY` | unset (4) | Maximum concurrent outbound URL fetches per process, integer 1–64. |
+| `MINDBASE_LLM_TIMEOUT_MS` | unset (120000) | Inactivity timeout for LLM provider requests (OpenAI, Anthropic, Ollama), integer 1000–3600000. A request fails with `LLM provider did not respond in time` when the provider sends no response headers, or no further stream data, for this long; answers that keep streaming are not cut off. An invalid value makes the web server and the MCP server (HTTP and stdio) exit with code 1 at startup. |
 | `MINDBASE_PLUGIN_ROOT` | `/app/apps/plugin` | Location of the schema page templates (`templates/schema-templates/`) used by the tree template route. |
 | `VAULT_PROXY_SECRET` | unset — **required** in the image | At least 32 characters and no leading or trailing whitespace, otherwise the web server exits. Every web request must carry header `X-Vault-Proxy-Secret` with this value (constant-time compare), otherwise `403`; the header is stripped before handlers. Not passed to the MCP process. The healthcheck sends it via stdin. Generate with `openssl rand -hex 32`, one per vault. |
 | `VAULT_REQUIRE_PROXY_SECRET` | `1` | When set (any non-empty value), a missing or empty `VAULT_PROXY_SECRET` aborts web server startup instead of disabling the guard. An empty value turns the requirement off. |
+| `VAULT_LLM_ALLOWED_HOSTS` | unset — **set it** in the image | Comma-separated `host` or `host:port` entries (exact match, case-insensitive) that the configured LLM and embeddings endpoint may use, for example `api.eurouter.ai` or `ollama:11434`. A bare host allows only `https` on port 443; plain `http` needs an explicit `host:80`. Enforced in guarded mode (`VAULT_PROXY_SECRET` or `VAULT_REQUIRE_PROXY_SECRET` set) and whenever the variable is set. **Unset or empty in guarded mode = no outbound LLM or embeddings calls at all** (fail closed). Pass it to the web server **and** the MCP process. See [LLM endpoint allow-list](#llm-endpoint-allow-list). |
 
 ### Generating tokens
 
@@ -257,7 +259,7 @@ The server checks each request in this order:
 
 ### Outbound URL fetches (SSRF protection)
 
-Every fetch of a URL that comes from a client, a user, or feed content goes through one helper, `safeFetch` (`packages/core/src/net/safe-fetch.ts`). That covers `mindbase_ingest_file` (URL mode) and `add_rss_feed` in the MCP server, and in the web server `POST /api/feeds`, `POST /api/ingest/text` with a URL, article extraction for captures, the RSS worker (feed and article URLs), and result pages of the research web search. Fixed endpoints from configuration (LLM provider, Ollama, embeddings, Brave API) are not affected.
+Every fetch of a URL that comes from a client, a user, or feed content goes through one helper, `safeFetch` (`packages/core/src/net/safe-fetch.ts`). That covers `mindbase_ingest_file` (URL mode) and `add_rss_feed` in the MCP server, and in the web server `POST /api/feeds`, `POST /api/ingest/text` with a URL, article extraction for captures, the RSS worker (feed and article URLs), and result pages of the research web search. Endpoints from configuration (LLM provider, Ollama, embeddings, Brave API) do not use `safeFetch`; the LLM and embeddings endpoint is restricted by the [LLM endpoint allow-list](#llm-endpoint-allow-list) instead.
 
 - **Schemes.** Only `http` and `https`. Other schemes, also in a redirect, are refused.
 - **Address check.** The host name is resolved and **every** resolved address must be public.
@@ -270,6 +272,37 @@ Every fetch of a URL that comes from a client, a user, or feed content goes thro
 - **Errors.** Clients get one message for every failure: `URL not allowed or unreachable`. Blocked addresses, DNS failures, refused connections, HTTP statuses, timeouts and size limits look the same, so the error cannot be used to map internal names or ports. The detail is written to the server log (`[safe-fetch] <scheme://host/path> <code>: …`, no query string). The same generic text is stored as a feed's `last_error`.
 
 `MINDBASE_ALLOW_PRIVATE_FETCH=1` disables the address check (schemes, redirect rules, limits and generic errors still apply). Use it only for local single-user setups. Code can also exempt specific host names (`trustedHosts` option of `safeFetch`); no current call site uses it, and it must never be filled from client input.
+
+### LLM endpoint allow-list
+
+The LLM base URL (`baseUrl` in the vault config) is set by an admin in the UI or edited in the config file on disk, and every request to it carries the API key. Without a check it could point at an internal address (SSRF from the vault) or at a host that collects the key. `VAULT_LLM_ALLOWED_HOSTS` restricts it (`packages/core/src/net/llm-host-policy.ts`).
+
+- **When enforced.** In guarded mode (`VAULT_PROXY_SECRET` or `VAULT_REQUIRE_PROXY_SECRET` set; the MCP process in the image only sees the latter) and whenever `VAULT_LLM_ALLOWED_HOSTS` is set. Local single-user setups without either variable are unchanged.
+- **Matching.** Comma-separated `host` or `host:port` entries, compared exactly and case-insensitively (a trailing dot is ignored; IPv6 as `::1`, `[::1]` or `[::1]:8080`). No wildcards, no schemes, no paths: `api.eurouter.ai` does not allow `eu.api.eurouter.ai` or `eurouter.ai`.
+- **Ports and schemes.** A bare host allows only `https://host` (port 443), so the API key never travels in plaintext by accident. Plain `http://host` needs an explicit `host:80` entry. `host:443` allows only `https`, `host:80` only `http`; any other listed port (for example `ollama:11434`) allows both. Every other port must be listed as `host:port`: `localhost` does not allow `http://localhost` or `http://localhost:6379`, and `api.eurouter.ai` does not allow `https://api.eurouter.ai:8443`. There is no exception for Ollama: its port `11434` must be listed (`ollama:11434`). Invalid entries (scheme, path, userinfo, port outside 1–65535) are ignored and logged at startup.
+- **Fail closed.** Enforced with an unset or empty list, no LLM or embeddings request leaves the process. The web server and the MCP HTTP server log `[llm-host-policy] VAULT_LLM_ALLOWED_HOSTS is not set: all outbound LLM and embeddings calls are refused` at startup.
+- **Private hosts only when listed.** A listed host may resolve to a private address and may use `http` if its entry allows it (for example a local Ollama container: `VAULT_LLM_ALLOWED_HOSTS=ollama:11434`, `baseUrl` `http://ollama:11434`). An unlisted host is never called, whatever it resolves to. Only `http` and `https` are accepted. The allow-list is by name: DNS for a listed name is trusted, so list only names you control or trust.
+- **Provider defaults count.** An empty `baseUrl` means the provider default (`api.openai.com`, `api.anthropic.com`, `api.deepseek.com`, `localhost:11434` for Ollama); that entry must be listed too.
+- **Config writes.** `PUT /api/config` answers `400 {"ok":false,"error":"LLM endpoint not allowed"}` when the provider or `baseUrl` changes to a destination whose host is not listed; the stored config stays unchanged. Saving other settings is not blocked. `POST /api/config/test` gives the same `400` before any request is made.
+- **Call time (defence in depth).** The OpenAI/DeepSeek, Anthropic and Ollama adapters and semantic search (web server `GET /api/semantic-search`, MCP `semantic_search`) and the voice-capture transcription (Whisper, `api.openai.com`) check host and port again on every request, so an edited config file does not bypass the list. A refused chat shows the error `LLM endpoint not allowed`; the server log names the refused host (`[llm-host-policy] refused request to <host:port>: host or port not allowed by VAULT_LLM_ALLOWED_HOSTS`). MCP `semantic_search` falls back to keyword search.
+- **Redirects.** While enforced, redirects from the LLM endpoint are handled manually: at most 5, and only within the same origin (scheme, host, port). A redirect to any other origin is refused before it is requested, even if the target host is also listed.
+
+- **Ollama onboarding.** In guarded mode `GET /api/system`, `GET /api/ollama/status` and `POST /api/ollama/pull` do not exist (`404`): they would probe and pull on the container's own `localhost` and reveal hardware details. Configure a hosted Ollama through the normal provider settings instead.
+  `GET /api/health` reports this as `features.localModels: false`; the setup wizard then disables the local-model option ("Local models are disabled on this server — choose a cloud provider") and never polls the missing routes.
+- **Startup log without policy.** Outside guarded mode and without the variable, both servers log `[llm-host-policy] LLM host allowlist not configured; all LLM hosts allowed (unguarded mode)`. A redirect loop from an allowed host is refused after 5 hops and logged as `too many redirects`.
+- **Exceptions.** None. No provider, port or local address is allowed implicitly.
+
+Example for EUrouter (OpenAI-compatible): provider `openai`, `baseUrl` `https://api.eurouter.ai/api/v1`, and
+
+```bash
+VAULT_LLM_ALLOWED_HOSTS=api.eurouter.ai
+```
+
+Example for EUrouter plus an Ollama container on the same Docker network (provider `ollama`, `baseUrl` `http://ollama:11434`):
+
+```bash
+VAULT_LLM_ALLOWED_HOSTS=api.eurouter.ai,ollama:11434
+```
 
 ### Container
 
@@ -284,9 +317,11 @@ Every fetch of a URL that comes from a client, a user, or feed content goes thro
 
 Contributor files and quick-capture entries are attributed to a username that becomes a directory under `sources/contributors/`.
 
-When the proxy guard is active (`VAULT_PROXY_SECRET` set), attribution comes only from the identity header that the reverse proxy sets. The header name is `VAULT_IDENTITY_HEADER` (default `x-authentik-username`, compared case-insensitively). A client-sent `X-Mindbase-User` header is ignored in this mode. Configure Traefik's forward-auth middleware with `authResponseHeaders: X-authentik-username` so the proxy overwrites any value the client sends. If the header is missing or empty, every route that needs attribution (all `/api/tree` and `/api/ops` routes, including reads) answers `401 Unauthenticated`, and the server logs a warning at most once per minute with the number of occurrences. A missing header means the proxy is misconfigured, so the failure is deliberately loud. A value that is not a valid username (letters, digits, `_`, `-`, `.`; no `@`, spaces, or `..`) or is the reserved name `unknown` (any case) gets `400 Invalid identity header`. Authentik usernames that are e-mail addresses therefore need a username without `@`.
+When the proxy guard is active (`VAULT_PROXY_SECRET` set), attribution comes only from the identity header that the reverse proxy sets. The header name is `VAULT_IDENTITY_HEADER` (default `x-authentik-username`, compared case-insensitively). A client-sent `X-Mindbase-User` header is ignored in this mode. Configure Traefik's forward-auth middleware with `authResponseHeaders: X-authentik-username` so the proxy overwrites any value the client sends. If the header is missing or empty, every route that needs attribution (all `/api/tree` and `/api/ops` routes, including reads) answers `401 Unauthenticated`, and the server logs a warning at most once per minute with the number of occurrences. A missing header means the proxy is misconfigured, so the failure is deliberately loud. A value that is not a valid username (ASCII letters `A-Z`/`a-z`, digits, `_`, `-`, `.`; at most 64 characters; not starting with `.` or `-`; no `@`, spaces, non-ASCII letters such as `ü`, or `..`) or is the reserved name `unknown` (any case) gets `400 Invalid identity header`. Authentik usernames that are e-mail addresses therefore need a username without `@`.
 
-Without the guard (local, single-user), `X-Mindbase-User` is used as before. If it is absent, the OS username is mapped to a valid name: invalid characters become `_`, leading `.`/`-` are removed, `..` is collapsed, and the result is cut to 64 characters (`oliver@corp` → `oliver_corp`). An invalid explicit header still gets `400`.
+Without the guard (local, single-user), `X-Mindbase-User` is used as before. If it is absent, the OS username is mapped to a valid name: every character outside the ASCII username alphabet becomes `_`, leading `.`/`-` are removed, `..` is collapsed, and the result is cut to 64 characters (`oliver@corp` → `oliver_corp`, `jürgen` → `j_rgen`); a result without any ASCII letter or digit, or `unknown`, becomes `user`. An invalid explicit header (including `unknown`) still gets `400`.
+
+The MCP tool `mindbase_contribute` uses the same username rules. Over the HTTP transport its `user` argument is **required** (the server's OS account says nothing about the remote caller); a missing `user` is an error. Over stdio an omitted `user` falls back to the local OS account, mapped as above. An explicit `user` is never mapped, only validated.
 
 | Variable | Default | Effect |
 |---|---|---|

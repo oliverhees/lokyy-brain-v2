@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,38 +53,39 @@ describe('CardStore — basic CRUD', () => {
 });
 
 describe('CardStore — findDue', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // LBV2-14: the old test sampled `now` BEFORE creating the card; whenever the
+  // clock ticked in between, due_at (= creation time) was 1 ms after `now` and the
+  // card was correctly reported as not yet due (~1 in 3 runs). The clock is pinned.
+  it('a card created after the cutoff is not due at that cutoff', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const cutoff = new Date();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.001Z'));
+    const card = await store.create({ question: 'Q', answer: 'A' });
+    expect((await store.findDue(cutoff)).cards.some(c => c.id === card.id)).toBe(false);
+    expect((await store.findDue(new Date())).cards.some(c => c.id === card.id)).toBe(true);
+  });
+
   it('filters cards by due_at', async () => {
-    // Create a card that is already due (default due_at = now at creation)
-    await store.create({ question: 'Due card', answer: 'A' });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const t0 = new Date('2026-01-01T00:00:00.000Z');
+    vi.setSystemTime(t0);
 
-    const futureDate = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
-
-    // Answer the card with 'good' so it gets rescheduled far in the future
-    const allCards = await store.list();
-    const cardId = allCards[0]!.id;
-    await store.answer(cardId, 'good');
-    await store.answer(cardId, 'good'); // reps=1 → interval=6
-
-    // Now create a card that should be due
-    const now = new Date();
+    const answered = await store.create({ question: 'Answered card', answer: 'A' });
+    await store.answer(answered.id, 'good', t0);
+    await store.answer(answered.id, 'good', t0); // second 'good' -> interval 6 days
     const dueCard = await store.create({ question: 'Still due', answer: 'A' });
 
-    // manually set due date in the past by re-reading after creation (card is due by default)
-    const due = await store.findDue(now);
-    // At least the newly created card should be due
-    expect(due.cards.length).toBeGreaterThanOrEqual(1);
-    expect(due.cards.some(c => c.id === dueCard.id)).toBe(true);
+    const due = await store.findDue(t0);
+    expect(due.cards.map(c => c.id)).toEqual([dueCard.id]);
+    expect(due.total).toBe(1);
 
-    // Future check: with a past cutoff, no cards due
-    const pastNow = new Date(now.getTime() - 10 * 60 * 1000); // 10 minutes ago
-    const duePast = await store.findDue(pastNow);
-    // Newly created card due_at is at creation time, which is < now
-    // but pastNow is before creation - so it depends on timing
-    expect(duePast.total).toBeGreaterThanOrEqual(0);
-
-    // With future date, all unarchived cards should be due
-    const due2 = await store.findDue(futureDate);
-    expect(due2.total).toBeGreaterThanOrEqual(1);
+    expect((await store.findDue(new Date(t0.getTime() - 10 * 60 * 1000))).total).toBe(0);
+    expect((await store.findDue(new Date(t0.getTime() + 10 * 24 * 60 * 60 * 1000))).total).toBe(2);
   });
 
   it('excludes archived cards from due', async () => {
