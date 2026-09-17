@@ -7,8 +7,10 @@ import nodePath from 'node:path';
 const TRASH_ENTRY_ID_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-z0-9]{0,5}$/;
 
 export const USERNAME_MAX_LENGTH = 64;
-/** Unicode letters/digits, `_`, `-`, `.`; must not start with `.` or `-`. */
-const USERNAME_RE = /^[\p{L}\p{N}_][\p{L}\p{N}_.-]*$/u;
+/** ASCII letters/digits, `_`, `-`, `.`; must not start with `.` or `-` (LBV2-14: ASCII only). */
+const USERNAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+/** Names that can never be a contributor (compared case-insensitively). */
+const RESERVED_USERNAME_SET: ReadonlySet<string> = new Set(['unknown']);
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -24,7 +26,10 @@ export function isValidTrashEntryId(id: string): boolean {
 
 /** Contributor usernames name a directory under sources/contributors/. */
 export function isValidUsername(name: string): boolean {
-  return name.length <= USERNAME_MAX_LENGTH && USERNAME_RE.test(name) && !name.includes('..');
+  return name.length <= USERNAME_MAX_LENGTH
+    && USERNAME_RE.test(name)
+    && !name.includes('..')
+    && !RESERVED_USERNAME_SET.has(name.toLowerCase());
 }
 
 /** `YYYY-MM-DD` shape (used for dated directories such as sources/raw/<date>). */

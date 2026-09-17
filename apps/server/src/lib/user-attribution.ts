@@ -47,9 +47,10 @@ function logMissingIdentity(header: string): void {
  * `oliver@corp` or `John Smith`) onto the contributor-username alphabet.
  */
 export function sanitizeUsername(name: string): string {
-  let s = name.normalize('NFC').replace(/[^\p{L}\p{N}_.-]/gu, '_');
+  let s = name.normalize('NFC').replace(/[^A-Za-z0-9_.-]/g, '_');
   s = s.replace(/\.{2,}/g, '.').replace(/^[.-]+/, '').slice(0, USERNAME_MAX_LENGTH);
-  return isValidUsername(s) ? s : FALLBACK_OS_USER;
+  // A name made only of replacement characters (e.g. a non-Latin account) identifies nobody.
+  return /[A-Za-z0-9]/.test(s) && isValidUsername(s) ? s : FALLBACK_OS_USER;
 }
 
 function osFallback(osUsername: () => string): string {

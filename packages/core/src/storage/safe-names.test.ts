@@ -31,13 +31,15 @@ describe('isValidTrashEntryId', () => {
 });
 
 describe('isValidUsername', () => {
-  it.each(['alice', 'Alice_B', 'bob-1', 'j.doe', 'jürgen', 'x'])('accepts %j', (name) => {
+  it.each(['alice', 'Alice_B', 'bob-1', 'j.doe', 'x', '_svc', '007', 'a-b.c_d'])('accepts %j', (name) => {
     expect(isValidUsername(name)).toBe(true);
   });
 
   it.each([
     '', '.', '..', '.hidden', '../../../../tmp', 'a/b', 'a\\b', 'a..b', 'with space',
     'nul\0byte', '-leading', 'x'.repeat(USERNAME_MAX_LENGTH + 1),
+    // LBV2-14 lead decision: ASCII only, `unknown` reserved (any case).
+    'jürgen', 'Øyvind', '名前', 'ａｌｉｃｅ', 'unknown', 'Unknown', 'UNKNOWN',
   ])('rejects %j', (name) => {
     expect(isValidUsername(name)).toBe(false);
   });

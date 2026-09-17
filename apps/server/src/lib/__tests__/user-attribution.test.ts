@@ -91,6 +91,9 @@ describe('resolveUser — OS username fallback (LBV2-14)', () => {
     ['', 'user'],
     ['...', 'user'],
     ['ok_name', 'ok_name'],
+    ['jürgen', 'j_rgen'],
+    ['名前', 'user'],
+    ['unknown', 'user'],
   ])('maps %j to the valid username %j', (osName, expected) => {
     const u = resolveUser({ headers: {} }, { env: {}, osUsername: () => osName });
     expect(u).toBe(expected);
