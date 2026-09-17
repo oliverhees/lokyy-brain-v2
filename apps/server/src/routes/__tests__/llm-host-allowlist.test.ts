@@ -50,7 +50,7 @@ describe('LLM endpoint host allow-list (LBV2-19)', () => {
     hits.length = 0;
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubEnv('VAULT_PROXY_SECRET', 'x'.repeat(32));
-    vi.stubEnv('VAULT_LLM_ALLOWED_HOSTS', '127.0.0.1,api.eurouter.ai');
+    vi.stubEnv('VAULT_LLM_ALLOWED_HOSTS', `127.0.0.1:${port},api.eurouter.ai`);
     outer = await mkdtemp(join(tmpdir(), 'llm-allowlist-test-'));
     dataDir = join(outer, 'data');
     await mkdir(dataDir, { recursive: true });
@@ -81,6 +81,11 @@ describe('LLM endpoint host allow-list (LBV2-19)', () => {
     const res = await request(app).put('/api/config').send({ provider: 'anthropic', model: 'm', apiKey: 'sk-new', baseUrl: '' });
     expect(res.status).toBe(400);
     expect(ctx.config.provider).toBe('openai');
+  });
+
+  it('PUT rejects a listed host on a non-listed port', async () => {
+    const res = await request(app).put('/api/config').send({ provider: 'openai', model: 'm', apiKey: 'sk-new', baseUrl: 'https://api.eurouter.ai:8443/api/v1' });
+    expect(res.status).toBe(400);
   });
 
   it('PUT accepts a listed host', async () => {

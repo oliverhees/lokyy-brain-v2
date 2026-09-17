@@ -8,9 +8,11 @@
 // - Enforced in guarded mode (VAULT_PROXY_SECRET or VAULT_REQUIRE_PROXY_SECRET
 //   set; the MCP process in the image only sees the latter) and whenever
 //   VAULT_LLM_ALLOWED_HOSTS is set.
-// - VAULT_LLM_ALLOWED_HOSTS: comma-separated host names, exact match, case-
-//   insensitive. Listed hosts may be private (e.g. a local Ollama) and may use
-//   http; unlisted hosts are never called. Unset/empty while enforced = no
+// - VAULT_LLM_ALLOWED_HOSTS: comma-separated `host` or `host:port` entries,
+//   exact match, case-insensitive. A bare host allows only the default port of
+//   the scheme (https 443, http 80); any other port must be listed
+//   (`ollama:11434`). Listed hosts may be private (e.g. a local Ollama) and may
+//   use http; unlisted hosts/ports are never called. Unset/empty while enforced = no
 //   outbound LLM calls at all (fail closed).
 // - While enforced, redirects are handled manually and only followed within
 //   the same origin; a redirect to any other origin is refused.
@@ -42,17 +44,67 @@ function normalizeHost(host: string): string {
   return host.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1').replace(/\.$/, '');
 }
 
+const HOST_CHARS = /^[a-z0-9._:-]+$/;
+
+/** `host`, `host:port`, `[v6]`, `[v6]:port` or a bare IPv6 address → canonical entry; undefined when invalid. */
+function parseEntry(raw: string): string | undefined {
+  const entry = raw.trim().toLowerCase();
+  let host: string;
+  let port: string | undefined;
+  const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(entry);
+  const plain = /^([^:[\]]+)(?::(\d+))?$/.exec(entry);
+  if (bracketed) { host = bracketed[1]!; port = bracketed[2]; }
+  else if ((entry.match(/:/g) ?? []).length > 1) { host = entry; }
+  else if (plain) { host = plain[1]!; port = plain[2]; }
+  else return undefined;
+  host = host.replace(/\.$/, '');
+  if (!host || !HOST_CHARS.test(host)) return undefined;
+  if (port === undefined) return host;
+  const n = Number(port);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) return undefined;
+  return `${host.includes(':') ? `[${host}]` : host}:${n}`;
+}
+
+/** Guarded mode: the proxy secret guard is on (web server) or required (MCP process in the image). */
+export function isVaultGuarded(env: Env = processEnv()): boolean {
+  return !!env['VAULT_PROXY_SECRET'] || !!env['VAULT_REQUIRE_PROXY_SECRET'];
+}
+
+function rawEntries(env: Env): string[] {
+  return (env[LLM_ALLOWED_HOSTS_ENV] ?? '').split(',').map((e) => e.trim()).filter((e) => e.length > 0);
+}
+
 export function readLlmHostPolicy(env: Env = processEnv()): LlmHostPolicy {
-  const raw = env[LLM_ALLOWED_HOSTS_ENV] ?? '';
-  const guarded = !!env['VAULT_PROXY_SECRET'] || !!env['VAULT_REQUIRE_PROXY_SECRET'];
-  if (!guarded && raw.trim() === '') return { enforced: false };
-  const allowedHosts = new Set(raw.split(',').map(normalizeHost).filter((h) => h.length > 0));
+  const entries = rawEntries(env);
+  if (!isVaultGuarded(env) && entries.length === 0) return { enforced: false };
+  const allowedHosts = new Set(entries.map(parseEntry).filter((e): e is string => e !== undefined));
   return { enforced: true, allowedHosts };
+}
+
+/** Startup log (web server and MCP): fail closed must be loud, not silent. */
+export function logLlmHostPolicy(
+  env: Env = processEnv(),
+  logger: { warn: (msg: string) => void; info: (msg: string) => void } = { warn: console.warn, info: console.log },
+): void {
+  const policy = readLlmHostPolicy(env);
+  if (!policy.enforced) return;
+  const invalid = rawEntries(env).filter((e) => parseEntry(e) === undefined);
+  if (invalid.length > 0) logger.warn(`[llm-host-policy] ${LLM_ALLOWED_HOSTS_ENV}: ignored invalid entries: ${invalid.join(', ')}`);
+  if (policy.allowedHosts.size === 0) {
+    logger.warn(`[llm-host-policy] ${LLM_ALLOWED_HOSTS_ENV} is not set: all outbound LLM and embeddings calls are refused`);
+    return;
+  }
+  logger.info(`[llm-host-policy] LLM endpoints limited to: ${[...policy.allowedHosts].join(', ')}`);
 }
 
 function hostAllowed(url: URL, policy: LlmHostPolicy & { enforced: true }): boolean {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-  return policy.allowedHosts.has(normalizeHost(url.hostname));
+  const host = normalizeHost(url.hostname);
+  const defaultPort = url.protocol === 'https:' ? '443' : '80';
+  const port = url.port || defaultPort;
+  const withPort = `${host.includes(':') ? `[${host}]` : host}:${port}`;
+  // URL drops the scheme's default port, so url.port === '' means the default port.
+  return policy.allowedHosts.has(withPort) || (url.port === '' && policy.allowedHosts.has(host));
 }
 
 function parseUrl(url: string): URL | undefined {
@@ -68,7 +120,7 @@ export function isLlmUrlAllowed(url: string, env: Env = processEnv()): boolean {
 
 function refuse(url: string, reason: string): never {
   const host = parseUrl(url)?.host ?? '<invalid url>';
-  console.warn(`[llm-host-policy] refused ${reason} to ${host}: not in ${LLM_ALLOWED_HOSTS_ENV}`);
+  console.warn(`[llm-host-policy] refused ${reason} to ${host}: host or port not allowed by ${LLM_ALLOWED_HOSTS_ENV}`);
   throw new LlmHostNotAllowedError();
 }
 
@@ -89,10 +141,13 @@ export function effectiveLlmBaseUrl(provider: string, baseUrl: string | undefine
   return trimmed || PROVIDER_DEFAULT_BASE_URLS[provider] || PROVIDER_DEFAULT_BASE_URLS['openai']!;
 }
 
-function requestUrl(input: Parameters<typeof fetch>[0]): string {
-  if (typeof input === 'string') return input;
-  if (input instanceof URL) return input.toString();
-  return input.url;
+/** Splits fetch input into URL + init; a Request's method, headers, body and signal are kept (init wins). */
+async function splitInput(input: Parameters<typeof fetch>[0], init: RequestInit | undefined): Promise<[string, RequestInit]> {
+  if (typeof input === 'string') return [input, { ...init }];
+  if (input instanceof URL) return [input.toString(), { ...init }];
+  const fromRequest: RequestInit = { method: input.method, headers: input.headers, signal: input.signal };
+  if (input.body !== null && init?.body === undefined) fromRequest.body = await input.arrayBuffer();
+  return [input.url, { ...fromRequest, ...init }];
 }
 
 const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
@@ -107,11 +162,12 @@ export function guardLlmFetch(fetchImpl: typeof fetch, env?: Env): typeof fetch 
     const policy = readLlmHostPolicy(env ?? processEnv());
     if (!policy.enforced) return fetchImpl(input, init);
 
-    let url = requestUrl(input);
-    const origin = parseUrl(url);
-    if (!origin || !hostAllowed(origin, policy)) refuse(url, 'request');
+    const first = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const origin = parseUrl(first);
+    if (!origin || !hostAllowed(origin, policy)) refuse(first, 'request');
 
-    let currentInit: RequestInit = { ...init, redirect: 'manual' };
+    let [url, currentInit] = await splitInput(input, init);
+    currentInit = { ...currentInit, redirect: 'manual' };
     for (let hop = 0; ; hop++) {
       const response = await fetchImpl(url, currentInit);
       if (response.type === 'opaqueredirect') refuse(url, 'redirect');

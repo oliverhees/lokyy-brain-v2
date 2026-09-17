@@ -8,6 +8,8 @@ import {
   assertLlmUrlAllowed,
   guardLlmFetch,
   effectiveLlmBaseUrl,
+  isVaultGuarded,
+  logLlmHostPolicy,
   LlmHostNotAllowedError,
   LLM_HOST_NOT_ALLOWED_ERROR,
 } from './llm-host-policy';
@@ -33,9 +35,27 @@ describe('readLlmHostPolicy (LBV2-19)', () => {
     expect(readLlmHostPolicy({ VAULT_REQUIRE_PROXY_SECRET: '1' }).enforced).toBe(true);
   });
 
-  it('parses a comma list: trimmed, lowercased, trailing dot removed, empties dropped', () => {
-    const p = readLlmHostPolicy({ ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: ' API.EUrouter.ai. , ,127.0.0.1,[::1]' });
-    expect(p.enforced && [...p.allowedHosts].sort()).toEqual(['127.0.0.1', '::1', 'api.eurouter.ai']);
+  it('parses a comma list: trimmed, lowercased, trailing dot removed, empties and invalid entries dropped', () => {
+    const p = readLlmHostPolicy({ ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: ' API.EUrouter.ai. , ,127.0.0.1,[::1],::2,Ollama:11434,[::1]:8080,https://x.example,a/b,h:0,h:70000,u@h' });
+    expect(p.enforced && [...p.allowedHosts].sort()).toEqual(['127.0.0.1', '::1', '::2', '[::1]:8080', 'api.eurouter.ai', 'ollama:11434']);
+  });
+
+  it('isVaultGuarded reflects either proxy variable', () => {
+    expect(isVaultGuarded({})).toBe(false);
+    expect(isVaultGuarded(GUARDED)).toBe(true);
+    expect(isVaultGuarded({ VAULT_REQUIRE_PROXY_SECRET: '1' })).toBe(true);
+  });
+
+  it('logLlmHostPolicy warns when enforced with an empty list, is silent in local mode', () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    logLlmHostPolicy({}, { warn, info });
+    expect(warn).not.toHaveBeenCalled();
+    logLlmHostPolicy(GUARDED, { warn, info });
+    expect(warn.mock.calls[0]![0]).toMatch(/VAULT_LLM_ALLOWED_HOSTS is not set.*refused/);
+    logLlmHostPolicy({ ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: 'api.eurouter.ai,nope/x' }, { warn, info });
+    expect(info.mock.calls[0]![0]).toContain('api.eurouter.ai');
+    expect(warn.mock.calls[1]![0]).toMatch(/ignored invalid entr/);
   });
 
   it('local mode with the variable set is enforced', () => {
@@ -44,23 +64,40 @@ describe('readLlmHostPolicy (LBV2-19)', () => {
 });
 
 describe('isLlmUrlAllowed', () => {
-  const env = { ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: 'api.eurouter.ai,127.0.0.1,::1' };
+  const env = { ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: 'api.eurouter.ai,127.0.0.1:11434,[::1]:8080,localhost,ollama:11434,::2' };
   it.each([
     'https://api.eurouter.ai/api/v1',
     'https://API.EUROUTER.AI/api/v1/chat/completions',
+    'https://api.eurouter.ai:443/api/v1',
+    'http://api.eurouter.ai/api/v1',
     'http://127.0.0.1:11434',
     'http://[::1]:8080/v1',
+    'http://localhost/v1',
+    'http://ollama:11434',
+    'https://[::2]/v1',
   ])('allows %s', (url) => expect(isLlmUrlAllowed(url, env)).toBe(true));
 
   it.each([
     'http://169.254.169.254/latest/meta-data',
+    'http://localhost:6379',
     'http://localhost:11434',
+    'https://api.eurouter.ai:8443/v1',
+    'http://api.eurouter.ai:443/v1',
+    'http://127.0.0.1/v1',
+    'http://ollama/v1',
+    'http://[::1]/v1',
+    'http://[::2]:8080',
     'https://api.eurouter.ai.attacker.example/v1',
     'https://eurouter.ai/v1',
     'ftp://api.eurouter.ai/x',
     'not a url',
     '',
   ])('refuses %j', (url) => expect(isLlmUrlAllowed(url, env)).toBe(false));
+
+  it('a host:port entry allows exactly that port', () => {
+    expect(isLlmUrlAllowed('https://api.eurouter.ai:8443/v1', { ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: 'api.eurouter.ai:8443' })).toBe(true);
+    expect(isLlmUrlAllowed('https://api.eurouter.ai/v1', { ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: 'api.eurouter.ai:8443' })).toBe(false);
+  });
 
   it('refuses everything in guarded mode without a list', () => {
     expect(isLlmUrlAllowed('https://api.openai.com', GUARDED)).toBe(false);
@@ -117,7 +154,35 @@ afterAll(async () => {
 afterEach(() => { hits.length = 0; vi.restoreAllMocks(); });
 
 describe('guardLlmFetch', () => {
-  const allowLoopback = { ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: '127.0.0.1' };
+  let allowLoopback: Record<string, string> = {};
+  beforeAll(() => { allowLoopback = { ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: new URL(base).host }; });
+
+  it('a bare listed host does not allow a non-default port on it', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(guardLlmFetch(fetch, { ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: '127.0.0.1' })(`${base}/v1/models`))
+      .rejects.toThrow(LLM_HOST_NOT_ALLOWED_ERROR);
+    expect(hits).toHaveLength(0);
+  });
+
+  it('keeps method, headers and body of a Request object', async () => {
+    const inner = vi.fn().mockResolvedValue(new Response('{}'));
+    const req = new Request(`${base}/v1/chat`, { method: 'POST', headers: { authorization: 'Bearer k' }, body: '{"a":1}' });
+    await guardLlmFetch(inner as unknown as typeof fetch, allowLoopback)(req);
+    const [url, init] = inner.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe(`${base}/v1/chat`);
+    expect(init.method).toBe('POST');
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer k');
+    expect(await new Response(init.body).text()).toBe('{"a":1}');
+    expect(init.redirect).toBe('manual');
+  });
+
+  it('refuses a Request object to a non-listed host', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const inner = vi.fn();
+    await expect(guardLlmFetch(inner as unknown as typeof fetch, allowLoopback)(new Request('http://169.254.169.254/x')))
+      .rejects.toThrow(LLM_HOST_NOT_ALLOWED_ERROR);
+    expect(inner).not.toHaveBeenCalled();
+  });
 
   it('passes an allowed host through (fake server on 127.0.0.1 listed)', async () => {
     const r = await guardLlmFetch(fetch, allowLoopback)(`${base}/v1/models`);
@@ -141,7 +206,7 @@ describe('guardLlmFetch', () => {
 
   it('refuses an off-host redirect even when the target host is also listed', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const env = { ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: '127.0.0.1,localhost' };
+    const env = { ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: `${new URL(base).host},localhost:1` };
     await expect(guardLlmFetch(fetch, env)(`${base}/off-host`)).rejects.toThrow(LLM_HOST_NOT_ALLOWED_ERROR);
   });
 

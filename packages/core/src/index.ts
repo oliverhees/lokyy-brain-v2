@@ -52,6 +52,8 @@ export {
   assertLlmUrlAllowed,
   effectiveLlmBaseUrl,
   guardLlmFetch,
+  isVaultGuarded,
+  logLlmHostPolicy,
 } from './net/llm-host-policy';
 export type { LlmHostPolicy } from './net/llm-host-policy';
 
