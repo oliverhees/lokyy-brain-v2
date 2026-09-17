@@ -18,4 +18,8 @@ psql -q -c "insert into config (id, value, description) values
   ('DISABLE_SIGNUP', 'true', 'Self-registration closed by lokyy-stack init'),
   ('DISABLE_SSO_SIGNUP', 'true', 'SSO self-registration closed by lokyy-stack init')
   on conflict (id) do update set value = 'true', updated_at = now()"
+# Finite MCP session lifetime (8 h, milliseconds). MetaMCP 2.4.22 default is unlimited.
+psql -q -c "insert into config (id, value, description) values
+  ('SESSION_LIFETIME', '28800000', 'Session lifetime set by lokyy-stack init (8 h)')
+  on conflict (id) do update set value = '28800000', updated_at = now()"
 echo "signup disabled; users: $(psql -tA -c 'select count(*) from users')"

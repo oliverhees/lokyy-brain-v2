@@ -1,0 +1,7 @@
+{
+  "companyVault": "firma",
+  "users": [
+    { "username": "anna", "role": "reader", "vault": "anna" },
+    { "username": "ben", "role": "writer", "vault": "ben" }
+  ]
+}

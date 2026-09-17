@@ -17,7 +17,7 @@ step() { # step <description> <command...>
 
 healthy() {
   docker compose ps --format json | jq -se '
-    [.[] | select(.Service != "metamcp-init" and .Service != "traefik")] as $s
+    [.[] | select(.Service != "metamcp-init" and .Service != "model-prefetch" and .Service != "traefik")] as $s
     | ($s | length) >= 7 and all($s[]; .Health == "healthy")'
 }
 blueprint() {

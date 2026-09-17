@@ -13,7 +13,7 @@
 #   egress      vaults -> internet (EUrouter, model download); inter-container traffic disabled
 # No vault publishes a port. Vaults cannot reach each other on any network.
 
-name: lokyy-stack
+name: ${STACK_NAME:-lokyy-stack}
 
 x-vault: &vault
   image: lokyy-brain-v2:dev
@@ -21,9 +21,17 @@ x-vault: &vault
     context: ../..
     dockerfile: deploy/Dockerfile
   restart: unless-stopped
+  depends_on:
+    model-prefetch: { condition: service_completed_successfully }
   environment: &vault-env
     MCP_HTTP_PORT: "4322"
     MINDBASE_MDNS: "off"
+    # Beta decision: no capture / device pairing on hosted vaults
+    MINDBASE_DISABLE_CAPTURE: "1"
+    # LBV2-19: guarded vaults only call LLM hosts on this list (web server and MCP process)
+    VAULT_LLM_ALLOWED_HOSTS: api.eurouter.ai
+    # Persistent, per-vault cache for tesseract language data (/models is read-only and shared)
+    MINDBASE_MODEL_CACHE: /home/vault
 
 services:
   traefik:
@@ -32,6 +40,8 @@ services:
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
+      # Only this compose project: labels of other stacks on the same Docker host are ignored
+      - --providers.docker.constraints=Label(`com.docker.compose.project`,`${STACK_NAME:-lokyy-stack}`)
       - --entrypoints.web.address=:80
       - --api.dashboard=false
       - --log.level=INFO
@@ -75,19 +85,23 @@ services:
       AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
       DEMO_PASS_ANNA: ${DEMO_PASS_ANNA:?set in .env}
       DEMO_PASS_BEN: ${DEMO_PASS_BEN:?set in .env}
+      DEMO_PASS_CARL: ${DEMO_PASS_CARL:?set in .env}
     volumes:
       - ./authentik/blueprints:/blueprints/custom:ro
     shm_size: 512mb
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-stack_edge
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_edge
       - traefik.http.routers.authentik.rule=Host(`auth.localhost`)
       - traefik.http.routers.authentik.entrypoints=web
       - traefik.http.services.authentik.loadbalancer.server.port=9000
       # Forward-auth middleware used by every vault router
       - traefik.http.middlewares.authentik.forwardauth.address=http://authentik-server:9000/outpost.goauthentik.io/auth/traefik
       - traefik.http.middlewares.authentik.forwardauth.trustForwardHeader=true
+      # authResponseHeaders are deleted from the client request and replaced by Authentik's values
       - traefik.http.middlewares.authentik.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-uid
+      # Defence in depth: legacy attribution header never reaches a vault from a client
+      - traefik.http.middlewares.vault-identity.headers.customrequestheaders.X-Mindbase-User=
     networks: [edge, authentik-internal]
 
   authentik-worker:
@@ -103,6 +117,18 @@ services:
     networks: [authentik-internal]
 
   # ------------------------------------------------------------------- Vaults
+  # One-shot: fills the shared model cache that vaults mount read-only (a vault cannot tamper with
+  # the model files the others load). Needs internet (Hugging Face) on the first start.
+  model-prefetch:
+    image: lokyy-brain-v2:dev
+    restart: "no"
+    entrypoint: ["node", "/prefetch/prefetch.mjs"]
+    volumes:
+      - models:/models
+      # prefetch.mjs + manifest.json (pinned revision, sha256 per file)
+      - ./models:/prefetch:ro
+    networks: [model-egress]
+
   vault-anna:
     <<: *vault
     environment:
@@ -110,13 +136,14 @@ services:
       MCP_HTTP_TOKEN: ${MCP_TOKEN_ANNA:?set in .env}
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-anna:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_ANNA:?set in .env}
-    volumes: [vault-anna:/data]
+      VAULT_ADMIN_GROUPS: vault-anna-admin,lokyy-admins
+    volumes: [vault-anna:/data, models:/models:ro, vault-anna-home:/home/vault]
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-stack_web-anna
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-anna
       - traefik.http.routers.vault-anna.rule=Host(`anna.vault.localhost`)
       - traefik.http.routers.vault-anna.entrypoints=web
-      - traefik.http.routers.vault-anna.middlewares=authentik@docker,vault-anna-secret@docker
+      - traefik.http.routers.vault-anna.middlewares=authentik@docker,vault-identity@docker,vault-anna-secret@docker
       # Overwrites any client-supplied value; only this router carries this vault's secret
       - traefik.http.middlewares.vault-anna-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_ANNA}
       - traefik.http.services.vault-anna.loadbalancer.server.port=4321
@@ -126,8 +153,8 @@ services:
       - traefik.http.routers.vault-anna-outpost.service=authentik
     networks:
       web-anna: {}
-      # Unique alias: a plain service name could resolve to the egress IP, where traffic is blocked
-      mcp-anna: { aliases: [mcp.vault-anna] }
+      # Unique alias for vault-connector: a plain service name could resolve to the egress IP, where traffic is blocked
+      mcp-anna: { aliases: [upstream.vault-anna] }
       egress: {}
 
   vault-ben:
@@ -137,13 +164,14 @@ services:
       MCP_HTTP_TOKEN: ${MCP_TOKEN_BEN:?set in .env}
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-ben:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_BEN:?set in .env}
-    volumes: [vault-ben:/data]
+      VAULT_ADMIN_GROUPS: vault-ben-admin,lokyy-admins
+    volumes: [vault-ben:/data, models:/models:ro, vault-ben-home:/home/vault]
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-stack_web-ben
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-ben
       - traefik.http.routers.vault-ben.rule=Host(`ben.vault.localhost`)
       - traefik.http.routers.vault-ben.entrypoints=web
-      - traefik.http.routers.vault-ben.middlewares=authentik@docker,vault-ben-secret@docker
+      - traefik.http.routers.vault-ben.middlewares=authentik@docker,vault-identity@docker,vault-ben-secret@docker
       # Overwrites any client-supplied value; only this router carries this vault's secret
       - traefik.http.middlewares.vault-ben-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_BEN}
       - traefik.http.services.vault-ben.loadbalancer.server.port=4321
@@ -152,8 +180,8 @@ services:
       - traefik.http.routers.vault-ben-outpost.service=authentik
     networks:
       web-ben: {}
-      # Unique alias: a plain service name could resolve to the egress IP, where traffic is blocked
-      mcp-ben: { aliases: [mcp.vault-ben] }
+      # Unique alias for vault-connector: a plain service name could resolve to the egress IP, where traffic is blocked
+      mcp-ben: { aliases: [upstream.vault-ben] }
       egress: {}
 
   vault-firma:
@@ -165,13 +193,14 @@ services:
       MCP_HTTP_READONLY_TOKEN: ${MCP_READONLY_TOKEN_FIRMA:?set in .env}
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-firma:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_FIRMA:?set in .env}
-    volumes: [vault-firma:/data]
+      VAULT_ADMIN_GROUPS: vault-firma-admin,lokyy-admins
+    volumes: [vault-firma:/data, models:/models:ro, vault-firma-home:/home/vault]
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-stack_web-firma
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-firma
       - traefik.http.routers.vault-firma.rule=Host(`firma.vault.localhost`)
       - traefik.http.routers.vault-firma.entrypoints=web
-      - traefik.http.routers.vault-firma.middlewares=authentik@docker,vault-firma-secret@docker
+      - traefik.http.routers.vault-firma.middlewares=authentik@docker,vault-identity@docker,vault-firma-secret@docker
       # Overwrites any client-supplied value; only this router carries this vault's secret
       - traefik.http.middlewares.vault-firma-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_FIRMA}
       - traefik.http.services.vault-firma.loadbalancer.server.port=4321
@@ -180,8 +209,8 @@ services:
       - traefik.http.routers.vault-firma-outpost.service=authentik
     networks:
       web-firma: {}
-      # Unique alias: a plain service name could resolve to the egress IP, where traffic is blocked
-      mcp-firma: { aliases: [mcp.vault-firma] }
+      # Unique alias for vault-connector: a plain service name could resolve to the egress IP, where traffic is blocked
+      mcp-firma: { aliases: [upstream.vault-firma] }
       egress: {}
 
   # ------------------------------------------------------------------ MetaMCP
@@ -202,6 +231,7 @@ services:
   metamcp:
     image: ghcr.io/metatool-ai/metamcp:2.4.22
     restart: unless-stopped
+    mem_limit: 1536m
     depends_on:
       metamcp-db: { condition: service_healthy }
     environment:
@@ -217,22 +247,77 @@ services:
       TRANSFORM_LOCALHOST_TO_DOCKER_INTERNAL: "false"
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-stack_edge
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_edge
       # Admin UI behind Authentik (group lokyy-admins)
-      - traefik.http.routers.metamcp.rule=Host(`mcp.localhost`)
+      # /metamcp/* is never served by the admin router (only mcp-gate handles /metamcp/<name>/mcp)
+      - traefik.http.routers.metamcp.rule=Host(`mcp.localhost`) && !PathPrefix(`/metamcp/`)
       - traefik.http.routers.metamcp.entrypoints=web
       - traefik.http.routers.metamcp.middlewares=authentik@docker
       - traefik.http.routers.metamcp-outpost.rule=Host(`mcp.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.metamcp-outpost.entrypoints=web
       - traefik.http.routers.metamcp-outpost.service=authentik
-      # MCP endpoints for AI clients: authenticated by MetaMCP API key, not browser SSO
-      - traefik.http.routers.metamcp-endpoints.rule=Host(`mcp.localhost`) && PathPrefix(`/metamcp/`)
+      # MCP endpoints for AI clients are routed to mcp-gate (see below), never directly to MetaMCP
+      - traefik.http.services.metamcp.loadbalancer.server.port=12008
+    # No egress. MetaMCP shares no network with any vault: it reaches them only through vault-connector
+    # (mcp-upstream), which accepts connections on that network only. Vaults cannot reach MetaMCP.
+    networks: [edge, metamcp-internal, mcp-upstream]
+
+  # Session-binding proxy for MCP clients (finding M2): a session id only works with the API key and
+  # endpoint that created it. Only POST/GET/DELETE on /metamcp/<name>/mcp reach MetaMCP.
+  mcp-gate:
+    image: lokyy-mcp-gate:dev
+    build: ./mcp-gate
+    restart: unless-stopped
+    mem_limit: 128m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MODE: gate
+      GATE_UPSTREAM: http://metamcp:12008
+    depends_on:
+      metamcp: { condition: service_healthy }
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_edge
+      - traefik.http.routers.metamcp-endpoints.rule=Host(`mcp.localhost`) && PathRegexp(`^/metamcp/[a-z0-9-]+/mcp$`)
       - traefik.http.routers.metamcp-endpoints.entrypoints=web
       - traefik.http.routers.metamcp-endpoints.priority=100
-      - traefik.http.routers.metamcp-endpoints.service=metamcp
-      - traefik.http.services.metamcp.loadbalancer.server.port=12008
-    # No egress: MetaMCP only talks to vaults over HTTP, never runs stdio servers or fetches packages
-    networks: [edge, metamcp-internal, mcp-anna, mcp-ben, mcp-firma]
+      - traefik.http.routers.metamcp-endpoints.service=mcp-gate
+      - traefik.http.services.mcp-gate.loadbalancer.server.port=8080
+      # Throttle key guessing per client IP. Every 4xx/5xx (except 429) gets one static body from the gate and
+      # 403/404 become 401: missing/wrong key, other user's endpoint, unknown endpoint and foreign or unknown
+      # session look identical. The gate already replaces MetaMCP error bodies; this is the second layer.
+      - traefik.http.routers.metamcp-endpoints.middlewares=metamcp-ratelimit@docker,metamcp-uniform-errors@docker
+      - traefik.http.middlewares.metamcp-ratelimit.ratelimit.average=20
+      - traefik.http.middlewares.metamcp-ratelimit.ratelimit.burst=60
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.status=400-428,430-599
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.service=mcp-gate
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.query=/__error
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.statusRewrites.403=401
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.statusRewrites.404=401
+    networks: [edge]
+
+  # One-way path MetaMCP -> vaults. Listens only on its fixed mcp-upstream address and routes by Host
+  # (mcp.vault-<vault>:4322) to upstream.vault-<vault>; nothing on a vault network can connect to it.
+  vault-connector:
+    image: lokyy-mcp-gate:dev
+    restart: unless-stopped
+    mem_limit: 128m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MODE: connector
+      CONNECTOR_VAULTS: anna,ben,firma
+      CONNECTOR_LISTEN_HOST: 10.231.11.2
+    networks:
+      mcp-upstream:
+        ipv4_address: 10.231.11.2
+        aliases: [mcp.vault-anna, mcp.vault-ben, mcp.vault-firma]
+      mcp-anna: {}
+      mcp-ben: {}
+      mcp-firma: {}
 
   metamcp-init:
     image: postgres:16-alpine
@@ -297,6 +382,15 @@ networks:
     ipam:
       config:
         - subnet: 10.231.8.0/28
+  mcp-upstream:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.231.11.0/28
+  model-egress:
+    ipam:
+      config:
+        - subnet: 10.231.10.0/28
   egress:
     driver: bridge
     driver_opts:
@@ -307,6 +401,11 @@ networks:
 
 volumes:
   authentik-db:
+  vault-anna-home:
+  vault-ben-home:
+  vault-firma-home:
+  # Shared embedding model cache (BGE-M3), read and written by every vault
+  models:
   metamcp-db:
   vault-anna:
   vault-ben:

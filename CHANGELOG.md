@@ -8,12 +8,14 @@
 - Source-built vault Docker image (`deploy/Dockerfile`).
 - Slim vault image (LBV2-6): multi-stage build with production-only dependencies and a compiled web server (`deploy/build-server.mjs`, no `tsx` at runtime). Image disk usage 1.82 GB -> 800 MB. Embedding models are cached in `/models` (mount a volume to keep them); `MINDBASE_PLUGIN_ROOT` is set in the image. See `docs/self-hosting-mcp-http.md#image-contents-and-size`.
 - Web server proxy shared-secret guard (`VAULT_PROXY_SECRET`, header `X-Vault-Proxy-Secret`); required by the Docker image (`VAULT_REQUIRE_PROXY_SECRET=1`). Unset outside the image = previous behaviour.
+- Local stack (`deploy/stack`): idempotent per-user MetaMCP provisioning (`metamcp/provision.sh`, `users.json`: own MCP server per vault connection, namespace, API-key endpoint, key rotation and removal) with attack suite `tests/metamcp-attacks.sh`; identity-header checks against a test-only echo backend; per-vault `VAULT_ADMIN_GROUPS` and `vault-<v>-admin` groups; EUrouter LLM wiring script (`llm/configure-eurouter.sh`); configurable compose project name (`STACK_NAME`).
 
 - Trusted user attribution behind the proxy: with `VAULT_PROXY_SECRET` set, the contributor username comes only from the proxy identity header (`VAULT_IDENTITY_HEADER`, default `x-authentik-username`); a client `X-Mindbase-User` is ignored; a missing identity answers 401 on attributed routes; the name `unknown` is reserved.
 - Admin groups for configuration changes in guarded mode: `VAULT_ADMIN_GROUPS` (fail closed when unset) matched against `VAULT_GROUPS_HEADER` (default `x-authentik-groups`, split on `|` only; a duplicated header grants no groups). Applies to non-GET `/api/config` and `/api/server` and to the Google routes `auth/url`, `auth/start`, `auth/callback`, `auth/disconnect` and `set-sync-folder`. Startup is refused if a trusted header is set to a client-controlled or reserved name.
 - `MINDBASE_DISABLE_CAPTURE=1`: `/api/capture` and `/api/devices` return 404, the capture worker and mDNS do not start, `/api/health` reports `features.capture`, and the Devices page shows a disabled notice.
 
 ### Changed — may affect existing (stdio / single-user) setups
+- **Local stack**: MetaMCP is only reachable for AI clients at `/metamcp/<endpoint>/mcp` (no endpoint catalogue, SSE or OpenAPI routes); Traefik strips client `X-Mindbase-User` on vault routes.
 - **Slugs are validated for every MCP tool** (`slug`, `slugs`, `source_slug`, `target_slug`, `root`, and since LBV2-18 `context_pages`, `raw_id`): a leading `/`, backslash, NUL, or a `.`/`..` path segment is rejected with `Invalid input: unsafe slug`. Previously e.g. `read_wiki_page {slug: "/flip"}` resolved to the page.
 - **Project ids** must be directory names (`[A-Za-z0-9][A-Za-z0-9_-]{0,127}`), also `currentProjectId` in `config.json`.
 - **File store paths** that would leave the data directory are refused; leading slashes stay relative to the data directory.
