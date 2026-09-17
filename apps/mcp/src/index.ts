@@ -1,6 +1,7 @@
 // apps/mcp/src/index.ts
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { readLlmTimeoutMs } from '@mindbase/core';
 import { loadContext } from './context.js';
 import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
@@ -130,6 +131,13 @@ export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>, pr
 }
 
 export async function runServer(opts: RunOptions = {}): Promise<void> {
+  // Fail fast on an invalid provider timeout, like the web and HTTP servers (LBV2-14).
+  try {
+    readLlmTimeoutMs(process.env);
+  } catch (e) {
+    process.stderr.write(`[mindbase-mcp] fatal: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
   // stdio: the client is the local user, so local file paths are allowed.
   const ctx = await loadContext({ dataDir: opts.dataDir, allowLocalFilePaths: true });
   const server = createMcpServer(ctx);

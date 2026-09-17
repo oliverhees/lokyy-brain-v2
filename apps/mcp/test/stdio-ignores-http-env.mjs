@@ -5,6 +5,7 @@
  * Run from apps/mcp/ directory: node test/stdio-ignores-http-env.mjs
  */
 import { mkdtempSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -40,6 +41,17 @@ async function run() {
     fail(`stdio server did not start with invalid MCP_HTTP_READONLY_* values: ${e.message}`);
   } finally {
     await client.close().catch(() => {});
+  }
+
+  // MINDBASE_LLM_TIMEOUT_MS applies to stdio too: an invalid value fails fast (exit 1, clear message).
+  for (const value of ['abc', '10', '3600001']) {
+    const run = spawnSync('node', ['dist/cli.js', '--data-dir', dataDir], {
+      env: { ...process.env, MINDBASE_DATA_DIR: dataDir, MINDBASE_LLM_TIMEOUT_MS: value },
+      input: '', encoding: 'utf-8', timeout: 30_000,
+    });
+    run.status === 1 && /MINDBASE_LLM_TIMEOUT_MS must be an integer between 1000 and 3600000/.test(run.stderr)
+      ? ok(`stdio exits 1 for MINDBASE_LLM_TIMEOUT_MS=${value}`)
+      : fail(`stdio with MINDBASE_LLM_TIMEOUT_MS=${value}: status=${run.status} stderr=${(run.stderr ?? '').slice(0, 200)}`);
   }
 }
 
