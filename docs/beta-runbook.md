@@ -53,7 +53,7 @@ cd /opt/lokyy && sudo git clone https://github.com/oliverhees/lokyy-brain-v2.git
 cd lokyy-brain-v2 && sudo git checkout <release-tag-or-branch>
 ```
 
-`LOKYY_ASSETS_DIR=/opt/lokyy/lokyy-brain-v2`. The Authentik blueprint, `deploy/stack/models` (prefetch manifest) and `deploy/stack/metamcp/init.sh` are mounted from here. `deploy/stack/users.beta.json` is mounted into `mcp-gate` too (its session cap = users × 20 × 1.25, min 100): **create it (section 9, first command) before the first deploy** — if it is missing, Docker creates a directory at that path and the gate falls back to the minimum cap (log line `WARN mcp-gate: users file not readable`). After adding users, recreate the gate: `... up -d --force-recreate mcp-gate`. This checkout is also what section 5 builds and deploys.
+`LOKYY_ASSETS_DIR=/opt/lokyy/lokyy-brain-v2`. The Authentik blueprint, `deploy/stack/models` (prefetch manifest) and `deploy/stack/metamcp/init.sh` are mounted from here. `deploy/stack/users.beta.json` is mounted into `mcp-gate` too (its session cap = users × 20 × 1.25, min 100): **create it (section 9, first command) before the first deploy** — if it is missing, Docker creates a directory at that path and the gate falls back to the minimum cap (log line `WARN mcp-gate: users file not readable`). After adding users, recreate the gate: `docker compose -p lokyy --env-file /root/lokyy.env -f deploy/coolify/compose.yml up -d --force-recreate mcp-gate`. This checkout is also what section 5 builds and deploys.
 
 ## 4. Environment and secrets
 
@@ -217,7 +217,7 @@ The user sees two servers: `<user>-vault` (own vault, all tools) and `<user>-fir
 | `401` | Missing, wrong, rotated or removed key; also a session the gate does not know for this key and endpoint (e.g. after a gate or MetaMCP restart, or a key rotation) | Check the key; clients re-initialize automatically |
 | `400` | Request without session that is not a single `initialize` | Client bug or wrong transport |
 | `429` + `Retry-After` | Too many `initialize` requests for this key (burst 5, then 1/s), or too many open streams (2 per session, 10 per key) | Wait `Retry-After` seconds; close unused sessions. A loop of reconnects usually means the key is wrong |
-| `503` | The gate's session table is full (users × 20 × 1.25) — new keys are refused, nobody is evicted | Check `docker logs mcp-gate` for `WARN bindings`; recreate `mcp-gate` after adding users to `users.beta.json` |
+| `503` | The gate's session table is full (users × 20 × 1.25) — new keys are refused, nobody is evicted | Check `docker compose -p lokyy --env-file /root/lokyy.env -f deploy/coolify/compose.yml logs mcp-gate` for `WARN bindings`; recreate `mcp-gate` after adding users to `users.beta.json` |
 
 MetaMCP itself allows only one open `GET` stream per session (a second one gets `409`, shown to the client as the gate's static error); the gate's stream caps are an upper bound on top of that. Every `--rotate` and every access change restarts MetaMCP: all clients reconnect once.
 
