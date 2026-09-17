@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Bindings } from '../src/bindings.ts';
 
-const opts = { idleMs: 1_000, lifetimeMs: 10_000, max: 3 };
+const opts = { idleMs: 1_000, lifetimeMs: 10_000, max: 3, maxPerKey: 3 };
 
 test('a bound session matches only the same key hash and endpoint', () => {
   let now = 0;
@@ -33,18 +33,31 @@ test('idle timeout and absolute lifetime expire a binding', () => {
   assert.equal(c.check('old', 'h', 'e'), false, 'lifetime exceeded although active');
 });
 
-test('unbind removes, the map is capped (oldest evicted) and sweep drops expired entries', () => {
+test('unbind removes, a key over its own cap evicts only its own oldest binding, sweep drops expired entries', () => {
   let now = 0;
-  const b = new Bindings({ ...opts, now: () => now });
+  const b = new Bindings({ ...opts, max: 10, maxPerKey: 3, now: () => now });
+  b.bind('other', 'hB', 'e');
   b.bind('s1', 'h', 'e'); b.bind('s2', 'h', 'e'); b.bind('s3', 'h', 'e');
-  b.bind('s4', 'h', 'e');
-  assert.equal(b.size, 3);
-  assert.equal(b.check('s1', 'h', 'e'), false, 'oldest evicted');
+  assert.equal(b.bind('s4', 'h', 'e'), true);
+  assert.equal(b.size, 4);
+  assert.equal(b.check('s1', 'h', 'e'), false, 'own oldest evicted');
+  assert.equal(b.check('other', 'hB', 'e'), true, 'other key untouched');
+  b.unbind('other');
   b.unbind('s4');
   assert.equal(b.check('s4', 'h', 'e'), false);
   now = 5_000;
   b.sweep();
   assert.equal(b.size, 0);
+});
+
+test('global cap fails closed for the new binding and never evicts other keys', () => {
+  const b = new Bindings({ ...opts, max: 3, maxPerKey: 3 });
+  b.bind('a1', 'hA', 'e'); b.bind('a2', 'hA', 'e'); b.bind('b1', 'hB', 'e');
+  assert.equal(b.hasCapacity('hC'), false);
+  assert.equal(b.bind('c1', 'hC', 'e'), false);
+  assert.equal(b.check('c1', 'hC', 'e'), false);
+  for (const [s, h] of [['a1', 'hA'], ['a2', 'hA'], ['b1', 'hB']]) assert.equal(b.check(s, h, 'e'), true);
+  assert.equal(b.hasCapacity('hA'), true, 'a key with bindings may still rotate its own');
 });
 
 test('binding a session id twice never changes its owner', () => {

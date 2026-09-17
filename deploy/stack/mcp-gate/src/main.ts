@@ -20,8 +20,12 @@ if (mode === 'gate') {
     upstream: env('GATE_UPSTREAM', 'http://metamcp:12008'),
     idleMs: int('GATE_IDLE_MS', 60 * 60 * 1000),               // 1 h unused
     lifetimeMs: int('GATE_LIFETIME_MS', 8 * 60 * 60 * 1000),   // 8 h, same as MetaMCP SESSION_LIFETIME
-    maxBindings: int('GATE_MAX_BINDINGS', 10_000),
-    maxBodyBytes: int('GATE_MAX_BODY_BYTES', 4 * 1024 * 1024),
+    maxBindings: int('GATE_MAX_BINDINGS', 5_000),                 // global; full → new keys refused
+    maxPerKey: int('GATE_MAX_SESSIONS_PER_KEY', 20),              // a key over it loses its own oldest session
+    maxBodyBytes: int('GATE_MAX_BODY_BYTES', 1024 * 1024),
+    maxConnections: int('GATE_MAX_CONNECTIONS', 512),
+    requestTimeoutMs: int('GATE_REQUEST_TIMEOUT_MS', 30_000),         // request incl. body (slowloris); SSE responses exempt
+    sseIdleMs: int('GATE_STREAM_IDLE_MS', 15 * 60 * 1000),
     log,
   });
   const port = int('PORT', 8080);

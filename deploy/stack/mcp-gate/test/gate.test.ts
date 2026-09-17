@@ -2,7 +2,7 @@ import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { createGate, STATIC_NOT_FOUND } from '../src/gate.ts';
+import { createGate, STATIC_NOT_FOUND, STATIC_UNAUTHORIZED } from '../src/gate.ts';
 
 // Fake MetaMCP: records requests; initialize creates a session id; unknown sessions answer 404
 // with a list of ids (like MetaMCP 2.4.22); GET streams SSE slowly.
@@ -78,12 +78,14 @@ test('another key on its own endpoint cannot use a foreign session id (M2 hijack
   assert.equal(seen.length, before, 'request never reaches MetaMCP');
 });
 
-test('owner key on another endpoint and missing key are rejected like an unknown session', async () => {
+test('owner key on another endpoint is rejected like an unknown session, no key is 401', async () => {
   const sid = await open('ben', 'key-ben');
   const other = await call('/metamcp/anna/mcp', { key: 'key-ben', sid });
-  const nokey = await call('/metamcp/ben/mcp', { sid });
   const unknown = await call('/metamcp/ben/mcp', { key: 'key-ben', sid: 'ffffffff-0000-4000-8000-000000000000' });
-  for (const r of [other, nokey, unknown]) { assert.equal(r.status, 404); assert.equal(r.text, STATIC_NOT_FOUND); }
+  for (const r of [other, unknown]) { assert.equal(r.status, 404); assert.equal(r.text, STATIC_NOT_FOUND); }
+  const nokey = await call('/metamcp/ben/mcp', { sid });
+  assert.equal(nokey.status, 401);
+  assert.equal(nokey.text, STATIC_UNAUTHORIZED);
 });
 
 test('only POST/GET/DELETE on /metamcp/<name>/mcp are forwarded; everything else is a static 404', async () => {
