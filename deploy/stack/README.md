@@ -102,6 +102,95 @@ Why one MetaMCP account per user: MetaMCP 2.4.22 only checks that an API key and
 
 Second layer for readers: MetaMCP's tool deactivation is a denylist that fails open (unknown mapping, unparsable name, lookup error: allowed), and MetaMCP deletes tools a server no longer lists, so write tools cannot be deactivated in advance. The real boundary is the read-only token: the vault exposes 13 read tools and answers `Tool not available` to everything else. Provisioning adds a tripwire: it lists each reader's tools through the endpoint and, if the company server shows any tool outside the read allowlist, marks it INACTIVE in MetaMCP and exits with an error.
 
+## Add a user
+
+Example: `dora` gets her own vault and reads the company vault (`vault-firma-read`). Usernames are ASCII only: lowercase letters, digits and dashes, starting with a letter, 2–31 characters, no `--` (checked by `metamcp/provision.mjs`). The vault name of a personal vault equals the username. All steps run in `deploy/stack`.
+
+1. **Secrets in `.env`.** Add one line per secret, each generated with `openssl rand -hex 32`:
+
+   ```bash
+   for k in MCP_TOKEN_DORA PROXY_SECRET_DORA DEMO_PASS_DORA; do echo "$k=$(openssl rand -hex 32)" >> .env; done
+   ```
+
+   `MCP_TOKEN_<VAULT>` must be the vault name in upper case with `-` → `_` (provisioning looks it up by that name). Add the names without values to `.env.example` too. `rotate-secrets.sh` picks up every `MCP_TOKEN_*` / `PROXY_SECRET_*` automatically.
+
+2. **Vault service in `compose.yml`.** Copy the `vault-ben` block to `vault-dora` and replace every `ben` / `BEN`: `MCP_HTTP_TOKEN: ${MCP_TOKEN_DORA:?set in .env}`, `MCP_HTTP_ALLOWED_HOSTS: mcp.vault-dora:4322`, `VAULT_PROXY_SECRET: ${PROXY_SECRET_DORA:?set in .env}`, `VAULT_ADMIN_GROUPS: vault-dora-admin,lokyy-admins`, volumes `vault-dora:/data`, `models:/models:ro`, `vault-dora-home:/home/vault`, and all Traefik labels (`traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-dora`, routers `vault-dora` and `vault-dora-outpost` on ``Host(`dora.vault.localhost`)``, middlewares `authentik@docker,vault-identity@docker,vault-dora-secret@docker`, and the `vault-dora-secret` middleware setting `X-Vault-Proxy-Secret=${PROXY_SECRET_DORA}`). Networks: `web-dora: {}`, `mcp-dora: { aliases: [upstream.vault-dora] }`, `egress: {}`. The vault services set no `mem_limit` today; if you add one, add it to every vault (see "Memory per vault").
+
+   Then, in the same file:
+   - `authentik-server` → `environment`: add `DEMO_PASS_DORA: ${DEMO_PASS_DORA:?set in .env}` next to `DEMO_PASS_CARL`. The blueprint's `!Env DEMO_PASS_DORA` reads it from the Authentik container, not from `.env`; without this line dora's password is empty. `authentik-worker` (which applies the blueprint) reuses that block via `environment: *authentik-env`, so it needs no separate entry.
+   - `traefik` → `networks`: add `web-dora`.
+   - `vault-connector` → `CONNECTOR_VAULTS: anna,ben,firma,dora`, alias `mcp.vault-dora` on `mcp-upstream`, and `mcp-dora: {}`.
+   - top-level `networks`: `web-dora` and `mcp-dora`, both `internal: true`, each with the next free `/28` subnet (`10.231.0`–`10.231.11` are taken, so `10.231.12.0/28` and `10.231.13.0/28`).
+   - top-level `volumes`: `vault-dora:` and `vault-dora-home:`.
+
+3. **Authentik (blueprint `authentik/blueprints/lokyy-vaults.yaml`).** Add, following the entries for `ben`:
+   - a group `vault-dora-admin`;
+   - a user `dora` with `password: !Env DEMO_PASS_DORA` and `groups: [!KeyOf group-firma-read, !KeyOf group-dora-admin]` (a writer gets `group-firma-write` instead; `vault-firma-write` also opens the company vault web UI);
+   - a proxy provider `vault-dora` (`<<: *provider`, `external_host: http://dora.vault.localhost:18080`), an application with slug `vault-dora`, and a policy binding of that application to `user-dora`;
+   - `!KeyOf provider-dora` in the embedded outpost's `providers` list.
+
+   The same objects can be created in the Authentik admin UI instead; then the blueprint no longer describes the stack, so prefer the file. `DEMO_PASS_*` is only read by the blueprint; in production users set their own password.
+
+4. **Start and apply.**
+
+   ```bash
+   docker compose up -d
+   docker compose exec authentik-worker ak apply_blueprint custom/lokyy-vaults.yaml   # if Authentik does not pick up the change on its own
+   tests/wait-ready.sh
+   ```
+
+   `tests/wait-ready.sh` only checks the routes of `anna`, `ben` and `firma`. Check the new route yourself: `curl -s -o /dev/null -w '%{http_code}\n' http://dora.vault.localhost:18080/` must print `302` (login redirect).
+
+5. **MetaMCP access.** Add dora to `users.json`:
+
+   ```json
+   { "username": "dora", "role": "reader", "vault": "dora" }
+   ```
+
+   `role` is `reader` (company vault via the read-only token) or `writer`. Then run `metamcp/provision.sh`.
+
+6. **Hand out the endpoint.** `secrets/metamcp-clients.json` (mode 600) now has an entry for `dora` with `url` (`http://mcp.localhost:18080/metamcp/dora/mcp`) and `apiKey`. Give dora only her own entry, over a secure channel; never commit or paste the file.
+
+`tests/isolation.sh` and `tests/metamcp-attacks.sh` test only `anna`, `ben`, `carl` and `firma`; they do not cover a new user.
+
+### Remove a user
+
+1. Delete the user from `users.json` and run `metamcp/provision.sh`: it deletes the MetaMCP account, servers, namespace, endpoint and API key, and restarts MetaMCP so open sessions end.
+2. Remove the user, group, provider, application, binding and outpost entry from the blueprint. Authentik does not delete objects that disappear from a blueprint: delete the user (and application/provider) in the Authentik admin UI as well.
+3. Remove the vault service, its networks, the `traefik`/`vault-connector` entries and the `.env` lines added in "Add a user" steps 1–2, then `docker compose up -d --remove-orphans`.
+4. The volumes `vault-<user>` (vault data) and `vault-<user>-home` stay. Keep them as a backup, or delete them with `docker volume rm <project>_vault-<user> <project>_vault-<user>-home` (project name = `STACK_NAME`, default `lokyy-stack`).
+
+## Connect an MCP client
+
+Each user connects with the `url` and `apiKey` from their entry in `secrets/metamcp-clients.json`. The key goes in the `Authorization` header; query-string keys are rejected. Replace `<user>` and `<api-key>`, and never paste a real key into tickets, chats or docs.
+
+Claude Code:
+
+```bash
+claude mcp add --transport http lokyy http://mcp.localhost:18080/metamcp/<user>/mcp \
+  --header "Authorization: Bearer <api-key>"
+```
+
+Clients configured with an `mcpServers` JSON file:
+
+```json
+{
+  "mcpServers": {
+    "lokyy": {
+      "url": "http://mcp.localhost:18080/metamcp/<user>/mcp",
+      "headers": { "Authorization": "Bearer <api-key>" }
+    }
+  }
+}
+```
+
+(Some clients also need `"type": "http"` or `"transport": "streamable-http"` in that object.) The client sees two servers: `<user>-vault` (own vault, all tools) and `<user>-firma` (company vault). Readers see only the 13 read tools on `<user>-firma`; writes are rejected inside the vault. A `401` means a missing, wrong or rotated key.
+
+### Operator notes
+
+- `metamcp/provision.sh` has no `--dry-run` and no `--help`. Accepted arguments are `--rotate <user>` (repeatable) and `--rotate-all`; any other argument prints the usage line and exits with status 2 without changing anything. Every run without an argument already changes MetaMCP (it reconciles to `users.json`).
+- `tests/metamcp-attacks.sh` is not read-only: it rotates anna's key, temporarily deprovisions ben, writes test notes, rewrites `secrets/metamcp-clients.json` and makes provisioning restart MetaMCP, which ends every open MCP session. Do not run it against a stack with live beta users.
+
 ## LLM via EUrouter (LBV2-5)
 
 Put `EUROUTER_MODEL` (an id from `https://api.eurouter.ai/api/v1/models`, e.g. `qwen3.6-27b`) and the key(s) into `.env`. Two key modes, combinable:
