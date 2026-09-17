@@ -287,6 +287,8 @@ The LLM base URL (`baseUrl` in the vault config) is set by an admin in the UI or
 - **Redirects.** While enforced, redirects from the LLM endpoint are handled manually: at most 5, and only within the same origin (scheme, host, port). A redirect to any other origin is refused before it is requested, even if the target host is also listed.
 
 - **Ollama onboarding.** In guarded mode `GET /api/system`, `GET /api/ollama/status` and `POST /api/ollama/pull` do not exist (`404`): they would probe and pull on the container's own `localhost` and reveal hardware details. Configure a hosted Ollama through the normal provider settings instead.
+  `GET /api/health` reports this as `features.localModels: false`; the setup wizard then disables the local-model option ("Local models are disabled on this server — choose a cloud provider") and never polls the missing routes.
+- **Startup log without policy.** Outside guarded mode and without the variable, both servers log `[llm-host-policy] LLM host allowlist not configured; all LLM hosts allowed (unguarded mode)`. A redirect loop from an allowed host is refused after 5 hops and logged as `too many redirects`.
 - **Exceptions.** None. No provider, port or local address is allowed implicitly.
 
 Example for EUrouter (OpenAI-compatible): provider `openai`, `baseUrl` `https://api.eurouter.ai/api/v1`, and
