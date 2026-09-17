@@ -137,7 +137,7 @@ The embedding model does not work in the image: `@xenova/transformers` tries to 
 
 ## Attack tests
 
-`tests/isolation.sh` (106 checks) logs in through the real Authentik flow (`tests/login.sh`) and verifies:
+`tests/isolation.sh` (107 checks) logs in through the real Authentik flow (`tests/login.sh`) and verifies:
 
 1. Anonymous requests are redirected to the login.
 2. Browser isolation: each user reaches only their own vault; readers are denied the company vault web UI; only admins reach MetaMCP.
