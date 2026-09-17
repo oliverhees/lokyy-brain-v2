@@ -26,6 +26,8 @@ x-vault: &vault
     MINDBASE_MDNS: "off"
     # Beta decision: no capture / device pairing on hosted vaults
     MINDBASE_DISABLE_CAPTURE: "1"
+    # LBV2-19: guarded vaults only call LLM hosts on this list (web server and MCP process)
+    VAULT_LLM_ALLOWED_HOSTS: api.eurouter.ai
 
 services:
   traefik:
