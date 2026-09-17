@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(import.meta.dirname, '../../../.env') });
 
 import express from 'express';
-import { readFetchConcurrency } from '@mindbase/core';
+import { readFetchConcurrency, logLlmHostPolicy } from '@mindbase/core';
 import { createContext } from './context';
 import { proxySecretGuard, readProxySecret } from './lib/proxy-secret';
 import { resolveDataDirAsync } from './config';
@@ -103,6 +103,8 @@ async function main() {
   readFetchConcurrency(process.env);
   // Refuse to start when a trusted proxy header is configured to a client-controlled name.
   assertTrustedHeaderConfig(process.env);
+  // Startup log for the LLM endpoint allow-list (LBV2-19); fail closed is loud.
+  logLlmHostPolicy(process.env);
   const dataDir = await resolveDataDirAsync();
 
   const layoutAudit = await auditProjectLayouts(dataDir);

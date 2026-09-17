@@ -21,7 +21,7 @@ import http from 'node:http';
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { readFetchConcurrency } from '@mindbase/core';
+import { readFetchConcurrency, logLlmHostPolicy } from '@mindbase/core';
 import { loadContext } from './context.js';
 import { createMcpServer } from './index.js';
 import type { AccessProfile } from './access.js';
@@ -109,6 +109,8 @@ async function main(): Promise<void> {
   const idleMs = intEnv('MCP_HTTP_SESSION_IDLE_MS', 30 * 60 * 1000, 1000);
   try {
     readFetchConcurrency(process.env);
+    // Same LLM endpoint allow-list warning as the web server (LBV2-19).
+    logLlmHostPolicy(process.env, { warn: log, info: log });
   } catch (e) {
     log(`fatal: ${(e as Error).message}`);
     process.exit(1);

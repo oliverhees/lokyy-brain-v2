@@ -4,6 +4,7 @@
 // and a pull proxy that streams download progress as SSE. The wizard's
 // connectivity verify reuses the existing POST /api/config/test.
 import { Router } from 'express';
+import { isVaultGuarded } from '@mindbase/core';
 import { execFile } from 'node:child_process';
 import { systemProfile } from '../lib/system-info';
 import { recommendModels, allowedModels } from '../lib/model-recommend';
@@ -26,8 +27,12 @@ async function probeRunning(): Promise<boolean> {
   }
 }
 
-export function ollamaRoutes(): Router {
+export function ollamaRoutes(env: NodeJS.ProcessEnv = process.env): Router {
   const router = Router();
+  // Onboarding for a local single-user install. In a guarded (hosted) vault it
+  // would probe and pull on the server's own localhost and reveal hardware
+  // details, so the routes do not exist there (LBV2-19).
+  if (isVaultGuarded(env)) return router;
 
   // GET /api/system — hardware profile + model recommendations for it.
   router.get('/system', (_req, res) => {
