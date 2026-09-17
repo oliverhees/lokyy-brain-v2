@@ -3,9 +3,12 @@
 // tokens outside the Authentik login, and mDNS advertising is pointless in a
 // container. The inbox itself stays available because RSS feeds use it.
 import type { RequestHandler } from 'express';
+import { isVaultGuarded } from '@mindbase/core';
 
 export interface ServerFeatures {
   capture: boolean;
+  /** Ollama onboarding (/api/system, /api/ollama/*); off in guarded mode (LBV2-19). */
+  localModels: boolean;
 }
 
 export function isCaptureDisabled(env: NodeJS.ProcessEnv): boolean {
@@ -23,7 +26,7 @@ export function captureGate(env: NodeJS.ProcessEnv): RequestHandler {
 }
 
 export function serverFeatures(env: NodeJS.ProcessEnv): ServerFeatures {
-  return { capture: !isCaptureDisabled(env) };
+  return { capture: !isCaptureDisabled(env), localModels: !isVaultGuarded(env) };
 }
 
 /** GET /api/health body. Deliberately without dataDir (no filesystem layout disclosure). */
