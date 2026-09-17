@@ -186,7 +186,7 @@ for v in anna ben firma; do
     "$(docker compose exec -T "vault-$v" sh -c 'touch /models/.probe 2>/dev/null && echo WRITABLE || echo read-only' | tr -d '\r')" "read-only"
 done
 expect "OCR works; tesseract data cached in the vault's own home volume (MINDBASE_MODEL_CACHE, LBV2-14)" \
-  "$(OCR_PNG_B64=$(base64 -w0 tests/fixtures/ocr-lokyy.png) docker compose exec -T -e OCR_PNG_B64 vault-anna node --input-type=module - <tests/lib/ocr-probe.mjs 2>&1 | tail -1 | tr -d '\r')" "cache=MINDBASE_MODEL_CACHE text=LOKYY 4711"
+  "$(docker compose exec -T vault-anna sh -c 'cat >/tmp/ocr-probe.mjs' <tests/lib/ocr-probe.mjs; OCR_PNG_B64=$(base64 -w0 tests/fixtures/ocr-lokyy.png) docker compose exec -T -e OCR_PNG_B64 vault-anna node /tmp/ocr-probe.mjs 2>&1 | tail -1 | tr -d '\r')" "cache=MINDBASE_MODEL_CACHE text=LOKYY 4711"
 expect "tesseract cache is persistent and per vault (named volume vault-anna-home)" \
   "$(docker inspect "${STACK}-vault-anna-1" --format '{{range .Mounts}}{{if eq .Destination "/home/vault"}}{{.Type}}:{{.Name}}{{end}}{{end}}')" "volume:${STACK}_vault-anna-home"
 expect "vault-ben has no access to anna's tesseract cache" \

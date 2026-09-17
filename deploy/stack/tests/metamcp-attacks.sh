@@ -51,9 +51,13 @@ rpc() {
   if grep -q '^data: ' "$tmp/b"; then BODY=$(sed -n 's/^data: //p' "$tmp/b" | tail -1); else BODY=$(cat "$tmp/b"); fi
 }
 INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"attack","version":"0"}}}'
-# open <user> <key> → echoes session id
+# open <user> <key> → echoes session id. Waits out mcp-gate's initialize rate limit (burst 5, 1/s per key)
+# like a well-behaved client would.
 open() {
-  rpc "$1" key "$2" "" "$INIT"; local sid=$SID
+  local tries=0
+  rpc "$1" key "$2" "" "$INIT"
+  while [[ $STATUS == 429 && tries -lt 10 ]]; do sleep 1.2; tries=$((tries+1)); rpc "$1" key "$2" "" "$INIT"; done
+  local sid=$SID
   [[ $STATUS == 200 && -n $sid ]] || { echo ""; return; }
   rpc "$1" key "$2" "$sid" '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   echo "$sid"
