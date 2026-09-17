@@ -32,6 +32,44 @@ export function isValidUsername(name: string): boolean {
     && !RESERVED_USERNAME_SET.has(name.toLowerCase());
 }
 
+export const USERNAME_RULES_ERROR =
+  'Invalid user: use ASCII letters, digits, "_", "-" or "." (not leading "." or "-", no ".."), max 64 characters; "unknown" is reserved.';
+
+/** Last-resort contributor name when an OS account sanitizes to nothing usable. */
+export const FALLBACK_USERNAME = 'user';
+
+/**
+ * Deterministically maps an arbitrary name (e.g. an OS account like `oliver@corp`,
+ * `John Smith` or `jürgen`) onto the contributor-username alphabet.
+ */
+export function sanitizeUsername(name: string): string {
+  let s = name.normalize('NFC').replace(/[^A-Za-z0-9_.-]/g, '_');
+  s = s.replace(/\.{2,}/g, '.').replace(/^[.-]+/, '').slice(0, USERNAME_MAX_LENGTH);
+  // A name made only of replacement characters (e.g. a non-Latin account) identifies nobody.
+  return /[A-Za-z0-9]/.test(s) && isValidUsername(s) ? s : FALLBACK_USERNAME;
+}
+
+/**
+ * Contributor for a write. An explicit name is validated strictly (never sanitized).
+ * Without one, the OS account is sanitized, but only where that is meaningful
+ * (local transports); remote callers must name the contributor.
+ */
+export function resolveContributorUsername(opts: {
+  explicit?: string;
+  allowOsFallback: boolean;
+  osUsername: () => string;
+}): { ok: true; user: string } | { ok: false; error: string } {
+  if (opts.explicit !== undefined) {
+    return isValidUsername(opts.explicit) ? { ok: true, user: opts.explicit } : { ok: false, error: USERNAME_RULES_ERROR };
+  }
+  if (!opts.allowOsFallback) return { ok: false, error: 'Invalid user: "user" is required on this transport.' };
+  try {
+    return { ok: true, user: sanitizeUsername(opts.osUsername()) };
+  } catch {
+    return { ok: true, user: FALLBACK_USERNAME };
+  }
+}
+
 /** `YYYY-MM-DD` shape (used for dated directories such as sources/raw/<date>). */
 export function isValidIsoDate(value: string): boolean {
   return ISO_DATE_RE.test(value);

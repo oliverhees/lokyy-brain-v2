@@ -1,6 +1,6 @@
 import { userInfo } from 'node:os';
 import type { NextFunction, Request, Response } from 'express';
-import { isValidUsername, USERNAME_MAX_LENGTH } from '@mindbase/core';
+import { isValidUsername, sanitizeUsername as coreSanitizeUsername } from '@mindbase/core';
 import { identityHeaderName, isGuarded } from './proxy-identity';
 
 export { DEFAULT_IDENTITY_HEADER } from './proxy-identity';
@@ -47,10 +47,7 @@ function logMissingIdentity(header: string): void {
  * `oliver@corp` or `John Smith`) onto the contributor-username alphabet.
  */
 export function sanitizeUsername(name: string): string {
-  let s = name.normalize('NFC').replace(/[^A-Za-z0-9_.-]/g, '_');
-  s = s.replace(/\.{2,}/g, '.').replace(/^[.-]+/, '').slice(0, USERNAME_MAX_LENGTH);
-  // A name made only of replacement characters (e.g. a non-Latin account) identifies nobody.
-  return /[A-Za-z0-9]/.test(s) && isValidUsername(s) ? s : FALLBACK_OS_USER;
+  return coreSanitizeUsername(name);
 }
 
 function osFallback(osUsername: () => string): string {

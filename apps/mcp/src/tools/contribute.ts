@@ -6,7 +6,7 @@ import { userInfo } from 'node:os';
 import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
 import { resolveProjectId } from '../lib/resolve-project.js';
-import { projectPaths, isoToday, isValidUsername } from '@mindbase/core';
+import { projectPaths, isoToday, resolveContributorUsername } from '@mindbase/core';
 
 export const inputSchema = z.object({
   text: z.string().min(1),
@@ -23,7 +23,7 @@ export const definition = {
     properties: {
       text: { type: 'string', description: 'Body text to contribute' },
       projectId: { type: 'string', description: 'Project id; if omitted, resolves via config.json' },
-      user: { type: 'string', description: 'Contributor username; if omitted, resolves to os.userInfo().username' },
+      user: { type: 'string', description: 'Contributor username (ASCII letters, digits, _ - .; "unknown" reserved). Over stdio, if omitted, the OS account mapped to that alphabet; required over HTTP.' },
       mode: { type: 'string', description: 'auto | daily | concept | daily+concept' },
     },
     required: ['text'],
@@ -39,11 +39,16 @@ export async function handle(ctx: Context, rawInput: unknown) {
   if (!resolved.ok) return errorResult(resolved.error);
   const projectId = resolved.projectId;
 
-  const user = parsed.data.user ?? userInfo().username;
-  // `user` names a directory under sources/contributors/.
-  if (!isValidUsername(user)) {
-    return errorResult('Invalid user: use letters, digits, "_", "-" or "." (not leading, no ".."), max 64 characters.');
-  }
+  // `user` names a directory under sources/contributors/. An explicit name is validated
+  // strictly; the OS-account fallback (sanitized like the web server's) only exists on
+  // stdio, where the OS account is the caller's own (LBV2-14).
+  const who = resolveContributorUsername({
+    explicit: parsed.data.user,
+    allowOsFallback: ctx.allowLocalFilePaths,
+    osUsername: () => userInfo().username,
+  });
+  if (!who.ok) return errorResult(who.error);
+  const user = who.user;
   const today = isoToday();
   const root = join(ctx.dataDir, 'projects', projectId);
   const p = projectPaths();

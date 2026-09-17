@@ -11,6 +11,9 @@ export { slugify } from './storage/paths';
 export {
   isValidTrashEntryId,
   isValidUsername,
+  sanitizeUsername,
+  resolveContributorUsername,
+  USERNAME_RULES_ERROR,
   isValidIsoDate,
   isSafePathSegment,
   isPlainSlug,
