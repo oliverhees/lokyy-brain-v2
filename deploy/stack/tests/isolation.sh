@@ -186,7 +186,7 @@ for v in anna ben firma; do
     "$(docker compose exec -T "vault-$v" sh -c 'touch /models/.probe 2>/dev/null && echo WRITABLE || echo read-only' | tr -d '\r')" "read-only"
 done
 expect "OCR works with read-only /models (tesseract cache falls back to private tmp, LBV2-14)" \
-  "$(docker compose exec -T vault-anna node --input-type=module - <tests/lib/ocr-probe.mjs 2>&1 | tail -1 | tr -d '\r')" "cache=tmp text=LOKYY 4711"
+  "$(OCR_PNG_B64=$(base64 -w0 tests/fixtures/ocr-lokyy.png) docker compose exec -T -e OCR_PNG_B64 vault-anna node --input-type=module - <tests/lib/ocr-probe.mjs 2>&1 | tail -1 | tr -d '\r')" "cache=tmp text=LOKYY 4711"
 expect "model cache prefilled by model-prefetch" \
   "$(docker compose exec -T vault-anna sh -c 'find /models -name "*.onnx" | head -1 | grep -q . && echo present || echo missing' | tr -d '\r')" "present"
 expect "vault-anna → traefik → ben (no session)" \
