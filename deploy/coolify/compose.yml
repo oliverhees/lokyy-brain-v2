@@ -195,6 +195,7 @@ services:
       - traefik.http.routers.vault-u1-outpost.rule=Host(`${VAULT_U1_USER}.vault.${LOKYY_DOMAIN}`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.vault-u1-outpost.entrypoints=web
       - traefik.http.routers.vault-u1-outpost.service=authentik
+      - traefik.http.routers.vault-u1-outpost.middlewares=vault-u1-fwd@docker
     networks:
       web-u1: {}
       mcp-u1: { aliases: [upstream.vault-u1] }
@@ -225,6 +226,7 @@ services:
       - traefik.http.routers.vault-u2-outpost.rule=Host(`${VAULT_U2_USER}.vault.${LOKYY_DOMAIN}`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.vault-u2-outpost.entrypoints=web
       - traefik.http.routers.vault-u2-outpost.service=authentik
+      - traefik.http.routers.vault-u2-outpost.middlewares=vault-u2-fwd@docker
     networks:
       web-u2: {}
       mcp-u2: { aliases: [upstream.vault-u2] }
@@ -255,6 +257,7 @@ services:
       - traefik.http.routers.vault-u3-outpost.rule=Host(`${VAULT_U3_USER}.vault.${LOKYY_DOMAIN}`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.vault-u3-outpost.entrypoints=web
       - traefik.http.routers.vault-u3-outpost.service=authentik
+      - traefik.http.routers.vault-u3-outpost.middlewares=vault-u3-fwd@docker
     networks:
       web-u3: {}
       mcp-u3: { aliases: [upstream.vault-u3] }
@@ -287,6 +290,7 @@ services:
       - traefik.http.routers.vault-firma-outpost.rule=Host(`firma.vault.${LOKYY_DOMAIN}`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.vault-firma-outpost.entrypoints=web
       - traefik.http.routers.vault-firma-outpost.service=authentik
+      - traefik.http.routers.vault-firma-outpost.middlewares=vault-firma-fwd@docker
     networks:
       web-firma: {}
       mcp-firma: { aliases: [upstream.vault-firma] }
@@ -339,6 +343,7 @@ services:
       - traefik.http.routers.metamcp-outpost.rule=Host(`mcp.${LOKYY_DOMAIN}`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.metamcp-outpost.entrypoints=web
       - traefik.http.routers.metamcp-outpost.service=authentik
+      - traefik.http.routers.metamcp-outpost.middlewares=metamcp-fwd@docker
       - traefik.http.services.metamcp.loadbalancer.server.port=12008
     # No egress, no vault network: vaults are reached only through vault-connector (mcp-upstream)
     networks: [edge, metamcp-internal, mcp-upstream]

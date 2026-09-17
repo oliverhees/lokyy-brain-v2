@@ -27,10 +27,12 @@ for v in u1 u2 u3 firma; do
   check "vault-$v chain starts with host pinning" 'grep -qx "traefik.http.routers.vault-$v.middlewares=vault-$v-fwd@docker,authentik@docker,vault-identity@docker,vault-$v-secret@docker" <<<"$labels"'
   check "vault-$v pins X-Forwarded-Host" 'grep -qx "traefik.http.middlewares.vault-$v-fwd.headers.customrequestheaders.X-Forwarded-Host=${host[$v]}" <<<"$labels"'
   check "vault-$v pins X-Forwarded-Proto" 'grep -qx "traefik.http.middlewares.vault-$v-fwd.headers.customrequestheaders.X-Forwarded-Proto=https" <<<"$labels"'
+  check "vault-$v outpost router pins forwarded headers" 'grep -qx "traefik.http.routers.vault-$v-outpost.middlewares=vault-$v-fwd@docker" <<<"$labels"'
 done
 mlabels=$(q '.services.metamcp.labels | to_entries[] | "\(.key)=\(.value)"')
 check "metamcp admin chain starts with host pinning" 'grep -qx "traefik.http.routers.metamcp.middlewares=metamcp-fwd@docker,authentik@docker" <<<"$mlabels"'
 check "metamcp pins X-Forwarded-Host" 'grep -qx "traefik.http.middlewares.metamcp-fwd.headers.customrequestheaders.X-Forwarded-Host=mcp.beta.example.test" <<<"$mlabels"'
+check "metamcp outpost router pins forwarded headers" 'grep -qx "traefik.http.routers.metamcp-outpost.middlewares=metamcp-fwd@docker" <<<"$mlabels"'
 check "metamcp not on any vault network" '! q ".services.metamcp.networks | keys[]" | grep -qE "^(web|mcp)-(u[0-9]+|firma)$"'
 
 check "gen-env rejects duplicate usernames" '! "$dir/gen-env.sh" x.test anna anna carl e@x.test >/dev/null 2>&1'

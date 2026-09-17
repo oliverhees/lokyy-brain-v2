@@ -72,7 +72,7 @@ Set `COOLIFY_PROXY_IP` (mandatory) to the IP of the coolify-proxy container on t
 docker inspect coolify-proxy -f '{{(index .NetworkSettings.Networks "coolify").IPAddress}}'
 ```
 
-The IP can change when coolify-proxy is recreated (Coolify upgrade, proxy restart from the UI). After such an event re-check it and, if changed, update the env file and run section 5 again. Headers from any other peer are overwritten by Traefik; `X-Forwarded-Host`/`-Proto` are additionally pinned per router (see section 0 and smoke test 14).
+**Re-check `COOLIFY_PROXY_IP` after every coolify-proxy restart/recreate, Docker daemon restart, Coolify upgrade or server reboot** (the address can change). Symptom of a stale value: every MCP client shares one rate-limit bucket (429 for everyone under load) and logged client IPs are the proxy's. Fix: update `COOLIFY_PROXY_IP` in `/root/lokyy.env`, then recreate the inner Traefik: `docker compose -p lokyy --env-file /root/lokyy.env -f deploy/coolify/compose.yml up -d --force-recreate lokyy-traefik`. Headers from any other peer are overwritten by Traefik; `X-Forwarded-Host`/`-Proto` are additionally pinned per router (see section 0 and smoke test 14).
 
 Coolify's magic variables (`SERVICE_PASSWORD_*`, `SERVICE_FQDN_*`) are deliberately not used: rotation and provisioning need known variable names, and the hostnames are routed by `lokyy-traefik`, not by Coolify-generated domains.
 
