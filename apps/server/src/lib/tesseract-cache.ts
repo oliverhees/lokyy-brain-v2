@@ -1,4 +1,4 @@
-import { accessSync, constants, mkdirSync } from 'node:fs';
+import { accessSync, constants, lstatSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -26,9 +26,25 @@ export function tesseractCachePath(
   return join(tmpdir(), 'mindbase-tesseract');
 }
 
-/** Worker options for tesseract.js createWorker, with the cache directory created. */
+/**
+ * Creates `dir` with mode 0700 (or reuses it) and returns it only if it is a real
+ * directory (not a symlink) owned by this process's user with no group/other write
+ * bit. Otherwise a fresh `mkdtemp` directory is returned, because a predictable
+ * shared path (e.g. in /tmp) could have been pre-created by another local user.
+ */
+export function ensurePrivateCacheDir(dir: string): string {
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const st = lstatSync(dir);
+    const uid = typeof process.getuid === 'function' ? process.getuid() : st.uid;
+    if (st.isDirectory() && !st.isSymbolicLink() && st.uid === uid && (st.mode & 0o022) === 0) return dir;
+  } catch {
+    // fall through to a fresh private directory
+  }
+  return mkdtempSync(join(tmpdir(), 'mindbase-tesseract-'));
+}
+
+/** Worker options for tesseract.js createWorker, with a safe cache directory. */
 export function tesseractWorkerOptions(): { cachePath: string } {
-  const cachePath = tesseractCachePath();
-  mkdirSync(cachePath, { recursive: true });
-  return { cachePath };
+  return { cachePath: ensurePrivateCacheDir(tesseractCachePath()) };
 }
