@@ -6,7 +6,7 @@
 // 'Xenova/bge-m3') with library defaults (quantized). PREFETCH_VERIFY_ONLY=1 skips the download.
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,6 +37,14 @@ if (problems.length && process.env.PREFETCH_VERIFY_ONLY !== '1' && !problems.som
   const extractor = await pipeline('feature-extraction', manifest.model, { revision: manifest.revision });
   const out = await extractor('lokyy model prefetch', { pooling: 'mean', normalize: true });
   console.log(`downloaded ${manifest.model}@${manifest.revision.slice(0, 12)} (dim ${out.data.length}, ${Math.round((Date.now() - started) / 1000)} s)`);
+  // transformers.js caches a pinned revision under <model>/<revision>/, but the vault loads the model without a
+  // revision from <model>/. Move the verified-to-be files to where the vault reads them.
+  const revDir = join(root, manifest.revision);
+  for (const name of Object.keys(manifest.files)) {
+    mkdirSync(dirname(join(root, name)), { recursive: true });
+    copyFileSync(join(revDir, name), join(root, name));
+  }
+  rmSync(revDir, { recursive: true, force: true });
   problems = await verify();
 }
 if (problems.length) {
