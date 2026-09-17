@@ -11,18 +11,20 @@ import { acquireAll, readerLlmRateLimitFromEnv, SlidingWindow, type ReaderLlmRat
 
 export { READ_ONLY_TOOL_NAMES, isToolAllowed } from './access.js';
 
-/** Parsed once at startup; an invalid value stops the process before it serves anything. */
-function loadReaderLlmRateLimit(): ReaderLlmRateLimit {
-  try {
-    return readerLlmRateLimitFromEnv();
-  } catch (e) {
-    process.stderr.write(`[mindbase-mcp] fatal: ${(e as Error).message}\n`);
-    process.exit(1);
+/**
+ * MCP_HTTP_READONLY_LLM_* only configure read-only sessions, which exist only on the
+ * HTTP transport. They are parsed on first use, so a stdio process never reads them;
+ * http.ts validates them at startup and exits 1 on invalid values (LBV2-14).
+ */
+let readerLlm: { rate: ReaderLlmRateLimit; tokenWindow: SlidingWindow } | null = null;
+function readerLlmLimits(): { rate: ReaderLlmRateLimit; tokenWindow: SlidingWindow } {
+  if (!readerLlm) {
+    const rate = readerLlmRateLimitFromEnv();
+    // Shared by every read-only session in this process, i.e. by the single read-only token.
+    readerLlm = { rate, tokenWindow: new SlidingWindow(rate.perToken, rate.windowMs) };
   }
+  return readerLlm;
 }
-const READER_LLM_RATE = loadReaderLlmRateLimit();
-/** Shared by every read-only session in this process, i.e. by the single read-only token. */
-const readerTokenLlmWindow = new SlidingWindow(READER_LLM_RATE.perToken, READER_LLM_RATE.windowMs);
 export { createReaderView } from './visibility.js';
 export type { AccessProfile } from './access.js';
 
@@ -117,8 +119,9 @@ export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>, pr
     registerResources(server, ctx, profile);
   } else {
     // Readers get a context that hides internal/pii pages; visibility is re-read per request.
-    const sessionLlmWindow = new SlidingWindow(READER_LLM_RATE.perSession, READER_LLM_RATE.windowMs);
-    const view = createReaderView(ctx, () => acquireAll([sessionLlmWindow, readerTokenLlmWindow]));
+    const { rate, tokenWindow } = readerLlmLimits();
+    const sessionLlmWindow = new SlidingWindow(rate.perSession, rate.windowMs);
+    const view = createReaderView(ctx, () => acquireAll([sessionLlmWindow, tokenWindow]));
     registerTools(server, view.ctx, profile, view.refresh);
     registerResources(server, view.ctx, profile, view.refresh);
   }

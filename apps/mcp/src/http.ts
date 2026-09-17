@@ -23,6 +23,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { readFetchConcurrency, readLlmTimeoutMs } from '@mindbase/core';
 import { loadContext } from './context.js';
+import { readerLlmRateLimitFromEnv } from './lib/rate-limit.js';
 import { createMcpServer } from './index.js';
 import type { AccessProfile } from './access.js';
 
@@ -110,6 +111,7 @@ async function main(): Promise<void> {
   try {
     readFetchConcurrency(process.env);
     readLlmTimeoutMs(process.env);
+    readerLlmRateLimitFromEnv(process.env);
   } catch (e) {
     log(`fatal: ${(e as Error).message}`);
     process.exit(1);
@@ -118,7 +120,7 @@ async function main(): Promise<void> {
     .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
 
   // Remote clients must not make the server read its own filesystem.
-  const ctx = { ...(await loadContext({})), allowLocalFilePaths: false };
+  const ctx = await loadContext({ allowLocalFilePaths: false });
 
   interface Session { transport: StreamableHTTPServerTransport; lastSeen: number; inFlight: number; profile: AccessProfile }
   const sessions = new Map<string, Session>();
