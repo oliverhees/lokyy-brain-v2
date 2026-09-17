@@ -44,9 +44,12 @@ function expandHome(p: string): string {
 
 export async function loadContext(opts: {
   dataDir?: string;
-  /** false for remote transports: tools must not read the server's filesystem. Default true (stdio). */
-  allowLocalFilePaths?: boolean;
+  /** Required, no default (fail closed): true only for stdio, false for remote transports. */
+  allowLocalFilePaths: boolean;
 }): Promise<Context> {
+  if (typeof opts.allowLocalFilePaths !== 'boolean') {
+    throw new Error('loadContext: allowLocalFilePaths must be set explicitly');
+  }
   const dataDir = expandHome(opts.dataDir ?? process.env['MINDBASE_DATA_DIR'] ?? path.join(os.homedir(), 'mindbase-data'));
   await fs.mkdir(dataDir, { recursive: true });
 
@@ -130,7 +133,7 @@ export async function loadContext(opts: {
       Object.assign(searchIndex, fresh);
     },
     mcpClient: process.env['MCP_CLIENT'] ?? 'unknown',
-    allowLocalFilePaths: opts.allowLocalFilePaths ?? true,
+    allowLocalFilePaths: opts.allowLocalFilePaths,
   };
 }
 

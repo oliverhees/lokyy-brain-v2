@@ -130,7 +130,8 @@ export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>, pr
 }
 
 export async function runServer(opts: RunOptions = {}): Promise<void> {
-  const ctx = await loadContext({ dataDir: opts.dataDir });
+  // stdio: the client is the local user, so local file paths are allowed.
+  const ctx = await loadContext({ dataDir: opts.dataDir, allowLocalFilePaths: true });
   const server = createMcpServer(ctx);
 
   const transport = new StdioServerTransport();
