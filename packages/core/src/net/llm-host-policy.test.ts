@@ -51,10 +51,11 @@ describe('readLlmHostPolicy (LBV2-19)', () => {
     const info = vi.fn();
     logLlmHostPolicy({}, { warn, info });
     expect(warn).not.toHaveBeenCalled();
+    expect(info.mock.calls[0]![0]).toBe('[llm-host-policy] LLM host allowlist not configured; all LLM hosts allowed (unguarded mode)');
     logLlmHostPolicy(GUARDED, { warn, info });
     expect(warn.mock.calls[0]![0]).toMatch(/VAULT_LLM_ALLOWED_HOSTS is not set.*refused/);
     logLlmHostPolicy({ ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: 'api.eurouter.ai,nope/x' }, { warn, info });
-    expect(info.mock.calls[0]![0]).toContain('api.eurouter.ai');
+    expect(info.mock.calls[1]![0]).toContain('api.eurouter.ai');
     expect(warn.mock.calls[1]![0]).toMatch(/ignored invalid entr/);
   });
 
@@ -158,6 +159,11 @@ beforeAll(async () => {
       res.end();
       return;
     }
+    if (req.url === '/loop') {
+      res.writeHead(302, { location: '/loop' });
+      res.end();
+      return;
+    }
     if (req.url === '/same-host') {
       res.writeHead(307, { location: '/ok' });
       res.end();
@@ -231,6 +237,15 @@ describe('guardLlmFetch', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const env = { ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: `${new URL(base).host},localhost:1` };
     await expect(guardLlmFetch(fetch, env)(`${base}/off-host`)).rejects.toThrow(LLM_HOST_NOT_ALLOWED_ERROR);
+  });
+
+  it('logs "too many redirects" (not a host/port refusal) for a same-origin redirect loop', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(guardLlmFetch(fetch, allowLoopback)(`${base}/loop`)).rejects.toThrow(LLM_HOST_NOT_ALLOWED_ERROR);
+    expect(hits).toHaveLength(6);
+    const logged = warn.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toContain('too many redirects');
+    expect(logged).not.toContain('host or port not allowed');
   });
 
   it('follows a same-origin redirect', async () => {

@@ -87,7 +87,10 @@ export function logLlmHostPolicy(
   logger: { warn: (msg: string) => void; info: (msg: string) => void } = { warn: console.warn, info: console.log },
 ): void {
   const policy = readLlmHostPolicy(env);
-  if (!policy.enforced) return;
+  if (!policy.enforced) {
+    logger.info('[llm-host-policy] LLM host allowlist not configured; all LLM hosts allowed (unguarded mode)');
+    return;
+  }
   const invalid = rawEntries(env).filter((e) => parseEntry(e) === undefined);
   if (invalid.length > 0) logger.warn(`[llm-host-policy] ${LLM_ALLOWED_HOSTS_ENV}: ignored invalid entries: ${invalid.join(', ')}`);
   if (policy.allowedHosts.size === 0) {
@@ -126,6 +129,13 @@ export function isLlmUrlAllowed(url: string, env: Env = processEnv()): boolean {
 function refuse(url: string, reason: string): never {
   const host = parseUrl(url)?.host ?? '<invalid url>';
   console.warn(`[llm-host-policy] refused ${reason} to ${host}: host or port not allowed by ${LLM_ALLOWED_HOSTS_ENV}`);
+  throw new LlmHostNotAllowedError();
+}
+
+/** Same generic client error, but the log names the real cause. */
+function refuseRedirectChain(url: string): never {
+  const host = parseUrl(url)?.host ?? '<invalid url>';
+  console.warn(`[llm-host-policy] refused request to ${host}: too many redirects (max ${MAX_REDIRECTS})`);
   throw new LlmHostNotAllowedError();
 }
 
@@ -181,7 +191,7 @@ export function guardLlmFetch(fetchImpl: typeof fetch, env?: Env): typeof fetch 
 
       const target = parseUrl(new URL(location, url).toString());
       if (!target || target.origin !== origin.origin) refuse(target?.toString() ?? location, 'redirect');
-      if (hop >= MAX_REDIRECTS) refuse(url, 'redirect chain');
+      if (hop >= MAX_REDIRECTS) refuseRedirectChain(url);
       await response.body?.cancel().catch(() => undefined);
 
       const method = (currentInit.method ?? 'GET').toUpperCase();
