@@ -262,6 +262,8 @@ expect "gate routes nothing but /mcp: /metamcp/health/sessions" "$(curl -s -o /d
 docker compose restart mcp-gate >/dev/null
 deadline=$((SECONDS + 60))
 until [[ $(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q mcp-gate)") == healthy ]] || ((SECONDS > deadline)); do sleep 2; done
+# Traefik re-adds the router a moment after the container is healthy (404 until then).
+for _ in $(seq 1 30); do [[ $(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/anna/mcp") == 401 ]] && break; sleep 1; done
 rpc ben key "$BEN" "$sb2" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 expect "after a gate restart the old session is rejected (client must re-initialize)" "$STATUS" "401"
 expect "after a gate restart a new session works" "$([[ -n $(open ben "$BEN") ]] && echo yes || echo no)" "yes"
