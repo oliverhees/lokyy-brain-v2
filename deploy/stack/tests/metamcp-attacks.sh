@@ -12,6 +12,13 @@ tests/wait-ready.sh "${WAIT_TIMEOUT:-300}" || exit 1
 pass=0 fail=0
 ok()  { echo "PASS $1"; pass=$((pass+1)); }
 bad() { echo "FAIL $1"; fail=$((fail+1)); }
+# xfail <name> <actual> <allowed-regex> <known issue>: a check that is EXPECTED to fail until a known finding is fixed.
+# It is reported (XFAIL), never hidden; if it starts passing it is reported as XPASS so the marker gets removed.
+xfailed=0 xpassed=0
+xfail() {
+  if [[ "$2" =~ ^($3)$ ]]; then echo "XPASS $1 → $2 (known issue $4 seems fixed: turn this into a normal check)"; xpassed=$((xpassed+1))
+  else echo "XFAIL $1 → $2 (expected $3; KNOWN $4)"; xfailed=$((xfailed+1)); fi
+}
 expect() { # expect <name> <actual> <allowed-regex>
   if [[ "$2" =~ ^($3)$ ]]; then ok "$1 → $2"; else bad "$1 → $2 (expected $3)"; fi
 }
@@ -93,12 +100,27 @@ ANNA=$(key anna) BEN=$(key ben)
 echo "== 1. Endpoint authentication through Traefik"
 rpc anna none "" "" "$INIT";        expect "anna endpoint without key" "$STATUS" "401"
 rpc anna key "wrong-$RANDOM" "" "$INIT"; expect "anna endpoint with invented key" "$STATUS" "401"
-rpc ben key "$ANNA" "" "$INIT";     expect "anna's key on ben's endpoint (x-api-key)" "$STATUS" "403"
-rpc ben bearer "$ANNA" "" "$INIT";  expect "anna's key on ben's endpoint (Bearer)" "$STATUS" "403"
+rpc ben key "$ANNA" "" "$INIT";     expect "anna's key on ben's endpoint (x-api-key)" "$STATUS" "401"
+rpc ben bearer "$ANNA" "" "$INIT";  expect "anna's key on ben's endpoint (Bearer)" "$STATUS" "401"
 rpc ben query "$ANNA" "" "$INIT";   expect "anna's key on ben's endpoint (query param, disabled)" "$STATUS" "401"
 rpc ben none "" "" "$INIT";         expect "ben's endpoint without key" "$STATUS" "401"
 rpc nosuchuser key "$ANNA" "" "$INIT"; expect "unknown endpoint answers like a wrong key (no enumeration)" "$STATUS" "401"
-rpc anna key "$BEN" "" "$INIT";     expect "ben's key on anna's endpoint" "$STATUS" "403"
+rpc anna key "$BEN" "" "$INIT";     expect "ben's key on anna's endpoint" "$STATUS" "401"
+# L1/M2: every rejection looks the same (status and body), so nothing can be enumerated and
+# MetaMCP's "available_sessions" list never reaches a client.
+bodies() { rpc "$@"; echo "$STATUS $(sha256sum <"$tmp/b" | cut -c1-16) $(wc -c <"$tmp/b")"; }
+{
+  bodies anna none "" "" "$INIT"
+  bodies anna key "wrong-$RANDOM" "" "$INIT"
+  bodies ben key "$ANNA" "" "$INIT"
+  bodies nosuchuser key "$ANNA" "" "$INIT"
+  bodies nosuchuser none "" "" "$INIT"
+  bodies anna key "$ANNA" "00000000-0000-4000-8000-000000000000" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+} >"$tmp/rejections"
+expect "all 6 rejection kinds identical (status, body hash, length)" "$(sort -u "$tmp/rejections" | wc -l)" "1"
+rpc anna key "$ANNA" "00000000-0000-4000-8000-000000000000" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+expect "valid key + invented session id: no session ids (UUIDs) in the response" \
+  "$(grep -cE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' "$tmp/b")" "0"
 # Anything but /metamcp/<name>/mcp falls through to the Authentik-protected admin router (302 to login).
 expect "endpoint catalogue GET /metamcp/ not routed to MetaMCP" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")" "302"
 for p in sse message api/openapi.json api/tools/x; do
@@ -174,14 +196,42 @@ rpc anna key "$old" "$sa" '{"jsonrpc":"2.0","id":9,"method":"tools/list"}'; expe
 expect "new anna key works" "$([[ -n $(open anna "$ANNA") ]] && echo yes || echo no)" "yes"
 jq '.users |= map(select(.username != "ben"))' users.json >"$tmp/users-without-ben.json"
 USERS_FILE="$tmp/users-without-ben.json" provision
-rpc ben key "$BEN" "" "$INIT";      expect "removed user ben: his key on his old endpoint" "$STATUS" "401|404"
-rpc ben key "$BEN" "$sb" '{"jsonrpc":"2.0","id":9,"method":"tools/list"}'; expect "removed user ben: already open session" "$STATUS" "401|404"
+rpc ben key "$BEN" "" "$INIT";      expect "removed user ben: his key on his old endpoint" "$STATUS" "401"
+rpc ben key "$BEN" "$sb" '{"jsonrpc":"2.0","id":9,"method":"tools/list"}'; expect "removed user ben: already open session" "$STATUS" "401"
 expect "removed user ben: MetaMCP objects deleted" "$(count "select count(*) from users where id='lokyy-ben'")/$(count "select count(*) from api_keys where user_id='lokyy-ben'")" "0/0"
 rpc anna key "$BEN" "" "$INIT";     expect "removed user ben: his key on anna's endpoint" "$STATUS" "401"
 provision
 BEN=$(key ben)
 expect "re-added ben gets a working (new) key" "$([[ -n $(open ben "$BEN") ]] && echo yes || echo no)" "yes"
 
+echo "== 7. Access changes end open sessions (M1)"
+expect "MetaMCP session lifetime is finite (8 h)" "$(count "select value from config where id='SESSION_LIFETIME'")" "28800000"
+sd=$(open ben "$BEN")
+m4="mcpattack-demoted-$RANDOM$RANDOM" m4b="mcpattack-writer2-$RANDOM$RANDOM"
+expect "ben (writer) writes to the company vault through his open session" \
+  "$(call ben "$BEN" "$sd" ben-firma__create_note "$(note "$m4b")")" "OK"
+jq '(.users[] | select(.username == "ben") | .role) = "reader"' users.json >"$tmp/users-ben-reader.json"
+USERS_FILE="$tmp/users-ben-reader.json" provision
+expect "demotion rotated ben's key" "$([[ $(key ben) != "$BEN" ]] && echo rotated || echo same)" "rotated"
+expect "demoted ben: old key + open writer session → company write" \
+  "$(call ben "$BEN" "$sd" ben-firma__create_note "$(note "$m4")" | cut -d: -f1)" "REJECTED"
+expect "demoted ben: new key + old writer session → company write" \
+  "$(call ben "$(key ben)" "$sd" ben-firma__create_note "$(note "$m4")" | cut -d: -f1)" "REJECTED"
+sr=$(open ben "$(key ben)")
+expect "demoted ben: new session → company write" \
+  "$(call ben "$(key ben)" "$sr" ben-firma__create_note "$(note "$m4")" | cut -d: -f1)" "REJECTED"
+expect "demoted ben: nothing written after the demotion" "$(found firma "$m4")" "0"
+provision   # restore ben as writer (again rotates his key and restarts MetaMCP)
+BEN=$(key ben) ANNA=$(key anna)
+
+echo "== 8. Known open findings (expected to fail until fixed)"
+# M2 (High): MetaMCP 2.4.22 binds sessions to nothing — any valid key on its own endpoint can use another
+# user's session id. Fix pending (decision Oliver).
+sb2=$(open ben "$BEN"); sa2=$(open anna "$ANNA")
+rpc anna key "$ANNA" "$sb2" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+xfail "anna's key on her endpoint + ben's session id → rejected, no ben tools" \
+  "$STATUS/$(sed -n 's/^data: //p' "$tmp/b" | jq -r '[.result.tools[]?.name | select(startswith("ben-"))] | length' 2>/dev/null || echo 0)" "401/0|401/" "M2-session-hijack"
+
 echo
-echo "RESULT: $pass passed, $fail failed"
+echo "RESULT: $pass passed, $fail failed, $xfailed expected failures (known open findings), $xpassed unexpectedly passing"
 [[ $fail -eq 0 ]]

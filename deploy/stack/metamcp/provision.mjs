@@ -110,6 +110,8 @@ async function reconcile(u) {
         description: `Company vault ${company} (${reader ? 'read-only token' : 'full access'})` },
     ];
 
+    // Any change to credentials or server set of an existing user invalidates their key and open sessions (M1).
+    let changed = false;
     // servers
     const servers = own((await trpc('mcpServers.list', undefined, false)).data);
     const serverUuids = [];
@@ -122,12 +124,14 @@ async function reconcile(u) {
       } else {
         if (existing.url !== d.url || existing.bearerToken !== d.bearerToken || existing.type !== 'STREAMABLE_HTTP') {
           await trpc('mcpServers.update', { uuid: existing.uuid, ...fields });
+          changed = true;
           log(`${u.username}: updated server ${d.name}`);
         }
         serverUuids.push(existing.uuid);
       }
     }
     for (const s of servers.filter((s) => !desired.some((d) => d.name === s.name))) {
+      changed = true;
       await trpc('mcpServers.delete', { uuid: s.uuid });
       log(`${u.username}: deleted stray server ${s.name}`);
     }
@@ -143,6 +147,7 @@ async function reconcile(u) {
       const current = ((await trpc('namespaces.get', { uuid: ns.uuid }, false)).data?.servers ?? []).map((s) => s.uuid).sort();
       if (JSON.stringify(current) !== JSON.stringify([...serverUuids].sort())) {
         await trpc('namespaces.update', { uuid: ns.uuid, name: nsName, description: `Lokyy ${u.role} ${u.username}`, mcpServerUuids: serverUuids });
+        changed = true;
         log(`${u.username}: updated namespace servers`);
       }
     }
@@ -157,6 +162,7 @@ async function reconcile(u) {
       log(`${u.username}: created endpoint`);
     } else if (ep.namespace_uuid !== ns.uuid || !ep.enable_api_key_auth || ep.enable_oauth || ep.use_query_param_auth) {
       await trpc('endpoints.update', { uuid: ep.uuid, name: u.username, namespaceUuid: ns.uuid, ...epFlags });
+      changed = true;
       log(`${u.username}: updated endpoint`);
     }
     for (const e of endpoints.filter((e) => e.name !== u.username)) await trpc('endpoints.delete', { uuid: e.uuid });
@@ -164,14 +170,15 @@ async function reconcile(u) {
     // api key
     const keys = ((await trpc('apiKeys.list', undefined, false)).apiKeys ?? []).filter((k) => k.user_id === id || k.user_id === undefined);
     let key = keys.find((k) => k.name === KEY_NAME && k.is_active);
-    for (const k of keys.filter((k) => k !== key || rotate.has(u.username))) {
+    for (const k of keys.filter((k) => k !== key || (rotate.has(u.username) || changed))) {
       await trpc('apiKeys.delete', { uuid: k.uuid });
-      log(`${u.username}: deleted API key ${k.name}${rotate.has(u.username) ? ' (rotation)' : ''}`);
+      log(`${u.username}: deleted API key ${k.name}${rotate.has(u.username) ? " (rotation)" : changed ? " (access changed)" : ""}`);
     }
-    if (!key || rotate.has(u.username)) {
+    if (!key || (rotate.has(u.username) || changed)) {
       key = await trpc('apiKeys.create', { name: KEY_NAME });
       log(`${u.username}: issued API key`);
     }
+    if (changed) restartMetamcp = true;
     return { username: u.username, role: u.role, vault: u.vault, companyVault: company,
       url: `${publicBase}/metamcp/${u.username}/mcp`, apiKey: key.key, namespaceUuid: ns.uuid, companyServer: `${u.username}-${company}` };
   });
@@ -218,6 +225,8 @@ async function tripwire(client) {
 
 // ------------------------------------------------------------------ main
 const clients = [];
+// Set when open MetaMCP sessions may carry outdated access (changed or removed user): provision.sh restarts MetaMCP.
+let restartMetamcp = false;
 try {
   for (const u of spec.users) clients.push(await reconcile(u));
 
@@ -231,18 +240,19 @@ try {
       for (const n of (await trpc('namespaces.list', undefined, false)).data) if (n.user_id === id) await trpc('namespaces.delete', { uuid: n.uuid });
       for (const s of (await trpc('mcpServers.list', undefined, false)).data) if (s.user_id === id) await trpc('mcpServers.delete', { uuid: s.uuid });
     });
+    restartMetamcp = true;
     await db.query('delete from users where id = $1', [id]); // cascades any remaining owned rows
     log(`${username}: removed (not in users file)`);
   }
 
   for (const c of clients) await tripwire(c);
   for (const c of clients) delete c.namespaceUuid;
-  console.log(JSON.stringify({ generatedAt: new Date().toISOString(), status: "ok", users: clients }, null, 2));
+  console.log(JSON.stringify({ generatedAt: new Date().toISOString(), status: "ok", restartMetamcp, users: clients }, null, 2));
   log(`ok: ${clients.map((c) => `${c.username}(${c.role}) tools ${c.tools.total}, company ${c.tools.company}`).join('; ')}`);
 } catch (e) {
   // Keys may already be rotated or issued: always hand back what exists now, marked as failed.
   for (const c of clients) delete c.namespaceUuid;
-  console.log(JSON.stringify({ generatedAt: new Date().toISOString(), status: "failed", error: e.message, users: clients }, null, 2));
+  console.log(JSON.stringify({ generatedAt: new Date().toISOString(), status: "failed", error: e.message, restartMetamcp, users: clients }, null, 2));
   log(`FAILED: ${e.message}`);
   process.exitCode = 1;
 } finally {

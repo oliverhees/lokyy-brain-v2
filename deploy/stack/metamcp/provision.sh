@@ -54,6 +54,18 @@ if jq -e '.users' "$out.tmp" >/dev/null 2>&1; then
   mv "$out.tmp" "$out"
   chmod 600 "$out"
   echo "wrote $out ($(jq '.users | length' "$out") users, status $(jq -r '.status' "$out"))" >&2
+  if [[ $(jq -r '.restartMetamcp' "$out") == true ]]; then
+    # MetaMCP keeps open sessions (and their upstream credentials) in memory; a changed or removed
+    # user must not keep using them. A restart ends every session; clients reconnect with their key.
+    echo "access of at least one user changed or was removed: restarting MetaMCP to end all open sessions" >&2
+    docker compose restart metamcp >/dev/null
+    deadline=$((SECONDS + 180))
+    until [[ $(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q metamcp)") == healthy ]]; do
+      ((SECONDS < deadline)) || { echo "MetaMCP not healthy after restart" >&2; exit 1; }
+      sleep 2
+    done
+    echo "MetaMCP restarted" >&2
+  fi
 else
   rm -f "$out.tmp"
   [[ $code -ne 0 ]] || code=1
