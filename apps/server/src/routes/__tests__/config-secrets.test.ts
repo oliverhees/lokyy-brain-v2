@@ -130,6 +130,21 @@ describe('config-secrets helpers (LBV2-9)', () => {
     expect(() => mergeSecrets({ provider: 'anthropic' }, BASE)).toThrow(KeyReentryError);
   });
 
+  it('mergeSecrets: a switch to a cloud provider that ends without a key is refused (LBV2-14 QA)', () => {
+    const OLLAMA: AtlasConfig = { ...BASE, provider: 'ollama', model: 'llama3', apiKey: '' };
+    expect(() => mergeSecrets({ provider: 'openai', model: 'gpt-4o-mini' }, OLLAMA)).toThrow(/enter the API key/i);
+    expect(() => mergeSecrets({ provider: 'openai', model: 'gpt-4o-mini', apiKey: '' }, OLLAMA)).toThrow(/enter the API key/i);
+    expect(() => mergeSecrets({ provider: 'anthropic', apiKey: MASKED_SECRET }, OLLAMA)).toThrow(/enter the API key/i);
+    // with a key it works
+    expect(mergeSecrets({ provider: 'openai', model: 'gpt-4o-mini', apiKey: 'sk-new' }, OLLAMA).apiKey).toBe('sk-new');
+    // ollama -> ollama stays keyless
+    expect(mergeSecrets({ provider: 'ollama', model: 'qwen3' }, OLLAMA).apiKey).toBe('');
+    // chat model switch on the same provider with a stored key keeps working
+    const sw = mergeSecrets({ provider: 'openai', model: 'gpt-5' }, BASE);
+    expect(sw.apiKey).toBe('sk-live-secret-1234');
+    expect(sw.model).toBe('gpt-5');
+  });
+
   it.each(['********abc', 'abc********', 'x********y'])('mergeSecrets rejects a new secret containing the mask %j (QA 2)', (value) => {
     expect(() => mergeSecrets({ apiKey: value }, BASE)).toThrow(ConfigInputError);
     expect(() => mergeSecrets({ braveApiKey: value }, BASE)).toThrow(ConfigInputError);
