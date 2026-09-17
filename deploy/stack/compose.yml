@@ -21,6 +21,8 @@ x-vault: &vault
     context: ../..
     dockerfile: deploy/Dockerfile
   restart: unless-stopped
+  depends_on:
+    model-prefetch: { condition: service_completed_successfully }
   environment: &vault-env
     MCP_HTTP_PORT: "4322"
     MINDBASE_MDNS: "off"
@@ -111,6 +113,17 @@ services:
     networks: [authentik-internal]
 
   # ------------------------------------------------------------------- Vaults
+  # One-shot: fills the shared model cache that vaults mount read-only (a vault cannot tamper with
+  # the model files the others load). Needs internet (Hugging Face) on the first start.
+  model-prefetch:
+    image: lokyy-brain-v2:dev
+    restart: "no"
+    entrypoint: ["node", "/prefetch.mjs"]
+    volumes:
+      - models:/models
+      - ./models/prefetch.mjs:/prefetch.mjs:ro
+    networks: [model-egress]
+
   vault-anna:
     <<: *vault
     environment:
@@ -119,7 +132,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-anna:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_ANNA:?set in .env}
       VAULT_ADMIN_GROUPS: vault-anna-admin,lokyy-admins
-    volumes: [vault-anna:/data, models:/models]
+    volumes: [vault-anna:/data, models:/models:ro]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-anna
@@ -147,7 +160,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-ben:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_BEN:?set in .env}
       VAULT_ADMIN_GROUPS: vault-ben-admin,lokyy-admins
-    volumes: [vault-ben:/data, models:/models]
+    volumes: [vault-ben:/data, models:/models:ro]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-ben
@@ -176,7 +189,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-firma:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_FIRMA:?set in .env}
       VAULT_ADMIN_GROUPS: vault-firma-admin,lokyy-admins
-    volumes: [vault-firma:/data, models:/models]
+    volumes: [vault-firma:/data, models:/models:ro]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-firma
@@ -241,14 +254,17 @@ services:
       - traefik.http.routers.metamcp-endpoints.rule=Host(`mcp.localhost`) && PathRegexp(`^/metamcp/[a-z0-9-]+/mcp$`)
       - traefik.http.routers.metamcp-endpoints.entrypoints=web
       - traefik.http.routers.metamcp-endpoints.priority=100
-      # Throttle key guessing / endpoint enumeration per client IP; unknown endpoints answer 401 like a wrong key
-      - traefik.http.routers.metamcp-endpoints.middlewares=metamcp-ratelimit@docker,metamcp-unknown-endpoint@docker
+      # Throttle key guessing per client IP. Every 4xx/5xx from MetaMCP (except 429) is replaced by one static body
+      # (GET /metamcp/health) and 403/404 become 401: unknown endpoint, wrong key, other user's endpoint and
+      # unknown session look identical, and MetaMCP's 404 "available_sessions" list never leaves the stack.
+      - traefik.http.routers.metamcp-endpoints.middlewares=metamcp-ratelimit@docker,metamcp-uniform-errors@docker
       - traefik.http.middlewares.metamcp-ratelimit.ratelimit.average=20
       - traefik.http.middlewares.metamcp-ratelimit.ratelimit.burst=60
-      - traefik.http.middlewares.metamcp-unknown-endpoint.errors.status=404
-      - traefik.http.middlewares.metamcp-unknown-endpoint.errors.service=metamcp
-      - traefik.http.middlewares.metamcp-unknown-endpoint.errors.query=/metamcp/health
-      - traefik.http.middlewares.metamcp-unknown-endpoint.errors.statusRewrites.404=401
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.status=400-428,430-599
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.service=metamcp
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.query=/metamcp/health
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.statusRewrites.403=401
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.statusRewrites.404=401
       - traefik.http.routers.metamcp-endpoints.service=metamcp
       - traefik.http.services.metamcp.loadbalancer.server.port=12008
     # No egress: MetaMCP only talks to vaults over HTTP, never runs stdio servers or fetches packages
@@ -317,6 +333,10 @@ networks:
     ipam:
       config:
         - subnet: 10.231.8.0/28
+  model-egress:
+    ipam:
+      config:
+        - subnet: 10.231.10.0/28
   egress:
     driver: bridge
     driver_opts:

@@ -48,12 +48,12 @@ docker compose exec authentik-worker ak apply_blueprint custom/lokyy-vaults.yaml
 | Capture / device pairing | Disabled on all vaults (`MINDBASE_DISABLE_CAPTURE=1`, beta decision) |
 | LLM destinations | `VAULT_LLM_ALLOWED_HOSTS=api.eurouter.ai` on all vaults: guarded vaults make no LLM calls to any other host (enforced once LBV2-19 is in the image; harmless before). Change it together with `EUROUTER_BASE_URL` |
 | Readers of the company vault | `MCP_HTTP_READONLY_TOKEN` on `vault-firma`: 13 read tools (incl. rate-limited `ask_wiki`), no `internal`/`pii` pages, enforced inside the vault (fail closed). MetaMCP's own tool deactivation is only a second layer |
-| MCP clients (AI tools) | One MetaMCP endpoint per user, API key only (no OAuth, no key in the query string). Traefik routes only `/metamcp/<endpoint>/mcp`, rate-limits it per client IP (20 req/s, burst 60) and rewrites MetaMCP's `404` for unknown endpoints to `401`, so endpoint names cannot be probed by status code (the response body still differs) |
+| MCP clients (AI tools) | One MetaMCP endpoint per user, API key only (no OAuth, no key in the query string). Traefik routes only `/metamcp/<endpoint>/mcp`, rate-limits it per client IP (20 req/s, burst 60) and replaces every MetaMCP error response (400–599 except 429) with one static body, turning `403`/`404` into `401`: missing or wrong key, another user's endpoint, an unknown endpoint and an unknown session look identical, and MetaMCP's `available_sessions` list never reaches a client |
 | MetaMCP accounts | `metamcp-init` creates the admin and closes self-registration (open by default in MetaMCP 2.4.22) |
 
 Middleware order on each vault router is `authentik@docker,vault-identity@docker,vault-<vault>-secret@docker`: forward-auth runs first, so Authentik never receives the proxy secret.
 
-All vaults mount the shared named volume `models` at `/models` (embedding model cache of the slim image, LBV2-6), so the model is downloaded once. It is a shared writable path between vaults: a compromised vault could tamper with the model files the others load.
+All vaults mount the shared named volume `models` at `/models` **read-only** (embedding model cache of the slim image, LBV2-6). The one-shot service `model-prefetch` (same image, own egress network) fills it before any vault starts; vaults depend on it completing, so the first start needs internet access to Hugging Face and fails loudly without it. A vault cannot change the model files the others load.
 
 Networks use explicit `10.231.x.0/28` subnets because the default Docker address pools can be exhausted on developer machines.
 
@@ -160,7 +160,10 @@ The embedding model does not work in the image: `@xenova/transformers` tries to 
 
 ## Known limitations
 
-- MetaMCP must reach the vaults, so a vault can reach MetaMCP back (compose has no one-way rules). Its surface stays authenticated.
+- **Open, High (M2): MCP session takeover in MetaMCP 2.4.22.** Sessions are kept in one global table and are not bound to the endpoint or API key that created them: any valid key used on its own endpoint together with another user's `mcp-session-id` gets that user's session (verified: anna's key + ben's session id returned ben's tools, including company-vault writes). Session ids leak through MetaMCP's `GET /metamcp/health/sessions` (unauthenticated, reachable inside the stack, e.g. from a vault) and its logs; through Traefik they are masked by the uniform error body. Fix pending (decision Oliver). `tests/metamcp-attacks.sh` and `tests/isolation.sh` report this as `XFAIL` until it is fixed.
+- MetaMCP must reach the vaults, so a vault can reach MetaMCP back (compose has no one-way rules). Its API stays authenticated, except the session listing above.
+- MetaMCP ends sessions only after `SESSION_LIFETIME` (set to 8 h by `metamcp-init`). When provisioning changes a user's credentials, server set or role, or removes a user, it rotates that user's key and restarts MetaMCP, which ends every open session (all clients reconnect).
+- Per-vault proxy secrets are Traefik labels, so anyone with Docker API access (e.g. `docker inspect`, the Docker socket Traefik mounts) can read them. Docker access is host-admin level anyway; rotate with `./rotate-secrets.sh` after any exposure.
 - MetaMCP 2.4.22's tool deactivation is a fail-open denylist — never rely on it alone (see LBV2-4).
 - MetaMCP stores API keys and vault bearer tokens in plain text in its database (accepted, see "Risk: plaintext secrets in MetaMCP").
 - Vaults can reach services published on the Docker host through the egress gateway (and cloud metadata endpoints, if any). Harmless on a developer machine, relevant for the Coolify template (LBV2-16).

@@ -10,6 +10,12 @@ tests/wait-ready.sh "${WAIT_TIMEOUT:-300}" || exit 1
 pass=0 fail=0
 ok()  { echo "PASS $1"; pass=$((pass+1)); }
 bad() { echo "FAIL $1"; fail=$((fail+1)); }
+# xfail: EXPECTED to fail until a known finding is fixed; reported as XFAIL (never hidden), XPASS once fixed.
+xfailed=0 xpassed=0
+xfail() {
+  if [[ "$2" =~ ^($3)$ ]]; then echo "XPASS $1 → $2 (known issue $4 seems fixed: turn this into a normal check)"; xpassed=$((xpassed+1))
+  else echo "XFAIL $1 → $2 (expected $3; KNOWN $4)"; xfailed=$((xfailed+1)); fi
+}
 expect() { # expect <name> <actual> <allowed-regex>
   if [[ "$2" =~ ^($3)$ ]]; then ok "$1 → $2"; else bad "$1 → $2 (expected $3)"; fi
 }
@@ -167,6 +173,16 @@ done
 # Its surface must stay authenticated and closed for self-registration.
 expect "vault-anna → metamcp tRPC without login" \
   "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://metamcp:12008/trpc/frontend.mcpServers.list")" "401"
+for p in health/sessions health; do
+  xfail "vault-anna → metamcp:12008/metamcp/$p unreachable (lists session ids)" \
+    "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://metamcp:12008/metamcp/$p || true")" "000|401|403|404" "M2-session-hijack"
+done
+for v in anna ben firma; do
+  expect "vault-$v cannot write the shared model cache /models (M3)" \
+    "$(docker compose exec -T "vault-$v" sh -c 'touch /models/.probe 2>/dev/null && echo WRITABLE || echo read-only' | tr -d '\r')" "read-only"
+done
+expect "model cache prefilled by model-prefetch" \
+  "$(docker compose exec -T vault-anna sh -c 'find /models -name "*.onnx" | head -1 | grep -q . && echo present || echo missing' | tr -d '\r')" "present"
 users_before=$(docker compose exec -T metamcp-db psql -U metamcp -d metamcp -tAc "select count(*) from users")
 in_c vault-anna "curl -s --max-time 5 -X POST -H 'content-type: application/json' -d '{\"email\":\"probe@evil.test\",\"password\":\"Passw0rd!Passw0rd\",\"name\":\"p\"}' http://metamcp:12008/api/auth/sign-up/email" >/dev/null
 users_after=$(docker compose exec -T metamcp-db psql -U metamcp -d metamcp -tAc "select count(*) from users")
@@ -206,5 +222,5 @@ expect "host → 127.0.0.1:18080 bound to loopback only" \
   "$(docker compose port traefik 80 | cut -d: -f1)" "127\.0\.0\.1"
 
 echo
-echo "RESULT: $pass passed, $fail failed"
+echo "RESULT: $pass passed, $fail failed, $xfailed expected failures (known open findings), $xpassed unexpectedly passing"
 [[ $fail -eq 0 ]]
