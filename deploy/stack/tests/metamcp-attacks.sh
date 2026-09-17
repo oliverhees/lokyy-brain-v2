@@ -234,6 +234,8 @@ BEN=$(key ben) ANNA=$(key anna)
 
 echo "== 7b. A user key cannot create more MetaMCP keys (bounds the gate's global cap)"
 keycfg() { printf 'header = "x-api-key: %s"\n' "$ANNA"; }
+# Provisioning may just have restarted MetaMCP; wait until Traefik routes the admin host again.
+for _ in $(seq 1 30); do [[ $(curl -s -o /dev/null -w '%{http_code}' http://mcp.localhost:18080/) == 302 ]] && break; sleep 1; done
 expect "user key → MetaMCP key management (tRPC apiKeys.create) needs the admin login" \
   "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' http://mcp.localhost:18080/trpc/frontend.apiKeys.create)" "302"
 expect "user key → tRPC through the gate path (path traversal)" \
