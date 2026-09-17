@@ -64,21 +64,44 @@ describe('readLlmHostPolicy (LBV2-19)', () => {
 });
 
 describe('isLlmUrlAllowed', () => {
-  const env = { ...GUARDED, VAULT_LLM_ALLOWED_HOSTS: 'api.eurouter.ai,127.0.0.1:11434,[::1]:8080,localhost,ollama:11434,::2' };
+  const env = {
+    ...GUARDED,
+    VAULT_LLM_ALLOWED_HOSTS: 'api.eurouter.ai,127.0.0.1:11434,[::1]:8080,localhost,ollama:11434,::2,plain.example:80,tls.example:443',
+  };
   it.each([
     'https://api.eurouter.ai/api/v1',
     'https://API.EUROUTER.AI/api/v1/chat/completions',
     'https://api.eurouter.ai:443/api/v1',
-    'http://api.eurouter.ai/api/v1',
     'http://127.0.0.1:11434',
     'http://[::1]:8080/v1',
-    'http://localhost/v1',
+    'https://localhost/v1',
     'http://ollama:11434',
+    'https://ollama:11434',
     'https://[::2]/v1',
+    'http://plain.example/v1',
+    'https://tls.example/v1',
+    // WHATWG URL parsing canonicalises these to a listed host (no bypass, same destination):
+    'https://api.eurouter.ai#@evil.example',
+    'https://api.eurouter.ai./v1',
+    'http://127.1:11434/v1',
+    'http://2130706433:11434/v1',
   ])('allows %s', (url) => expect(isLlmUrlAllowed(url, env)).toBe(true));
 
   it.each([
     'http://169.254.169.254/latest/meta-data',
+    // a bare host is https:443 only; http needs an explicit host:80 entry (audit re-check, Low)
+    'http://api.eurouter.ai/api/v1',
+    'http://localhost/v1',
+    'https://plain.example/v1',
+    'https://plain.example:80/v1',
+    'http://tls.example/v1',
+    'http://tls.example:443/v1',
+    // userinfo / canonicalisation tricks resolve to a non-listed host or port
+    'https://api.eurouter.ai@evil.example/',
+    'https://api.eurouter.ai:443@evil.example/',
+    'http://127.1/v1',
+    'http://2130706433/v1',
+    'https://2130706433/v1',
     'http://localhost:6379',
     'http://localhost:11434',
     'https://api.eurouter.ai:8443/v1',

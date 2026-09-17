@@ -9,9 +9,9 @@
 //   set; the MCP process in the image only sees the latter) and whenever
 //   VAULT_LLM_ALLOWED_HOSTS is set.
 // - VAULT_LLM_ALLOWED_HOSTS: comma-separated `host` or `host:port` entries,
-//   exact match, case-insensitive. A bare host allows only the default port of
-//   the scheme (https 443, http 80); any other port must be listed
-//   (`ollama:11434`). Listed hosts may be private (e.g. a local Ollama) and may
+//   exact match, case-insensitive. A bare host allows only https on 443;
+//   plain http needs `host:80`; `host:443` allows only https, `host:80` only
+//   http, any other listed port (`ollama:11434`) both. Listed hosts may be private (e.g. a local Ollama) and may
 //   use http; unlisted hosts/ports are never called. Unset/empty while enforced = no
 //   outbound LLM calls at all (fail closed).
 // - While enforced, redirects are handled manually and only followed within
@@ -100,11 +100,16 @@ export function logLlmHostPolicy(
 function hostAllowed(url: URL, policy: LlmHostPolicy & { enforced: true }): boolean {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
   const host = normalizeHost(url.hostname);
-  const defaultPort = url.protocol === 'https:' ? '443' : '80';
-  const port = url.port || defaultPort;
-  const withPort = `${host.includes(':') ? `[${host}]` : host}:${port}`;
-  // URL drops the scheme's default port, so url.port === '' means the default port.
-  return policy.allowedHosts.has(withPort) || (url.port === '' && policy.allowedHosts.has(host));
+  const https = url.protocol === 'https:';
+  // URL drops the scheme's default port, so url.port === '' means 443 (https) or 80 (http).
+  const port = url.port || (https ? '443' : '80');
+  // A bare host means https on 443 only: the API key must not travel in plaintext.
+  if (https && port === '443' && policy.allowedHosts.has(host)) return true;
+  if (!policy.allowedHosts.has(`${host.includes(':') ? `[${host}]` : host}:${port}`)) return false;
+  // Explicit well-known ports keep their scheme: host:443 → https only, host:80 → http only.
+  if (port === '443') return https;
+  if (port === '80') return !https;
+  return true;
 }
 
 function parseUrl(url: string): URL | undefined {
