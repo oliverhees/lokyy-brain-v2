@@ -224,13 +224,29 @@ expect "demoted ben: nothing written after the demotion" "$(found firma "$m4")" 
 provision   # restore ben as writer (again rotates his key and restarts MetaMCP)
 BEN=$(key ben) ANNA=$(key anna)
 
-echo "== 8. Known open findings (expected to fail until fixed)"
-# M2 (High): MetaMCP 2.4.22 binds sessions to nothing — any valid key on its own endpoint can use another
-# user's session id. Fix pending (decision Oliver).
+echo "== 8. Session binding in mcp-gate (M2)"
 sb2=$(open ben "$BEN"); sa2=$(open anna "$ANNA")
+expect "sessions for both users open" "$([[ -n $sb2 && -n $sa2 ]] && echo yes || echo no)" "yes"
 rpc anna key "$ANNA" "$sb2" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-xfail "anna's key on her endpoint + ben's session id → rejected, no ben tools" \
-  "$STATUS/$(sed -n 's/^data: //p' "$tmp/b" | jq -r '[.result.tools[]?.name | select(startswith("ben-"))] | length' 2>/dev/null || echo 0)" "401/0|401/" "M2-session-hijack"
+expect "anna's key on her endpoint + ben's session id → rejected" "$STATUS" "401"
+expect "… and no ben tools or session ids in the response" "$(grep -cE 'ben-(vault|firma)__|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' "$tmp/b")" "0"
+expect "anna's key + ben's session id + write call → rejected" \
+  "$(call anna "$ANNA" "$sb2" ben-firma__create_note "$(note "$m4")" | cut -d: -f1)" "REJECTED"
+rpc anna key "$BEN" "$sb2" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+expect "ben's own key + his session id on anna's endpoint → rejected" "$STATUS" "401"
+rpc ben key "$BEN" "$sa2" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+expect "ben's key on his endpoint + anna's session id → rejected" "$STATUS" "401"
+rpc ben none "" "$sb2" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+expect "ben's session id without any key → rejected" "$STATUS" "401"
+rpc ben key "$BEN" "$sb2" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+expect "owner still uses his session (control)" "$STATUS" "200"
+expect "gate routes nothing but /mcp: /metamcp/health/sessions" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/health/sessions")" "302|401|404"
+docker compose restart mcp-gate >/dev/null
+deadline=$((SECONDS + 60))
+until [[ $(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q mcp-gate)") == healthy ]] || ((SECONDS > deadline)); do sleep 2; done
+rpc ben key "$BEN" "$sb2" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+expect "after a gate restart the old session is rejected (client must re-initialize)" "$STATUS" "401"
+expect "after a gate restart a new session works" "$([[ -n $(open ben "$BEN") ]] && echo yes || echo no)" "yes"
 
 echo
 echo "RESULT: $pass passed, $fail failed, $xfailed expected failures (known open findings), $xpassed unexpectedly passing"

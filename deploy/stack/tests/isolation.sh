@@ -137,8 +137,8 @@ echo "== 4. Direct container access bypassing Traefik"
 in_c() { docker compose exec -T "$1" sh -c "$2" 2>/dev/null; }
 # in_ct <container> <token> <command>: the bearer header reaches the container via stdin (file $h), never argv
 in_ct() { printf 'authorization: Bearer %s\n' "$2" | docker compose exec -T "$1" sh -c "umask 077; h=\$(mktemp); cat >\"\$h\"; $3; rm -f \"\$h\"" 2>/dev/null; }
-expect "metamcp → vault-anna:4321 (no proxy secret)" \
-  "$(in_c metamcp "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://mcp.vault-anna:4321/api/config")" "403"
+expect "metamcp → vault-anna web port 4321 (only MCP is connected through vault-connector)" \
+  "$(in_c metamcp "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://mcp.vault-anna:4321/api/config || true")" "000"
 expect "metamcp → vault-anna:4322 without token" \
   "$(in_c metamcp "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST http://mcp.vault-anna:4322/mcp")" "401"
 init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}'
@@ -169,13 +169,17 @@ for target in mcp.vault-ben:4322 vault-ben:4321 vault-ben:4322 vault-firma:4321 
   expect "vault-anna → $target" \
     "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 4 http://$target/ || true")" "000"
 done
-# Accepted residual path: MetaMCP must reach vaults over mcp-<vault>, so a vault can reach MetaMCP back.
-# Its surface must stay authenticated and closed for self-registration.
-expect "vault-anna → metamcp tRPC without login" \
-  "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://metamcp:12008/trpc/frontend.mcpServers.list")" "401"
-for p in health/sessions health; do
-  xfail "vault-anna → metamcp:12008/metamcp/$p unreachable (lists session ids)" \
-    "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://metamcp:12008/metamcp/$p || true")" "000|401|403|404" "M2-session-hijack"
+# MetaMCP and the vaults share no network (M2): a vault reaches neither MetaMCP (API, session listing,
+# sign-up) nor vault-connector, which listens only on mcp-upstream.
+for p in metamcp/health/sessions metamcp/health trpc/frontend.mcpServers.list api/auth/sign-up/email; do
+  expect "vault-anna → metamcp:12008/$p unreachable" \
+    "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://metamcp:12008/$p || true")" "000"
+done
+for ip in $(docker inspect "${STACK}-vault-connector-1" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}') $(docker inspect "${STACK}-metamcp-1" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}'); do
+  for port in 4322 12008; do
+    expect "vault-anna → $ip:$port (vault-connector / metamcp by IP)" \
+      "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://$ip:$port/ || true")" "000"
+  done
 done
 for v in anna ben firma; do
   expect "vault-$v cannot write the shared model cache /models (M3)" \
@@ -183,12 +187,6 @@ for v in anna ben firma; do
 done
 expect "model cache prefilled by model-prefetch" \
   "$(docker compose exec -T vault-anna sh -c 'find /models -name "*.onnx" | head -1 | grep -q . && echo present || echo missing' | tr -d '\r')" "present"
-users_before=$(docker compose exec -T metamcp-db psql -U metamcp -d metamcp -tAc "select count(*) from users")
-in_c vault-anna "curl -s --max-time 5 -X POST -H 'content-type: application/json' -d '{\"email\":\"probe@evil.test\",\"password\":\"Passw0rd!Passw0rd\",\"name\":\"p\"}' http://metamcp:12008/api/auth/sign-up/email" >/dev/null
-users_after=$(docker compose exec -T metamcp-db psql -U metamcp -d metamcp -tAc "select count(*) from users")
-docker compose exec -T metamcp-db psql -U metamcp -d metamcp -qc "delete from sessions where user_id in (select id from users where email='probe@evil.test'); delete from accounts where user_id in (select id from users where email='probe@evil.test'); delete from users where email='probe@evil.test'" >/dev/null
-expect "vault-anna → metamcp self-registration creates no account (users $users_before → $users_after)" \
-  "$([[ "$users_before" == "$users_after" ]] && echo unchanged || echo CREATED)" "unchanged"
 expect "vault-anna → traefik → ben (no session)" \
   "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Host: ben.vault.localhost:18080' http://traefik/api/config")" "302"
 expect "vault-anna → internet (EUrouter must stay reachable)" \
@@ -200,9 +198,11 @@ echo "== 5b. Network topology (name-independent)"
 members() { docker network inspect "${STACK}_$1" --format '{{range .Containers}}{{.Name}} {{end}}' | tr ' ' '\n' | sed -E "s/^${STACK}-//; s/-[0-9]+\$//" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//'; }
 for v in anna ben firma; do
   expect "web-$v members" "$(members web-$v)" "traefik vault-$v"
-  expect "mcp-$v members" "$(members mcp-$v)" "metamcp vault-$v"
+  expect "mcp-$v members" "$(members mcp-$v)" "vault-$v vault-connector|vault-connector vault-$v"
   expect "vault-$v networks" "$(docker inspect "${STACK}-vault-$v-1" --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed "s/^${STACK}_//" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')" "egress mcp-$v web-$v"
 done
+expect "mcp-upstream members (no vault)" "$(members mcp-upstream)" "metamcp vault-connector"
+expect "metamcp networks (no vault network)" "$(docker inspect "${STACK}-metamcp-1" --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed "s/^${STACK}_//" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')" "edge mcp-upstream metamcp-internal"
 expect "egress inter-container traffic disabled" \
   "$(docker network inspect "${STACK}_egress" --format '{{index .Options "com.docker.network.bridge.enable_icc"}}')" "false"
 # Probe every other vault by IP on every network, so a shared network is caught even if DNS points elsewhere.

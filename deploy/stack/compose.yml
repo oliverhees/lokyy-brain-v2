@@ -148,8 +148,8 @@ services:
       - traefik.http.routers.vault-anna-outpost.service=authentik
     networks:
       web-anna: {}
-      # Unique alias: a plain service name could resolve to the egress IP, where traffic is blocked
-      mcp-anna: { aliases: [mcp.vault-anna] }
+      # Unique alias for vault-connector: a plain service name could resolve to the egress IP, where traffic is blocked
+      mcp-anna: { aliases: [upstream.vault-anna] }
       egress: {}
 
   vault-ben:
@@ -175,8 +175,8 @@ services:
       - traefik.http.routers.vault-ben-outpost.service=authentik
     networks:
       web-ben: {}
-      # Unique alias: a plain service name could resolve to the egress IP, where traffic is blocked
-      mcp-ben: { aliases: [mcp.vault-ben] }
+      # Unique alias for vault-connector: a plain service name could resolve to the egress IP, where traffic is blocked
+      mcp-ben: { aliases: [upstream.vault-ben] }
       egress: {}
 
   vault-firma:
@@ -204,8 +204,8 @@ services:
       - traefik.http.routers.vault-firma-outpost.service=authentik
     networks:
       web-firma: {}
-      # Unique alias: a plain service name could resolve to the egress IP, where traffic is blocked
-      mcp-firma: { aliases: [mcp.vault-firma] }
+      # Unique alias for vault-connector: a plain service name could resolve to the egress IP, where traffic is blocked
+      mcp-firma: { aliases: [upstream.vault-firma] }
       egress: {}
 
   # ------------------------------------------------------------------ MetaMCP
@@ -249,26 +249,66 @@ services:
       - traefik.http.routers.metamcp-outpost.rule=Host(`mcp.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.metamcp-outpost.entrypoints=web
       - traefik.http.routers.metamcp-outpost.service=authentik
-      # MCP endpoints for AI clients: authenticated by MetaMCP API key, not browser SSO
-      # Only Streamable HTTP of a named endpoint: no endpoint catalogue (GET /metamcp/), no SSE/OpenAPI surface
+      # MCP endpoints for AI clients are routed to mcp-gate (see below), never directly to MetaMCP
+      - traefik.http.services.metamcp.loadbalancer.server.port=12008
+    # No egress. MetaMCP shares no network with any vault: it reaches them only through vault-connector
+    # (mcp-upstream), which accepts connections on that network only. Vaults cannot reach MetaMCP.
+    networks: [edge, metamcp-internal, mcp-upstream]
+
+  # Session-binding proxy for MCP clients (finding M2): a session id only works with the API key and
+  # endpoint that created it. Only POST/GET/DELETE on /metamcp/<name>/mcp reach MetaMCP.
+  mcp-gate:
+    image: lokyy-mcp-gate:dev
+    build: ./mcp-gate
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MODE: gate
+      GATE_UPSTREAM: http://metamcp:12008
+    depends_on:
+      metamcp: { condition: service_healthy }
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${STACK_NAME:-lokyy-stack}_edge
       - traefik.http.routers.metamcp-endpoints.rule=Host(`mcp.localhost`) && PathRegexp(`^/metamcp/[a-z0-9-]+/mcp$`)
       - traefik.http.routers.metamcp-endpoints.entrypoints=web
       - traefik.http.routers.metamcp-endpoints.priority=100
-      # Throttle key guessing per client IP. Every 4xx/5xx from MetaMCP (except 429) is replaced by one static body
-      # (GET /metamcp/health) and 403/404 become 401: unknown endpoint, wrong key, other user's endpoint and
-      # unknown session look identical, and MetaMCP's 404 "available_sessions" list never leaves the stack.
+      - traefik.http.routers.metamcp-endpoints.service=mcp-gate
+      - traefik.http.services.mcp-gate.loadbalancer.server.port=8080
+      # Throttle key guessing per client IP. Every 4xx/5xx (except 429) gets one static body from the gate and
+      # 403/404 become 401: missing/wrong key, other user's endpoint, unknown endpoint and foreign or unknown
+      # session look identical. The gate already replaces MetaMCP error bodies; this is the second layer.
       - traefik.http.routers.metamcp-endpoints.middlewares=metamcp-ratelimit@docker,metamcp-uniform-errors@docker
       - traefik.http.middlewares.metamcp-ratelimit.ratelimit.average=20
       - traefik.http.middlewares.metamcp-ratelimit.ratelimit.burst=60
       - traefik.http.middlewares.metamcp-uniform-errors.errors.status=400-428,430-599
-      - traefik.http.middlewares.metamcp-uniform-errors.errors.service=metamcp
-      - traefik.http.middlewares.metamcp-uniform-errors.errors.query=/metamcp/health
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.service=mcp-gate
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.query=/__error
       - traefik.http.middlewares.metamcp-uniform-errors.errors.statusRewrites.403=401
       - traefik.http.middlewares.metamcp-uniform-errors.errors.statusRewrites.404=401
-      - traefik.http.routers.metamcp-endpoints.service=metamcp
-      - traefik.http.services.metamcp.loadbalancer.server.port=12008
-    # No egress: MetaMCP only talks to vaults over HTTP, never runs stdio servers or fetches packages
-    networks: [edge, metamcp-internal, mcp-anna, mcp-ben, mcp-firma]
+    networks: [edge]
+
+  # One-way path MetaMCP -> vaults. Listens only on its fixed mcp-upstream address and routes by Host
+  # (mcp.vault-<vault>:4322) to upstream.vault-<vault>; nothing on a vault network can connect to it.
+  vault-connector:
+    image: lokyy-mcp-gate:dev
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MODE: connector
+      CONNECTOR_VAULTS: anna,ben,firma
+      CONNECTOR_LISTEN_HOST: 10.231.11.2
+    networks:
+      mcp-upstream:
+        ipv4_address: 10.231.11.2
+        aliases: [mcp.vault-anna, mcp.vault-ben, mcp.vault-firma]
+      mcp-anna: {}
+      mcp-ben: {}
+      mcp-firma: {}
 
   metamcp-init:
     image: postgres:16-alpine
@@ -333,6 +373,11 @@ networks:
     ipam:
       config:
         - subnet: 10.231.8.0/28
+  mcp-upstream:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.231.11.0/28
   model-egress:
     ipam:
       config:
