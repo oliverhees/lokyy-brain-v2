@@ -16,6 +16,8 @@ export const STATIC_UNAUTHORIZED = '{"error":"unauthorized"}';
 export const STATIC_BAD_REQUEST = '{"error":"bad_request"}';
 export const STATIC_TOO_MANY = '{"error":"too_many_requests"}';
 export const STATIC_ERROR_BODY = '{"error":"request_rejected"}';
+/** Seconds a client should wait after a 429 (initialize rate refills 1 token/s; streams free up on close). */
+const RETRY_AFTER_SECONDS = 2;
 const PATH_RE = /^\/metamcp\/([a-z0-9][a-z0-9-]{0,63})\/mcp$/;
 const METHODS = new Set(['POST', 'GET', 'DELETE']);
 const HOP_BY_HOP = ['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length'];
@@ -73,6 +75,7 @@ function isInitialize(body: Buffer): boolean {
 function sendStatic(req: http.IncomingMessage, res: http.ServerResponse, status: number, body: string, close = false): void {
   if (res.headersSent) { res.destroy(); return; }
   const headers: http.OutgoingHttpHeaders = { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' };
+  if (status === 429) headers['retry-after'] = String(RETRY_AFTER_SECONDS);
   if (close) headers.connection = 'close';
   res.writeHead(status, headers);
   res.end(body);
@@ -221,6 +224,12 @@ export function createGate(opts: GateOptions): http.Server {
         const status = upRes.statusCode ?? 502;
         if (status >= 400) {
           upRes.resume();
+          if (sid && (status === 401 || status === 404)) {
+            // The key was rotated or removed, or MetaMCP no longer knows the session: forget the binding
+            // and close its streams instead of keeping them until expiry.
+            bindings.unbind(sid);
+            opts.log(`drop session=${tag(sid)} endpoint=${endpoint} reason=upstream-${status}`);
+          }
           sendStatic(req, res, status, STATIC_ERROR_BODY);
           return;
         }

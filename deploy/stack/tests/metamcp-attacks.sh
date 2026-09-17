@@ -196,7 +196,19 @@ provision  # restore tool mappings
 
 echo "== 6. Key rotation and user removal"
 old=$ANNA
+srot=$(open anna "$ANNA")
+printf 'header = "x-api-key: %s"\nheader = "mcp-session-id: %s"\nheader = "accept: text/event-stream"\nurl = "%s"\n' "$ANNA" "$srot" "$BASE/anna/mcp" >"$tmp/stream.cfg"
+curl -s -N --max-time 300 -K "$tmp/stream.cfg" -o "$tmp/stream.out" &
+stream_pid=$!
+sleep 2
+expect "open stream on anna's session before rotation" "$(kill -0 "$stream_pid" 2>/dev/null && echo open || echo closed)" "open"
 provision --rotate anna
+for _ in $(seq 1 30); do kill -0 "$stream_pid" 2>/dev/null || break; sleep 1; done
+expect "rotation closed the open stream of the old key" "$(kill -0 "$stream_pid" 2>/dev/null && echo STILL-OPEN || echo closed)" "closed"
+kill "$stream_pid" 2>/dev/null; wait "$stream_pid" 2>/dev/null
+for _ in $(seq 1 30); do [[ $(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/anna/mcp") == 401 ]] && break; sleep 1; done
+rpc anna key "$old" "$srot" '{"jsonrpc":"2.0","id":9,"method":"tools/list"}'
+expect "old key on the rotated session → 401" "$STATUS" "401"
 ANNA=$(key anna)
 expect "rotation issued a new key" "$([[ -n $ANNA && $ANNA != "$old" ]] && echo new || echo same)" "new"
 rpc anna key "$old" "" "$INIT";     expect "old anna key after rotation" "$STATUS" "401"

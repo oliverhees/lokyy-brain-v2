@@ -53,7 +53,7 @@ cd /opt/lokyy && sudo git clone https://github.com/oliverhees/lokyy-brain-v2.git
 cd lokyy-brain-v2 && sudo git checkout <release-tag-or-branch>
 ```
 
-`LOKYY_ASSETS_DIR=/opt/lokyy/lokyy-brain-v2`. The Authentik blueprint, `deploy/stack/models` (prefetch manifest) and `deploy/stack/metamcp/init.sh` are mounted from here. This checkout is also what section 5 builds and deploys.
+`LOKYY_ASSETS_DIR=/opt/lokyy/lokyy-brain-v2`. The Authentik blueprint, `deploy/stack/models` (prefetch manifest) and `deploy/stack/metamcp/init.sh` are mounted from here. `deploy/stack/users.beta.json` is mounted into `mcp-gate` too (its session cap = users × 20 × 1.25, min 100): **create it (section 9, first command) before the first deploy** — if it is missing, Docker creates a directory at that path and the gate falls back to the minimum cap (log line `WARN mcp-gate: users file not readable`). After adding users, recreate the gate: `... up -d --force-recreate mcp-gate`. This checkout is also what section 5 builds and deploys.
 
 ## 4. Environment and secrets
 
@@ -210,6 +210,17 @@ Follow [`deploy/stack/README.md` → Connect an MCP client](../deploy/stack/READ
 
 The user sees two servers: `<user>-vault` (own vault, all tools) and `<user>-firma` (company vault; readers get only the read tools).
 
+**Troubleshooting MCP clients (mcp-gate responses):**
+
+| Status | Meaning | What to do |
+|---|---|---|
+| `401` | Missing, wrong, rotated or removed key; also a session the gate does not know for this key and endpoint (e.g. after a gate or MetaMCP restart, or a key rotation) | Check the key; clients re-initialize automatically |
+| `400` | Request without session that is not a single `initialize` | Client bug or wrong transport |
+| `429` + `Retry-After` | Too many `initialize` requests for this key (burst 5, then 1/s), or too many open streams (2 per session, 10 per key) | Wait `Retry-After` seconds; close unused sessions. A loop of reconnects usually means the key is wrong |
+| `503` | The gate's session table is full (users × 20 × 1.25) — new keys are refused, nobody is evicted | Check `docker logs mcp-gate` for `WARN bindings`; recreate `mcp-gate` after adding users to `users.beta.json` |
+
+MetaMCP itself allows only one open `GET` stream per session (a second one gets `409`, shown to the client as the gate's static error); the gate's stream caps are an upper bound on top of that. Every `--rotate` and every access change restarts MetaMCP: all clients reconnect once.
+
 ## 12. Smoke tests (before every beta user gets access)
 
 **Never run `tests/metamcp-attacks.sh` (or `tests/isolation.sh`) against the live beta:** the attack suite rotates keys, removes and re-creates users and restarts MetaMCP; both suites also assume demo users and `*.localhost:18080`. Follow-up: a read-only, parameterised server smoke suite. Minimum manual checks, record results on the Plane item:
@@ -268,7 +279,7 @@ Container DNS uses Docker's embedded resolver inside the container namespace, so
 ## 15. Rotation
 
 - Access secrets (MCP tokens, read-only token, proxy secrets) after suspected exposure, e.g. of the MetaMCP DB: generate new values for `MCP_TOKEN_*`, `MCP_READONLY_TOKEN_FIRMA`, `PROXY_SECRET_*` (`openssl rand -hex 32`), update them **in `/root/lokyy.env` and `deploy/stack/.env`**, redeploy (section 5 command), then `metamcp/provision.sh --rotate-all` and hand out the new keys. MCP clients are down between redeploy and provisioning. (`deploy/stack/rotate-secrets.sh` edits only `deploy/stack/.env` and uses the local stack's compose file, so do the steps by hand.)
-- One user's API key: `USERS_FILE=users.beta.json metamcp/provision.sh --rotate <user>`.
+- One user's API key: `USERS_FILE=users.beta.json metamcp/provision.sh --rotate <user>`. This restarts MetaMCP (all MCP clients reconnect) so no session of the old key survives; the gate also drops a session as soon as MetaMCP rejects its key.
 - Authentik secret key, DB passwords, `METAMCP_AUTH_SECRET`: separate maintenance window; changing Postgres passwords also requires `ALTER USER` inside the DB.
 - EUrouter keys: revoke at EUrouter, set new key, `llm/configure-eurouter.sh <vault>`.
 
