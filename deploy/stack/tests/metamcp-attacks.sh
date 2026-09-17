@@ -228,6 +228,14 @@ expect "demoted ben: nothing written after the demotion" "$(found firma "$m4")" 
 provision   # restore ben as writer (again rotates his key and restarts MetaMCP)
 BEN=$(key ben) ANNA=$(key anna)
 
+echo "== 7b. A user key cannot create more MetaMCP keys (bounds the gate's global cap)"
+keycfg() { printf 'header = "x-api-key: %s"\n' "$ANNA"; }
+expect "user key → MetaMCP key management (tRPC apiKeys.create) needs the admin login" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' http://mcp.localhost:18080/trpc/frontend.apiKeys.create)" "302"
+expect "user key → tRPC through the gate path (path traversal)" \
+  "$(curl -s --path-as-is -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' 'http://mcp.localhost:18080/metamcp/anna/mcp/../../../trpc/frontend.apiKeys.create')" "302|400|401|404"
+expect "user key did not create an API key" "$(count "select count(*) from api_keys where name = 'x'")" "0"
+
 echo "== 8. Session binding in mcp-gate (M2)"
 sb2=$(open ben "$BEN"); sa2=$(open anna "$ANNA")
 expect "sessions for both users open" "$([[ -n $sb2 && -n $sa2 ]] && echo yes || echo no)" "yes"

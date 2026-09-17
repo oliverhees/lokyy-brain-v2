@@ -32,6 +32,8 @@ x-vault: &vault
     VAULT_LLM_ALLOWED_HOSTS: api.eurouter.ai
     # Persistent, per-vault cache for tesseract language data (/models is read-only and shared)
     MINDBASE_MODEL_CACHE: /home/vault
+    # transformers.js never downloads in a vault: only the verified /models cache is used (models/offline.mjs)
+    NODE_OPTIONS: --import=/lokyy/offline.mjs
 
 services:
   traefik:
@@ -137,7 +139,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-anna:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_ANNA:?set in .env}
       VAULT_ADMIN_GROUPS: vault-anna-admin,lokyy-admins
-    volumes: [vault-anna:/data, models:/models:ro, vault-anna-home:/home/vault]
+    volumes: [vault-anna:/data, models:/models:ro, vault-anna-home:/home/vault, ./models/offline.mjs:/lokyy/offline.mjs:ro]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-anna
@@ -165,7 +167,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-ben:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_BEN:?set in .env}
       VAULT_ADMIN_GROUPS: vault-ben-admin,lokyy-admins
-    volumes: [vault-ben:/data, models:/models:ro, vault-ben-home:/home/vault]
+    volumes: [vault-ben:/data, models:/models:ro, vault-ben-home:/home/vault, ./models/offline.mjs:/lokyy/offline.mjs:ro]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-ben
@@ -194,7 +196,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-firma:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_FIRMA:?set in .env}
       VAULT_ADMIN_GROUPS: vault-firma-admin,lokyy-admins
-    volumes: [vault-firma:/data, models:/models:ro, vault-firma-home:/home/vault]
+    volumes: [vault-firma:/data, models:/models:ro, vault-firma-home:/home/vault, ./models/offline.mjs:/lokyy/offline.mjs:ro]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-firma
@@ -275,6 +277,10 @@ services:
     environment:
       MODE: gate
       GATE_UPSTREAM: http://metamcp:12008
+      # Global session cap derived from the provisioned users (users × 20 × 1.25, min 100)
+      GATE_USERS_FILE: /etc/lokyy/users.json
+    volumes:
+      - ./users.json:/etc/lokyy/users.json:ro
     depends_on:
       metamcp: { condition: service_healthy }
     labels:
