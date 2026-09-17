@@ -29,6 +29,14 @@ for v in u1 u2 u3 firma; do
   check "vault-$v pins X-Forwarded-Proto" 'grep -qx "traefik.http.middlewares.vault-$v-fwd.headers.customrequestheaders.X-Forwarded-Proto=https" <<<"$labels"'
   check "vault-$v outpost router pins forwarded headers" 'grep -qx "traefik.http.routers.vault-$v-outpost.middlewares=vault-$v-fwd@docker" <<<"$labels"'
 done
+# LBV2-24 parity with deploy/stack: offline model loading in every vault, gate cap from the users file
+for v in u1 u2 u3 firma; do
+  check "vault-$v NODE_OPTIONS imports offline.mjs" '[[ $(q ".services[\"vault-$v\"].environment.NODE_OPTIONS") == "--import=/lokyy/offline.mjs" ]]'
+  check "vault-$v mounts offline.mjs read-only" '[[ $(q "[.services[\"vault-$v\"].volumes[] | select(.target == \"/lokyy/offline.mjs\" and .read_only == true and (.source | endswith(\"/deploy/stack/models/offline.mjs\")))] | length") == 1 ]]'
+done
+check "mcp-gate GATE_USERS_FILE set" '[[ $(q ".services[\"mcp-gate\"].environment.GATE_USERS_FILE") == "/etc/lokyy/users.json" ]]'
+check "mcp-gate mounts users.beta.json read-only" '[[ $(q "[.services[\"mcp-gate\"].volumes[] | select(.target == \"/etc/lokyy/users.json\" and .read_only == true and (.source | endswith(\"/deploy/stack/users.beta.json\")))] | length") == 1 ]]'
+
 mlabels=$(q '.services.metamcp.labels | to_entries[] | "\(.key)=\(.value)"')
 check "metamcp admin chain starts with host pinning" 'grep -qx "traefik.http.routers.metamcp.middlewares=metamcp-fwd@docker,authentik@docker" <<<"$mlabels"'
 check "metamcp pins X-Forwarded-Host" 'grep -qx "traefik.http.middlewares.metamcp-fwd.headers.customrequestheaders.X-Forwarded-Host=mcp.beta.example.test" <<<"$mlabels"'

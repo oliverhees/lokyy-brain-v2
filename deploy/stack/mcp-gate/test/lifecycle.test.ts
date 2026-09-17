@@ -148,6 +148,7 @@ test('Location, Content-Location and Link headers are stripped; bodies pass unch
 test('global cap is derived from the provisioned users and warns above 80 %', async () => {
   assert.equal(globalBindingCap(2, 20), 100, 'minimum 100');
   assert.equal(globalBindingCap(50, 20), 1250, 'users × per-key × 1.25');
+  for (let users = 0; users <= 500; users++) assert.ok(globalBindingCap(users, 20) >= users * 20, `cap for ${users} users covers every user's full quota`);
   const lines: string[] = [];
   const { url } = await gate({ maxBindings: 5, maxPerKey: 5, log: (l) => lines.push(l) });
   for (let i = 0; i < 5; i++) await sidOf(url, 'key-fill');

@@ -38,6 +38,8 @@ x-vault: &vault
     VAULT_LLM_ALLOWED_HOSTS: api.eurouter.ai
     # Persistent, per-vault cache for tesseract language data (/models is read-only and shared)
     MINDBASE_MODEL_CACHE: /home/vault
+    # LBV2-24: transformers.js never downloads in a vault, only the verified /models cache is used
+    NODE_OPTIONS: --import=/lokyy/offline.mjs
 
 services:
   # COOLIFY: the inner Traefik keeps the routing/middleware model of deploy/stack unchanged. It publishes
@@ -176,7 +178,11 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-u1:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_U1:?set in Coolify env}
       VAULT_ADMIN_GROUPS: vault-u1-admin,lokyy-admins
-    volumes: [vault-u1:/data, models:/models:ro, vault-u1-home:/home/vault]
+    volumes:
+      - vault-u1:/data
+      - models:/models:ro
+      - vault-u1-home:/home/vault
+      - ${LOKYY_ASSETS_DIR:?set in Coolify env}/deploy/stack/models/offline.mjs:/lokyy/offline.mjs:ro
     labels:
       - lokyy.stack=${LOKYY_STACK_ID:-lokyy}
       - traefik.enable=true
@@ -209,7 +215,11 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-u2:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_U2:?set in Coolify env}
       VAULT_ADMIN_GROUPS: vault-u2-admin,lokyy-admins
-    volumes: [vault-u2:/data, models:/models:ro, vault-u2-home:/home/vault]
+    volumes:
+      - vault-u2:/data
+      - models:/models:ro
+      - vault-u2-home:/home/vault
+      - ${LOKYY_ASSETS_DIR:?set in Coolify env}/deploy/stack/models/offline.mjs:/lokyy/offline.mjs:ro
     labels:
       - lokyy.stack=${LOKYY_STACK_ID:-lokyy}
       - traefik.enable=true
@@ -240,7 +250,11 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-u3:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_U3:?set in Coolify env}
       VAULT_ADMIN_GROUPS: vault-u3-admin,lokyy-admins
-    volumes: [vault-u3:/data, models:/models:ro, vault-u3-home:/home/vault]
+    volumes:
+      - vault-u3:/data
+      - models:/models:ro
+      - vault-u3-home:/home/vault
+      - ${LOKYY_ASSETS_DIR:?set in Coolify env}/deploy/stack/models/offline.mjs:/lokyy/offline.mjs:ro
     labels:
       - lokyy.stack=${LOKYY_STACK_ID:-lokyy}
       - traefik.enable=true
@@ -273,7 +287,11 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-firma:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_FIRMA:?set in Coolify env}
       VAULT_ADMIN_GROUPS: vault-firma-admin,lokyy-admins
-    volumes: [vault-firma:/data, models:/models:ro, vault-firma-home:/home/vault]
+    volumes:
+      - vault-firma:/data
+      - models:/models:ro
+      - vault-firma-home:/home/vault
+      - ${LOKYY_ASSETS_DIR:?set in Coolify env}/deploy/stack/models/offline.mjs:/lokyy/offline.mjs:ro
     labels:
       - lokyy.stack=${LOKYY_STACK_ID:-lokyy}
       - traefik.enable=true
@@ -360,6 +378,11 @@ services:
     environment:
       MODE: gate
       GATE_UPSTREAM: http://metamcp:12008
+      # LBV2-24: global session cap = users × 20 × 1.25 (min 100). users.beta.json must exist before `up`
+      # (docs/beta-runbook.md), otherwise Docker creates a directory at that path.
+      GATE_USERS_FILE: /etc/lokyy/users.json
+    volumes:
+      - ${LOKYY_ASSETS_DIR:?set in Coolify env}/deploy/stack/users.beta.json:/etc/lokyy/users.json:ro
     depends_on:
       metamcp: { condition: service_healthy }
     labels:

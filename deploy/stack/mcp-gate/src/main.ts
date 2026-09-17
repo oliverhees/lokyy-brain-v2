@@ -26,6 +26,7 @@ function bindingCap(): number {
     const users = JSON.parse(readFileSync(process.env.GATE_USERS_FILE ?? '/etc/lokyy/users.json', 'utf8')).users;
     return globalBindingCap(Array.isArray(users) ? users.length : 0, maxPerKey);
   } catch {
+    console.error('WARN mcp-gate: users file not readable, using the minimum session cap');
     return globalBindingCap(0, maxPerKey);
   }
 }
