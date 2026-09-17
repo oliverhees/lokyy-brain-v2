@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { guardLlmFetch } from '@mindbase/core';
 
 export async function transcribeAudio(audioPath: string, apiKey: string): Promise<string> {
   const form = new FormData();
@@ -8,7 +9,8 @@ export async function transcribeAudio(audioPath: string, apiKey: string): Promis
   form.append('model', 'whisper-1');
   form.append('response_format', 'text');
 
-  const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+  // Carries the API key: same host allow-list as the LLM adapters (LBV2-19).
+  const res = await guardLlmFetch(fetch)('https://api.openai.com/v1/audio/transcriptions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,

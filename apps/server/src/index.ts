@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(import.meta.dirname, '../../../.env') });
 
 import express from 'express';
-import { readFetchConcurrency, readLlmHostPolicy, LLM_ALLOWED_HOSTS_ENV } from '@mindbase/core';
+import { readFetchConcurrency, logLlmHostPolicy } from '@mindbase/core';
 import { createContext } from './context';
 import { proxySecretGuard, readProxySecret } from './lib/proxy-secret';
 import { resolveDataDirAsync } from './config';
@@ -98,22 +98,12 @@ function installSearchIndexCrashGuard(dataDir: string): void {
   process.on('unhandledRejection', recover);
 }
 
-/** Startup log for the LLM endpoint allow-list (LBV2-19); fail closed is loud, not silent. */
-function logLlmHostPolicy(env: NodeJS.ProcessEnv): void {
-  const policy = readLlmHostPolicy(env);
-  if (!policy.enforced) return;
-  if (policy.allowedHosts.size === 0) {
-    console.warn(`[llm-host-policy] ${LLM_ALLOWED_HOSTS_ENV} is not set: all outbound LLM and embeddings calls are refused`);
-    return;
-  }
-  console.log(`[llm-host-policy] LLM endpoints limited to: ${[...policy.allowedHosts].join(', ')}`);
-}
-
 async function main() {
   // Fail fast on invalid fetch settings instead of failing every later URL fetch (LBV2-13).
   readFetchConcurrency(process.env);
   // Refuse to start when a trusted proxy header is configured to a client-controlled name.
   assertTrustedHeaderConfig(process.env);
+  // Startup log for the LLM endpoint allow-list (LBV2-19); fail closed is loud.
   logLlmHostPolicy(process.env);
   const dataDir = await resolveDataDirAsync();
 
