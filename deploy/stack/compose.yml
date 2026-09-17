@@ -34,6 +34,8 @@ x-vault: &vault
     MINDBASE_MODEL_CACHE: /home/vault
     # transformers.js never downloads in a vault: only the verified /models cache is used (models/offline.mjs)
     NODE_OPTIONS: --import=/lokyy/offline.mjs
+    # The embedder itself also refuses downloads (apps/server/src/lib/transformers-offline.ts)
+    MINDBASE_MODELS_OFFLINE: "1"
 
 services:
   traefik:

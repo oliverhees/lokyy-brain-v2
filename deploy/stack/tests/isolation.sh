@@ -191,6 +191,9 @@ expect "tesseract cache is persistent and per vault (named volume vault-anna-hom
   "$(docker inspect "${STACK}-vault-anna-1" --format '{{range .Mounts}}{{if eq .Destination "/home/vault"}}{{.Type}}:{{.Name}}{{end}}{{end}}')" "volume:${STACK}_vault-anna-home"
 expect "vault-ben has no access to anna's tesseract cache" \
   "$(docker compose exec -T vault-ben sh -c 'ls /home/vault/tesseract/eng.traineddata 2>/dev/null | wc -l' | tr -d ' \r')" "0"
+for v in anna ben firma; do
+  expect "vault-$v embedder runs with MINDBASE_MODELS_OFFLINE=1 (no downloads in code, LBV2-24)" "$(docker compose exec -T "vault-$v" printenv MINDBASE_MODELS_OFFLINE | tr -d '\r')" "1"
+done
 expect "vault embeddings work offline from /models; unlisted models are never downloaded (allowRemoteModels=false)" \
   "$(docker compose exec -T vault-anna node --input-type=module - <tests/lib/offline-embed-probe.mjs 2>/dev/null | tail -1 | tr -d '\r')" "allowRemote=false dim=1024 unlisted=refused"
 expect "model-prefetch verified the pinned model (sha256 manifest)" \

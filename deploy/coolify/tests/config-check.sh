@@ -32,6 +32,7 @@ done
 # LBV2-24 parity with deploy/stack: offline model loading in every vault, gate cap from the users file
 for v in u1 u2 u3 firma; do
   check "vault-$v NODE_OPTIONS imports offline.mjs" '[[ $(q ".services[\"vault-$v\"].environment.NODE_OPTIONS") == "--import=/lokyy/offline.mjs" ]]'
+  check "vault-$v MINDBASE_MODELS_OFFLINE=1" '[[ $(q ".services[\"vault-$v\"].environment.MINDBASE_MODELS_OFFLINE") == 1 ]]'
   check "vault-$v mounts offline.mjs read-only" '[[ $(q "[.services[\"vault-$v\"].volumes[] | select(.target == \"/lokyy/offline.mjs\" and .read_only == true and (.source | endswith(\"/deploy/stack/models/offline.mjs\")))] | length") == 1 ]]'
 done
 check "mcp-gate GATE_USERS_FILE set" '[[ $(q ".services[\"mcp-gate\"].environment.GATE_USERS_FILE") == "/etc/lokyy/users.json" ]]'
