@@ -185,8 +185,26 @@ for v in anna ben firma; do
   expect "vault-$v cannot write the shared model cache /models (M3)" \
     "$(docker compose exec -T "vault-$v" sh -c 'touch /models/.probe 2>/dev/null && echo WRITABLE || echo read-only' | tr -d '\r')" "read-only"
 done
-expect "OCR works with read-only /models (tesseract cache falls back to private tmp, LBV2-14)" \
-  "$(OCR_PNG_B64=$(base64 -w0 tests/fixtures/ocr-lokyy.png) docker compose exec -T -e OCR_PNG_B64 vault-anna node --input-type=module - <tests/lib/ocr-probe.mjs 2>&1 | tail -1 | tr -d '\r')" "cache=tmp text=LOKYY 4711"
+expect "OCR works; tesseract data cached in the vault's own home volume (MINDBASE_MODEL_CACHE, LBV2-14)" \
+  "$(OCR_PNG_B64=$(base64 -w0 tests/fixtures/ocr-lokyy.png) docker compose exec -T -e OCR_PNG_B64 vault-anna node --input-type=module - <tests/lib/ocr-probe.mjs 2>&1 | tail -1 | tr -d '\r')" "cache=MINDBASE_MODEL_CACHE text=LOKYY 4711"
+expect "tesseract cache is persistent and per vault (named volume vault-anna-home)" \
+  "$(docker inspect "${STACK}-vault-anna-1" --format '{{range .Mounts}}{{if eq .Destination "/home/vault"}}{{.Type}}:{{.Name}}{{end}}{{end}}')" "volume:${STACK}_vault-anna-home"
+expect "vault-ben has no access to anna's tesseract cache" \
+  "$(docker compose exec -T vault-ben sh -c 'ls /home/vault/tesseract/eng.traineddata 2>/dev/null | wc -l' | tr -d ' \r')" "0"
+expect "model-prefetch verified the pinned model (sha256 manifest)" \
+  "$(docker compose logs model-prefetch 2>/dev/null | grep -c 'verified (4 files, sha256)')" "[1-9][0-9]*"
+for v in anna ben firma; do
+  expect "vault-$v starts only after a successful model-prefetch" \
+    "$(docker compose config --format json | jq -r --arg s "vault-$v" '.services[$s].depends_on["model-prefetch"].condition')" "service_completed_successfully"
+done
+# Tampered model file: verification must fail (vaults would not start). Checked on a copy, offline.
+tamper=$(mktemp -d)
+docker compose exec -T vault-anna sh -c 'cd /models && tar cf - Xenova/bge-m3/config.json Xenova/bge-m3/tokenizer_config.json' | tar xf - -C "$tamper"
+printf ' ' >>"$tamper/Xenova/bge-m3/config.json"
+chmod -R a+rX "$tamper"
+expect "model-prefetch fails closed on a tampered model file" \
+  "$(docker run --rm --network none --entrypoint node -e PREFETCH_VERIFY_ONLY=1 -v "$tamper:/models:ro" -v "$PWD/models:/prefetch:ro" lokyy-brain-v2:dev /prefetch/prefetch.mjs >/dev/null 2>"$tamper.err"; echo "exit=$? $(grep -o 'checksum mismatch config.json' "$tamper.err")")" "exit=1 checksum mismatch config.json"
+rm -rf "$tamper" "$tamper.err"
 expect "model cache prefilled by model-prefetch" \
   "$(docker compose exec -T vault-anna sh -c 'find /models -name "*.onnx" | head -1 | grep -q . && echo present || echo missing' | tr -d '\r')" "present"
 expect "vault-anna → traefik → ben (no session)" \
@@ -216,6 +234,18 @@ for target in ben firma; do
     done
   done
 done
+
+echo "== 5c. Traefik scope (LOW-2)"
+expect "MetaMCP admin route never serves /metamcp/health/sessions" \
+  "$(code http://mcp.localhost:18080/metamcp/health/sessions)" "404"
+expect "MetaMCP admin route never serves /metamcp/health/sessions (admin-looking session cookie irrelevant)" \
+  "$(code -b "$jar_ben" http://mcp.localhost:18080/metamcp/health/sessions)" "404"
+foreign=$(docker run -d --rm --network "${STACK}_edge" --label traefik.enable=true \
+  --label 'traefik.http.routers.lokyy-foreign-probe.rule=Host(`foreign.localhost`)' \
+  --label traefik.http.services.lokyy-foreign-probe.loadbalancer.server.port=80 traefik/whoami:v1.11.0 2>/dev/null)
+sleep 3
+expect "labels of a container outside this compose project are ignored" "$(code http://foreign.localhost:18080/)" "404"
+docker rm -f "$foreign" >/dev/null 2>&1
 
 echo "== 6. Nothing but Traefik is published on the host"
 published=$(docker compose ps --format json | jq -r 'select(.Service != "traefik") | .Service as $s | (.Publishers // [])[] | select(.PublishedPort != 0) | "\($s):\(.PublishedPort)"' || true)

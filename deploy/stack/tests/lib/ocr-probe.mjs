@@ -4,7 +4,7 @@
 // a vault route today (ocr-worker is unused), so this checks the library path the adapter uses.
 // Prints: "cache=<dir-kind> text=<recognized>".
 import { createRequire } from 'node:module';
-import { accessSync, constants, mkdtempSync, rmSync } from 'node:fs';
+import { accessSync, constants, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,6 +13,7 @@ const writable = (d) => { try { accessSync(d, constants.W_OK); return true; } ca
 const configured = process.env.MINDBASE_MODEL_CACHE;
 const kind = configured && writable(configured) ? 'MINDBASE_MODEL_CACHE' : writable('/models') ? '/models' : 'tmp';
 const cachePath = kind === 'tmp' ? mkdtempSync(join(tmpdir(), 'mindbase-tesseract-')) : join(kind === '/models' ? '/models' : configured, 'tesseract');
+if (kind !== 'tmp') mkdirSync(cachePath, { recursive: true, mode: 0o700 });
 
 const { createWorker } = require(require.resolve('tesseract.js'));
 const png = Buffer.from(process.env.OCR_PNG_B64 ?? "", "base64");

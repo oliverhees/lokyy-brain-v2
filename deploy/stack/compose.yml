@@ -30,6 +30,8 @@ x-vault: &vault
     MINDBASE_DISABLE_CAPTURE: "1"
     # LBV2-19: guarded vaults only call LLM hosts on this list (web server and MCP process)
     VAULT_LLM_ALLOWED_HOSTS: api.eurouter.ai
+    # Persistent, per-vault cache for tesseract language data (/models is read-only and shared)
+    MINDBASE_MODEL_CACHE: /home/vault
 
 services:
   traefik:
@@ -38,6 +40,8 @@ services:
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
+      # Only this compose project: labels of other stacks on the same Docker host are ignored
+      - --providers.docker.constraints=Label(`com.docker.compose.project`,`${STACK_NAME:-lokyy-stack}`)
       - --entrypoints.web.address=:80
       - --api.dashboard=false
       - --log.level=INFO
@@ -118,10 +122,11 @@ services:
   model-prefetch:
     image: lokyy-brain-v2:dev
     restart: "no"
-    entrypoint: ["node", "/prefetch.mjs"]
+    entrypoint: ["node", "/prefetch/prefetch.mjs"]
     volumes:
       - models:/models
-      - ./models/prefetch.mjs:/prefetch.mjs:ro
+      # prefetch.mjs + manifest.json (pinned revision, sha256 per file)
+      - ./models:/prefetch:ro
     networks: [model-egress]
 
   vault-anna:
@@ -132,7 +137,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-anna:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_ANNA:?set in .env}
       VAULT_ADMIN_GROUPS: vault-anna-admin,lokyy-admins
-    volumes: [vault-anna:/data, models:/models:ro]
+    volumes: [vault-anna:/data, models:/models:ro, vault-anna-home:/home/vault]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-anna
@@ -160,7 +165,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-ben:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_BEN:?set in .env}
       VAULT_ADMIN_GROUPS: vault-ben-admin,lokyy-admins
-    volumes: [vault-ben:/data, models:/models:ro]
+    volumes: [vault-ben:/data, models:/models:ro, vault-ben-home:/home/vault]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-ben
@@ -189,7 +194,7 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-firma:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_FIRMA:?set in .env}
       VAULT_ADMIN_GROUPS: vault-firma-admin,lokyy-admins
-    volumes: [vault-firma:/data, models:/models:ro]
+    volumes: [vault-firma:/data, models:/models:ro, vault-firma-home:/home/vault]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-firma
@@ -226,6 +231,7 @@ services:
   metamcp:
     image: ghcr.io/metatool-ai/metamcp:2.4.22
     restart: unless-stopped
+    mem_limit: 1536m
     depends_on:
       metamcp-db: { condition: service_healthy }
     environment:
@@ -243,7 +249,8 @@ services:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_edge
       # Admin UI behind Authentik (group lokyy-admins)
-      - traefik.http.routers.metamcp.rule=Host(`mcp.localhost`)
+      # /metamcp/* is never served by the admin router (only mcp-gate handles /metamcp/<name>/mcp)
+      - traefik.http.routers.metamcp.rule=Host(`mcp.localhost`) && !PathPrefix(`/metamcp/`)
       - traefik.http.routers.metamcp.entrypoints=web
       - traefik.http.routers.metamcp.middlewares=authentik@docker
       - traefik.http.routers.metamcp-outpost.rule=Host(`mcp.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
@@ -261,6 +268,7 @@ services:
     image: lokyy-mcp-gate:dev
     build: ./mcp-gate
     restart: unless-stopped
+    mem_limit: 128m
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -295,6 +303,7 @@ services:
   vault-connector:
     image: lokyy-mcp-gate:dev
     restart: unless-stopped
+    mem_limit: 128m
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -392,6 +401,9 @@ networks:
 
 volumes:
   authentik-db:
+  vault-anna-home:
+  vault-ben-home:
+  vault-firma-home:
   # Shared embedding model cache (BGE-M3), read and written by every vault
   models:
   metamcp-db:

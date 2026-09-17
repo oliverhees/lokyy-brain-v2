@@ -121,10 +121,14 @@ expect "all 6 rejection kinds identical (status, body hash, length)" "$(sort -u 
 rpc anna key "$ANNA" "00000000-0000-4000-8000-000000000000" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 expect "valid key + invented session id: no session ids (UUIDs) in the response" \
   "$(grep -cE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' "$tmp/b")" "0"
-# Anything but /metamcp/<name>/mcp falls through to the Authentik-protected admin router (302 to login).
-expect "endpoint catalogue GET /metamcp/ not routed to MetaMCP" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")" "302"
+rpc anna key "$ANNA" "" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+expect "valid key, no session, not an initialize request → refused by mcp-gate" "$STATUS" "400"
+rpc anna key "   " "" "$INIT"
+expect "blank API key is no key" "$STATUS" "401"
+# Anything but /metamcp/<name>/mcp matches no router: the admin router excludes /metamcp/ (LOW-2).
+expect "endpoint catalogue GET /metamcp/ not routed" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")" "404"
 for p in sse message api/openapi.json api/tools/x; do
-  expect "only /mcp is routed: /metamcp/anna/$p" "$(curl -s -o /dev/null -w '%{http_code}' -K <(printf 'header = "x-api-key: %s"\n' "$ANNA") "$BASE/anna/$p")" "302"
+  expect "only /mcp is routed: /metamcp/anna/$p" "$(curl -s -o /dev/null -w '%{http_code}' -K <(printf 'header = "x-api-key: %s"\n' "$ANNA") "$BASE/anna/$p")" "404"
 done
 
 echo "== 2. Tool visibility per user"
