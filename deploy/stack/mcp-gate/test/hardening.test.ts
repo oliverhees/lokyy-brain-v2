@@ -71,7 +71,7 @@ test('POST without a session id is forwarded only for initialize (MED-2)', async
 });
 
 test('one key opening many sessions never evicts another key; a full gate refuses new keys (MED-2)', async () => {
-  const { url } = await gate({ maxBindings: 4, maxPerKey: 2 });
+  const { url } = await gate({ maxBindings: 4, maxPerKey: 2, initBurst: 100 });
   const init = (key: string) => post(url, { 'x-api-key': key }, INIT);
   const use = (key: string, sid: string) => post(url, { 'x-api-key': key, 'mcp-session-id': sid }, LIST).then((r) => r.status);
   const b = (await init('key-b')).headers.get('mcp-session-id')!;

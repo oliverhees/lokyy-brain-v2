@@ -178,7 +178,8 @@ async function reconcile(u) {
       key = await trpc('apiKeys.create', { name: KEY_NAME });
       log(`${u.username}: issued API key`);
     }
-    if (changed) restartMetamcp = true;
+    // A rotated key also ends every open session (MetaMCP and gate keep sessions of the old key otherwise).
+    if (changed || rotate.has(u.username)) restartMetamcp = true;
     return { username: u.username, role: u.role, vault: u.vault, companyVault: company,
       url: `${publicBase}/metamcp/${u.username}/mcp`, apiKey: key.key, namespaceUuid: ns.uuid, companyServer: `${u.username}-${company}` };
   });

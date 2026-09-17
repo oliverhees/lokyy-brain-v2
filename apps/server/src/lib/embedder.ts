@@ -5,12 +5,14 @@
  */
 
 import type { FeatureExtractionPipeline } from '@xenova/transformers';
+import { applyModelPolicy } from './transformers-offline';
 
 let extractor: FeatureExtractionPipeline | null = null;
 
 async function getExtractor(): Promise<FeatureExtractionPipeline> {
   if (extractor) return extractor;
-  const { pipeline } = await import('@xenova/transformers');
+  const { pipeline, env } = await import('@xenova/transformers');
+  applyModelPolicy(env);
   extractor = (await pipeline('feature-extraction', 'Xenova/bge-m3')) as FeatureExtractionPipeline;
   return extractor;
 }

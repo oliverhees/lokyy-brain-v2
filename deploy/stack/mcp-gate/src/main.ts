@@ -1,6 +1,7 @@
 // Entry point. MODE=gate (session-binding proxy for MetaMCP endpoints) or MODE=connector
 // (one-way MetaMCP → vault forwarder). Configuration only via environment; no secrets needed.
-import { createGate } from './gate.ts';
+import { readFileSync } from 'node:fs';
+import { createGate, globalBindingCap } from './gate.ts';
 import { createConnector } from './connector.ts';
 
 const env = (name: string, fallback?: string): string => {
@@ -15,13 +16,31 @@ const int = (name: string, fallback: number): number => {
 const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
 
 const mode = env('MODE', 'gate');
+const maxPerKey = int('GATE_MAX_SESSIONS_PER_KEY', 20);
+// Global cap: GATE_MAX_BINDINGS if set, else derived from the provisioned users (GATE_USERS_FILE, one
+// API key per user): users × per-key cap × 1.25, at least 100.
+function bindingCap(): number {
+  const explicit = int('GATE_MAX_BINDINGS', 0);
+  if (explicit > 0) return explicit;
+  try {
+    const users = JSON.parse(readFileSync(process.env.GATE_USERS_FILE ?? '/etc/lokyy/users.json', 'utf8')).users;
+    return globalBindingCap(Array.isArray(users) ? users.length : 0, maxPerKey);
+  } catch {
+    console.error('WARN mcp-gate: users file not readable, using the minimum session cap');
+    return globalBindingCap(0, maxPerKey);
+  }
+}
 if (mode === 'gate') {
   const server = createGate({
     upstream: env('GATE_UPSTREAM', 'http://metamcp:12008'),
     idleMs: int('GATE_IDLE_MS', 60 * 60 * 1000),               // 1 h unused
     lifetimeMs: int('GATE_LIFETIME_MS', 8 * 60 * 60 * 1000),   // 8 h, same as MetaMCP SESSION_LIFETIME
-    maxBindings: int('GATE_MAX_BINDINGS', 5_000),                 // global; full → new keys refused
-    maxPerKey: int('GATE_MAX_SESSIONS_PER_KEY', 20),              // a key over it loses its own oldest session
+    maxBindings: bindingCap(),                                   // global; full → new keys refused (503)
+    maxPerKey,                                                    // a key over it loses its own oldest session
+    initRatePerSec: int('GATE_INIT_RATE_PER_SEC', 1),
+    initBurst: int('GATE_INIT_BURST', 5),
+    maxStreamsPerSession: int('GATE_MAX_STREAMS_PER_SESSION', 2),
+    maxStreamsPerKey: int('GATE_MAX_STREAMS_PER_KEY', 10),
     maxBodyBytes: int('GATE_MAX_BODY_BYTES', 1024 * 1024),
     maxConnections: int('GATE_MAX_CONNECTIONS', 512),
     requestTimeoutMs: int('GATE_REQUEST_TIMEOUT_MS', 30_000),         // request incl. body (slowloris); SSE responses exempt

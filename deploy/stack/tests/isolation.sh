@@ -186,11 +186,16 @@ for v in anna ben firma; do
     "$(docker compose exec -T "vault-$v" sh -c 'touch /models/.probe 2>/dev/null && echo WRITABLE || echo read-only' | tr -d '\r')" "read-only"
 done
 expect "OCR works; tesseract data cached in the vault's own home volume (MINDBASE_MODEL_CACHE, LBV2-14)" \
-  "$(OCR_PNG_B64=$(base64 -w0 tests/fixtures/ocr-lokyy.png) docker compose exec -T -e OCR_PNG_B64 vault-anna node --input-type=module - <tests/lib/ocr-probe.mjs 2>&1 | tail -1 | tr -d '\r')" "cache=MINDBASE_MODEL_CACHE text=LOKYY 4711"
+  "$(docker compose exec -T vault-anna sh -c 'cat >/tmp/ocr-probe.mjs' <tests/lib/ocr-probe.mjs; OCR_PNG_B64=$(base64 -w0 tests/fixtures/ocr-lokyy.png) docker compose exec -T -e OCR_PNG_B64 vault-anna node /tmp/ocr-probe.mjs 2>&1 | tail -1 | tr -d '\r')" "cache=MINDBASE_MODEL_CACHE text=LOKYY 4711"
 expect "tesseract cache is persistent and per vault (named volume vault-anna-home)" \
   "$(docker inspect "${STACK}-vault-anna-1" --format '{{range .Mounts}}{{if eq .Destination "/home/vault"}}{{.Type}}:{{.Name}}{{end}}{{end}}')" "volume:${STACK}_vault-anna-home"
 expect "vault-ben has no access to anna's tesseract cache" \
   "$(docker compose exec -T vault-ben sh -c 'ls /home/vault/tesseract/eng.traineddata 2>/dev/null | wc -l' | tr -d ' \r')" "0"
+for v in anna ben firma; do
+  expect "vault-$v embedder runs with MINDBASE_MODELS_OFFLINE=1 (no downloads in code, LBV2-24)" "$(docker compose exec -T "vault-$v" printenv MINDBASE_MODELS_OFFLINE | tr -d '\r')" "1"
+done
+expect "vault embeddings work offline from /models; unlisted models are never downloaded (allowRemoteModels=false)" \
+  "$(docker compose exec -T vault-anna node --input-type=module - <tests/lib/offline-embed-probe.mjs 2>/dev/null | tail -1 | tr -d '\r')" "allowRemote=false dim=1024 unlisted=refused"
 expect "model-prefetch verified the pinned model (sha256 manifest)" \
   "$(docker compose logs model-prefetch 2>/dev/null | grep -c 'verified (4 files, sha256)')" "[1-9][0-9]*"
 for v in anna ben firma; do

@@ -51,9 +51,13 @@ rpc() {
   if grep -q '^data: ' "$tmp/b"; then BODY=$(sed -n 's/^data: //p' "$tmp/b" | tail -1); else BODY=$(cat "$tmp/b"); fi
 }
 INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"attack","version":"0"}}}'
-# open <user> <key> → echoes session id
+# open <user> <key> → echoes session id. Waits out mcp-gate's initialize rate limit (burst 5, 1/s per key)
+# like a well-behaved client would.
 open() {
-  rpc "$1" key "$2" "" "$INIT"; local sid=$SID
+  local tries=0
+  rpc "$1" key "$2" "" "$INIT"
+  while [[ $STATUS == 429 && tries -lt 10 ]]; do sleep 1.2; tries=$((tries+1)); rpc "$1" key "$2" "" "$INIT"; done
+  local sid=$SID
   [[ $STATUS == 200 && -n $sid ]] || { echo ""; return; }
   rpc "$1" key "$2" "$sid" '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   echo "$sid"
@@ -192,7 +196,19 @@ provision  # restore tool mappings
 
 echo "== 6. Key rotation and user removal"
 old=$ANNA
+srot=$(open anna "$ANNA")
+printf 'header = "x-api-key: %s"\nheader = "mcp-session-id: %s"\nheader = "accept: text/event-stream"\nurl = "%s"\n' "$ANNA" "$srot" "$BASE/anna/mcp" >"$tmp/stream.cfg"
+curl -s -N --max-time 300 -K "$tmp/stream.cfg" -o "$tmp/stream.out" &
+stream_pid=$!
+sleep 2
+expect "open stream on anna's session before rotation" "$(kill -0 "$stream_pid" 2>/dev/null && echo open || echo closed)" "open"
 provision --rotate anna
+for _ in $(seq 1 30); do kill -0 "$stream_pid" 2>/dev/null || break; sleep 1; done
+expect "rotation closed the open stream of the old key" "$(kill -0 "$stream_pid" 2>/dev/null && echo STILL-OPEN || echo closed)" "closed"
+kill "$stream_pid" 2>/dev/null; wait "$stream_pid" 2>/dev/null
+for _ in $(seq 1 30); do [[ $(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/anna/mcp") == 401 ]] && break; sleep 1; done
+rpc anna key "$old" "$srot" '{"jsonrpc":"2.0","id":9,"method":"tools/list"}'
+expect "old key on the rotated session → 401" "$STATUS" "401"
 ANNA=$(key anna)
 expect "rotation issued a new key" "$([[ -n $ANNA && $ANNA != "$old" ]] && echo new || echo same)" "new"
 rpc anna key "$old" "" "$INIT";     expect "old anna key after rotation" "$STATUS" "401"
@@ -228,6 +244,16 @@ expect "demoted ben: nothing written after the demotion" "$(found firma "$m4")" 
 provision   # restore ben as writer (again rotates his key and restarts MetaMCP)
 BEN=$(key ben) ANNA=$(key anna)
 
+echo "== 7b. A user key cannot create more MetaMCP keys (bounds the gate's global cap)"
+keycfg() { printf 'header = "x-api-key: %s"\n' "$ANNA"; }
+# Provisioning may just have restarted MetaMCP; wait until Traefik routes the admin host again.
+for _ in $(seq 1 30); do [[ $(curl -s -o /dev/null -w '%{http_code}' http://mcp.localhost:18080/) == 302 ]] && break; sleep 1; done
+expect "user key → MetaMCP key management (tRPC apiKeys.create) needs the admin login" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' http://mcp.localhost:18080/trpc/frontend.apiKeys.create)" "302"
+expect "user key → tRPC through the gate path (path traversal)" \
+  "$(curl -s --path-as-is -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' 'http://mcp.localhost:18080/metamcp/anna/mcp/../../../trpc/frontend.apiKeys.create')" "302|400|401|404"
+expect "user key did not create an API key" "$(count "select count(*) from api_keys where name = 'x'")" "0"
+
 echo "== 8. Session binding in mcp-gate (M2)"
 sb2=$(open ben "$BEN"); sa2=$(open anna "$ANNA")
 expect "sessions for both users open" "$([[ -n $sb2 && -n $sa2 ]] && echo yes || echo no)" "yes"
@@ -248,6 +274,8 @@ expect "gate routes nothing but /mcp: /metamcp/health/sessions" "$(curl -s -o /d
 docker compose restart mcp-gate >/dev/null
 deadline=$((SECONDS + 60))
 until [[ $(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q mcp-gate)") == healthy ]] || ((SECONDS > deadline)); do sleep 2; done
+# Traefik re-adds the router a moment after the container is healthy (404 until then).
+for _ in $(seq 1 30); do [[ $(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/anna/mcp") == 401 ]] && break; sleep 1; done
 rpc ben key "$BEN" "$sb2" '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 expect "after a gate restart the old session is rejected (client must re-initialize)" "$STATUS" "401"
 expect "after a gate restart a new session works" "$([[ -n $(open ben "$BEN") ]] && echo yes || echo no)" "yes"
