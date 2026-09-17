@@ -1,6 +1,7 @@
 import type { ChatChunk, ChatRequest, ToolCall, ToolDefinition } from '../types';
 import type { AdapterConfig, LLMAdapter } from './types';
 import { RequestDeadline, readLlmTimeoutMs } from './timeout';
+import { guardLlmFetch } from '../net/llm-host-policy';
 
 interface OllamaToolCall {
   function: { name: string; arguments: Record<string, unknown> };
@@ -43,7 +44,8 @@ export class OllamaAdapter implements LLMAdapter {
   private baseUrl: string;
 
   constructor(private config: AdapterConfig) {
-    this.fetchImpl = config.fetchImpl ?? fetch.bind(globalThis);
+    // Every request goes to the configured endpoint and carries the key (LBV2-19).
+    this.fetchImpl = guardLlmFetch(config.fetchImpl ?? fetch.bind(globalThis));
     this.timeoutMs = config.timeoutMs ?? readLlmTimeoutMs(process.env);
     this.baseUrl = config.baseUrl ?? 'http://localhost:11434';
   }

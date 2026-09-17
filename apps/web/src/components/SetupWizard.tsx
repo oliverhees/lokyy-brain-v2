@@ -3,6 +3,7 @@ import type { ProviderName } from '@mindbase/core';
 import { useSettings } from '../store/settings';
 import { apiGet, apiPut, apiPost, apiSSE } from '../lib/api';
 import { editedKey, keyAfterDestinationChange } from '../lib/config-form';
+import { LOCAL_MODELS_DISABLED_MESSAGE, isNotFoundError, localModelsAvailable, type HealthFeatures } from '../lib/local-setup';
 
 type WizardStep = 'provider' | 'configure' | 'local-setup' | 'result';
 
@@ -92,26 +93,59 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
   const [localPhase, setLocalPhase] = useState<'detect' | 'pulling' | 'verifying' | 'error'>('detect');
   const [localError, setLocalError] = useState<string | null>(null);
   const pullCancelRef = useRef<{ cancel: () => void } | null>(null);
+  // false when the server has no local-model onboarding (guarded vault, LBV2-19).
+  const [localModelsEnabled, setLocalModelsEnabled] = useState(true);
+  // After leaving the local flow, move focus to the provider list heading (a11y).
+  const providerHeadingRef = useRef<HTMLDivElement | null>(null);
+  const [focusProviderHeading, setFocusProviderHeading] = useState(false);
+
+  useEffect(() => {
+    if (step !== 'provider' || !focusProviderHeading) return;
+    providerHeadingRef.current?.focus();
+    setFocusProviderHeading(false);
+  }, [step, focusProviderHeading]);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<HealthFeatures>('/health')
+      .then((h) => { if (!cancelled) setLocalModelsEnabled(localModelsAvailable(h)); })
+      .catch(() => { /* unknown: keep the option; a 404 below still stops the flow */ });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (step !== 'local-setup') return;
     let stop = false;
+    let iv: ReturnType<typeof setInterval> | undefined;
+    // The onboarding routes do not exist on this server: stop, never poll forever.
+    function unavailable() {
+      if (stop) return;
+      stop = true;
+      if (iv !== undefined) clearInterval(iv);
+      setLocalModelsEnabled(false);
+      setLocalError(LOCAL_MODELS_DISABLED_MESSAGE);
+      setLocalPhase('error');
+    }
     async function tick() {
+      if (stop) return;
       try {
         const s = await apiGet<OllamaStatus>('/ollama/status');
         if (!stop) setOllamaStatus(s);
-      } catch { /* keep last known */ }
+      } catch (e) {
+        if (isNotFoundError(e)) unavailable();
+        /* otherwise keep last known */
+      }
     }
     void tick();
-    const iv = setInterval(() => void tick(), 2000);
+    iv = setInterval(() => void tick(), 2000);
     apiGet<SystemInfo>('/system')
       .then((i) => {
         if (stop) return;
         setSysInfo(i);
         setChosenModel((m) => m ?? i.recommendations[0]?.model ?? null);
       })
-      .catch(() => {});
-    return () => { stop = true; clearInterval(iv); };
+      .catch((e: unknown) => { if (isNotFoundError(e)) unavailable(); });
+    return () => { stop = true; if (iv !== undefined) clearInterval(iv); };
   }, [step]);
 
   function startPull(modelTag: string) {
@@ -164,6 +198,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
   const stepIndex = step === 'provider' ? 0 : step === 'configure' ? 1 : 2;
 
   function selectProvider(id: string) {
+    if (id === 'ollama' && !localModelsEnabled) return;
     const provider = PROVIDERS.find((p) => p.id === id)!;
     setSelectedId(id);
     setModel(provider.defaults.model || model);
@@ -271,7 +306,8 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
             <div className="text-[10.5px] tracking-[3px] uppercase font-medium mb-3.5" style={{ color: 'var(--text-low)' }}>
               {mode === 'onboarding' ? 'Welcome · 1 of 3' : 'Provider'}
             </div>
-            <div className="text-[32px] font-bold leading-[1.05] tracking-[-1.2px] mb-3.5" style={{ color: 'var(--text-high)' }}>
+            <div ref={providerHeadingRef} tabIndex={-1} data-testid="provider-heading"
+              className="text-[32px] font-bold leading-[1.05] tracking-[-1.2px] mb-3.5" style={{ color: 'var(--text-high)' }}>
               {mode === 'onboarding' ? <>Choose how you<br /><span className="accent-italic">think.</span></> : 'Choose your provider'}
             </div>
             <div className="text-[13px] leading-[1.55] mb-8" style={{ color: 'var(--text-mid)' }}>
@@ -280,11 +316,15 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
             <div className="grid grid-cols-2 gap-2.5 mb-4">
               {PROVIDERS.map((p) => {
                 const isSelected = selectedId === p.id;
-                return (
+                const unavailable = p.id === 'ollama' && !localModelsEnabled;
+                const card = (
                   <button
                     key={p.id}
                     onClick={() => selectProvider(p.id)}
-                    className="text-left p-4 rounded-[12px] glass-card transition-all hover:-translate-y-0.5 relative"
+                    disabled={unavailable}
+                    aria-describedby={unavailable ? 'local-models-disabled-hint' : undefined}
+                    data-testid={unavailable ? 'provider-local-disabled' : undefined}
+                    className="text-left p-4 rounded-[12px] glass-card transition-all enabled:hover:-translate-y-0.5 relative disabled:opacity-40 disabled:cursor-not-allowed"
                     style={{
                       borderColor: isSelected ? 'var(--border-focus)' : 'var(--border-default)',
                       boxShadow: isSelected ? '0 0 0 1px rgba(128,180,255,0.3), 0 0 24px rgba(128,180,255,0.15)' : 'none',
@@ -298,6 +338,17 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
                     <div className="text-[13px] font-semibold tracking-tight" style={{ color: 'var(--text-high)' }}>{p.label}</div>
                     <div className="text-[10.5px] mt-1 leading-[1.4]" style={{ color: 'var(--text-low)' }}>{p.description}</div>
                   </button>
+                );
+                if (!unavailable) return card;
+                // The hint sits outside the dimmed card so it keeps full contrast
+                // (--text-mid: >= 4.5:1 on the card surface in both themes).
+                return (
+                  <div key={p.id} className="flex flex-col gap-1.5">
+                    {card}
+                    <div id="local-models-disabled-hint" className="text-[11px] leading-[1.4] text-left" style={{ color: 'var(--text-mid)' }}>
+                      {LOCAL_MODELS_DISABLED_MESSAGE}
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -344,7 +395,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
               Free, local, <span className="accent-italic">yours.</span>
             </div>
 
-            {!st && <div className="text-[13px]" style={{ color: 'var(--text-mid)' }}>Checking your machine…</div>}
+            {!st && localPhase === 'detect' && <div className="text-[13px]" style={{ color: 'var(--text-mid)' }}>Checking your machine…</div>}
 
             {st?.state === 'not-installed' && (
               <div className="text-left mt-5" data-testid="local-state-not-installed">
@@ -426,10 +477,16 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
             )}
 
             {localPhase === 'error' && (
-              <div className="mt-6" data-testid="local-state-error">
+              <div className="mt-6" data-testid="local-state-error" role="alert">
                 <div className="text-[13px] mb-3" style={{ color: 'var(--danger, #d66)' }}>{localError}</div>
-                <button onClick={() => setLocalPhase('detect')} className="text-[13px] cursor-pointer px-4 py-2 rounded-[10px]"
-                  style={{ border: '1px solid var(--hairline)', color: 'var(--text-high)' }}>Try again</button>
+                {localModelsEnabled ? (
+                  <button onClick={() => setLocalPhase('detect')} className="text-[13px] cursor-pointer px-4 py-2 rounded-[10px]"
+                    style={{ border: '1px solid var(--hairline)', color: 'var(--text-high)' }}>Try again</button>
+                ) : (
+                  <button onClick={() => { setLocalPhase('detect'); setLocalError(null); setFocusProviderHeading(true); setStep('provider'); }}
+                    className="text-[13px] cursor-pointer px-4 py-2 rounded-[10px]"
+                    style={{ border: '1px solid var(--hairline)', color: 'var(--text-high)' }}>Choose a cloud provider</button>
+                )}
               </div>
             )}
           </div>

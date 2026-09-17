@@ -21,7 +21,7 @@ import http from 'node:http';
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { readFetchConcurrency, readLlmTimeoutMs } from '@mindbase/core';
+import { readFetchConcurrency, readLlmTimeoutMs, logLlmHostPolicy } from '@mindbase/core';
 import { loadContext } from './context.js';
 import { readerLlmRateLimitFromEnv } from './lib/rate-limit.js';
 import { createMcpServer } from './index.js';
@@ -112,6 +112,8 @@ async function main(): Promise<void> {
     readFetchConcurrency(process.env);
     readLlmTimeoutMs(process.env);
     readerLlmRateLimitFromEnv(process.env);
+    // Same LLM endpoint allow-list warning as the web server (LBV2-19).
+    logLlmHostPolicy(process.env, { warn: log, info: log });
   } catch (e) {
     log(`fatal: ${(e as Error).message}`);
     process.exit(1);

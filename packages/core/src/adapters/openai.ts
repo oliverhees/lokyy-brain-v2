@@ -1,6 +1,7 @@
 import type { ChatChunk, ChatMessage, ChatRequest, ContentBlock, ToolCall, ToolDefinition } from '../types';
 import type { AdapterConfig, LLMAdapter } from './types';
 import { RequestDeadline, readLlmTimeoutMs } from './timeout';
+import { guardLlmFetch } from '../net/llm-host-policy';
 
 interface OpenAIToolCallDelta {
   index: number;
@@ -111,7 +112,8 @@ export class OpenAIAdapter implements LLMAdapter {
   private baseUrl: string;
 
   constructor(private config: AdapterConfig) {
-    this.fetchImpl = config.fetchImpl ?? fetch.bind(globalThis);
+    // Every request goes to the configured endpoint and carries the key (LBV2-19).
+    this.fetchImpl = guardLlmFetch(config.fetchImpl ?? fetch.bind(globalThis));
     this.timeoutMs = config.timeoutMs ?? readLlmTimeoutMs(process.env);
     this.baseUrl = (config.baseUrl ?? 'https://api.openai.com').replace(/\/+$/, '');
   }

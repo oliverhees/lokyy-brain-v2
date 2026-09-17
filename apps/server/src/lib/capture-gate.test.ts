@@ -43,12 +43,17 @@ describe('capture gate (LBV2-9, MINDBASE_DISABLE_CAPTURE)', () => {
   });
 
   it('reports the feature state for the web UI', () => {
-    expect(serverFeatures({ MINDBASE_DISABLE_CAPTURE: '1' })).toEqual({ capture: false });
-    expect(serverFeatures({})).toEqual({ capture: true });
+    expect(serverFeatures({ MINDBASE_DISABLE_CAPTURE: '1' })).toEqual({ capture: false, localModels: true });
+    expect(serverFeatures({})).toEqual({ capture: true, localModels: true });
+  });
+
+  it('reports local models (Ollama onboarding) as unavailable in guarded mode (LBV2-19)', () => {
+    expect(serverFeatures({ VAULT_PROXY_SECRET: 'x'.repeat(32) }).localModels).toBe(false);
+    expect(serverFeatures({ VAULT_REQUIRE_PROXY_SECRET: '1' }).localModels).toBe(false);
   });
 
   it('health payload does not disclose the data directory (INFO)', () => {
-    expect(healthPayload({ MINDBASE_DISABLE_CAPTURE: '1' })).toEqual({ ok: true, features: { capture: false } });
+    expect(healthPayload({ MINDBASE_DISABLE_CAPTURE: '1' })).toEqual({ ok: true, features: { capture: false, localModels: true } });
   });
 
   it('does not start the capture worker or mDNS when disabled', () => {
