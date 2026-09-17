@@ -53,8 +53,8 @@ services:
       # project name to the resource UUID). Labels of other Coolify resources are ignored.
       - --providers.docker.constraints=Label(`lokyy.stack`,`${LOKYY_STACK_ID:-lokyy}`)
       - --entrypoints.web.address=:80
-      # COOLIFY: X-Forwarded-* (client IP, proto) trusted only from coolify-proxy's network
-      - --entrypoints.web.forwardedHeaders.trustedIPs=${COOLIFY_PROXY_CIDR:-10.0.1.0/24}
+      # COOLIFY: X-Forwarded-* trusted only from the coolify-proxy container IP (docs/beta-runbook.md, section 4)
+      - --entrypoints.web.forwardedHeaders.trustedIPs=${COOLIFY_PROXY_IP:?set to the coolify-proxy IP on the coolify network}/32
       - --api.dashboard=false
       - --log.level=INFO
     volumes:
@@ -183,7 +183,11 @@ services:
       - traefik.docker.network=lokyy-web-u1
       - traefik.http.routers.vault-u1.rule=Host(`${VAULT_U1_USER}.vault.${LOKYY_DOMAIN}`)
       - traefik.http.routers.vault-u1.entrypoints=web
-      - traefik.http.routers.vault-u1.middlewares=authentik@docker,vault-identity@docker,vault-u1-secret@docker
+      - traefik.http.routers.vault-u1.middlewares=vault-u1-fwd@docker,authentik@docker,vault-identity@docker,vault-u1-secret@docker
+      # COOLIFY: pin X-Forwarded-Host/Proto to this router's host before forward-auth; a forged header must not
+      # select another vault's Authentik provider (forwarded headers are trusted from coolify-proxy)
+      - traefik.http.middlewares.vault-u1-fwd.headers.customrequestheaders.X-Forwarded-Host=${VAULT_U1_USER}.vault.${LOKYY_DOMAIN}
+      - traefik.http.middlewares.vault-u1-fwd.headers.customrequestheaders.X-Forwarded-Proto=https
       # Overwrites any client-supplied value; only this router carries this vault's secret
       - traefik.http.middlewares.vault-u1-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_U1}
       - traefik.http.services.vault-u1.loadbalancer.server.port=4321
@@ -211,7 +215,11 @@ services:
       - traefik.docker.network=lokyy-web-u2
       - traefik.http.routers.vault-u2.rule=Host(`${VAULT_U2_USER}.vault.${LOKYY_DOMAIN}`)
       - traefik.http.routers.vault-u2.entrypoints=web
-      - traefik.http.routers.vault-u2.middlewares=authentik@docker,vault-identity@docker,vault-u2-secret@docker
+      - traefik.http.routers.vault-u2.middlewares=vault-u2-fwd@docker,authentik@docker,vault-identity@docker,vault-u2-secret@docker
+      # COOLIFY: pin X-Forwarded-Host/Proto to this router's host before forward-auth; a forged header must not
+      # select another vault's Authentik provider (forwarded headers are trusted from coolify-proxy)
+      - traefik.http.middlewares.vault-u2-fwd.headers.customrequestheaders.X-Forwarded-Host=${VAULT_U2_USER}.vault.${LOKYY_DOMAIN}
+      - traefik.http.middlewares.vault-u2-fwd.headers.customrequestheaders.X-Forwarded-Proto=https
       - traefik.http.middlewares.vault-u2-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_U2}
       - traefik.http.services.vault-u2.loadbalancer.server.port=4321
       - traefik.http.routers.vault-u2-outpost.rule=Host(`${VAULT_U2_USER}.vault.${LOKYY_DOMAIN}`) && PathPrefix(`/outpost.goauthentik.io/`)
@@ -237,7 +245,11 @@ services:
       - traefik.docker.network=lokyy-web-u3
       - traefik.http.routers.vault-u3.rule=Host(`${VAULT_U3_USER}.vault.${LOKYY_DOMAIN}`)
       - traefik.http.routers.vault-u3.entrypoints=web
-      - traefik.http.routers.vault-u3.middlewares=authentik@docker,vault-identity@docker,vault-u3-secret@docker
+      - traefik.http.routers.vault-u3.middlewares=vault-u3-fwd@docker,authentik@docker,vault-identity@docker,vault-u3-secret@docker
+      # COOLIFY: pin X-Forwarded-Host/Proto to this router's host before forward-auth; a forged header must not
+      # select another vault's Authentik provider (forwarded headers are trusted from coolify-proxy)
+      - traefik.http.middlewares.vault-u3-fwd.headers.customrequestheaders.X-Forwarded-Host=${VAULT_U3_USER}.vault.${LOKYY_DOMAIN}
+      - traefik.http.middlewares.vault-u3-fwd.headers.customrequestheaders.X-Forwarded-Proto=https
       - traefik.http.middlewares.vault-u3-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_U3}
       - traefik.http.services.vault-u3.loadbalancer.server.port=4321
       - traefik.http.routers.vault-u3-outpost.rule=Host(`${VAULT_U3_USER}.vault.${LOKYY_DOMAIN}`) && PathPrefix(`/outpost.goauthentik.io/`)
@@ -265,7 +277,11 @@ services:
       - traefik.docker.network=lokyy-web-firma
       - traefik.http.routers.vault-firma.rule=Host(`firma.vault.${LOKYY_DOMAIN}`)
       - traefik.http.routers.vault-firma.entrypoints=web
-      - traefik.http.routers.vault-firma.middlewares=authentik@docker,vault-identity@docker,vault-firma-secret@docker
+      - traefik.http.routers.vault-firma.middlewares=vault-firma-fwd@docker,authentik@docker,vault-identity@docker,vault-firma-secret@docker
+      # COOLIFY: pin X-Forwarded-Host/Proto to this router's host before forward-auth; a forged header must not
+      # select another vault's Authentik provider (forwarded headers are trusted from coolify-proxy)
+      - traefik.http.middlewares.vault-firma-fwd.headers.customrequestheaders.X-Forwarded-Host=firma.vault.${LOKYY_DOMAIN}
+      - traefik.http.middlewares.vault-firma-fwd.headers.customrequestheaders.X-Forwarded-Proto=https
       - traefik.http.middlewares.vault-firma-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_FIRMA}
       - traefik.http.services.vault-firma.loadbalancer.server.port=4321
       - traefik.http.routers.vault-firma-outpost.rule=Host(`firma.vault.${LOKYY_DOMAIN}`) && PathPrefix(`/outpost.goauthentik.io/`)
@@ -316,7 +332,10 @@ services:
       # Admin UI behind Authentik (group lokyy-admins); /metamcp/* is never served by the admin router
       - traefik.http.routers.metamcp.rule=Host(`mcp.${LOKYY_DOMAIN}`) && !PathPrefix(`/metamcp/`)
       - traefik.http.routers.metamcp.entrypoints=web
-      - traefik.http.routers.metamcp.middlewares=authentik@docker
+      - traefik.http.routers.metamcp.middlewares=metamcp-fwd@docker,authentik@docker
+      # COOLIFY: pin X-Forwarded-Host/Proto before forward-auth (see vault routers)
+      - traefik.http.middlewares.metamcp-fwd.headers.customrequestheaders.X-Forwarded-Host=mcp.${LOKYY_DOMAIN}
+      - traefik.http.middlewares.metamcp-fwd.headers.customrequestheaders.X-Forwarded-Proto=https
       - traefik.http.routers.metamcp-outpost.rule=Host(`mcp.${LOKYY_DOMAIN}`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.metamcp-outpost.entrypoints=web
       - traefik.http.routers.metamcp-outpost.service=authentik

@@ -13,12 +13,14 @@ for u in "$u1" "$u2" "$u3"; do
   [[ $u =~ $name_re ]] || { echo "username '$u' must match $name_re (plain ASCII, no @)" >&2; exit 2; }
   [[ $u != firma && $u != auth && $u != mcp ]] || { echo "username '$u' is reserved" >&2; exit 2; }
 done
+[[ $u1 != "$u2" && $u1 != "$u3" && $u2 != "$u3" ]] || { echo "usernames must be distinct" >&2; exit 2; }
 secret() { openssl rand -hex 32; }
 cat <<EOF
 LOKYY_DOMAIN=$domain
 LOKYY_ASSETS_DIR=$assets
 LOKYY_STACK_ID=lokyy
-COOLIFY_PROXY_CIDR=10.0.1.0/24
+# fill in: docker inspect coolify-proxy -f '{{(index .NetworkSettings.Networks "coolify").IPAddress}}'
+COOLIFY_PROXY_IP=
 VAULT_MEM_LIMIT=3500m
 VAULT_U1_USER=$u1
 VAULT_U2_USER=$u2
