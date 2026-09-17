@@ -33,9 +33,10 @@ export async function handle(ctx: Context, rawInput: unknown) {
     const fname = `${ts.toISOString().replace(/[:.]/g, '-')}-capture.md`;
     const fmTags = tags && tags.length > 0 ? `\ntags: [${tags.map((t) => `"${t}"`).join(', ')}]` : '';
     const frontmatter = `---\ncaptured_at: ${ts.toISOString()}\ncreated_via: mcp\nmcp_client: ${ctx.mcpClient}\nmcp_tool: quick_capture${fmTags}\n---\n\n`;
-    const filePath = path.join(ctx.dataDir, 'inbox', fname);
-    await atomicWrite(filePath, frontmatter + content);
-    return textResult({ path: filePath, captured_at: ts.toISOString() });
+    const relPath = `inbox/${fname}`;
+    await atomicWrite(path.join(ctx.dataDir, 'inbox', fname), frontmatter + content);
+    // Data-dir-relative: remote clients must not learn the host filesystem layout (LBV2-14).
+    return textResult({ path: relPath, captured_at: ts.toISOString() });
   } catch (e) {
     return errorResult(`quick_capture failed: ${(e as Error).message}`);
   }

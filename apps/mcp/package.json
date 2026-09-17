@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsx watch src/cli.ts",
-    "test": "node test/full-smoke.mjs && node test/tools-call.mjs && node test/http-transport.mjs && node test/http-readonly.mjs && node test/path-traversal.mjs && node test/ssrf.mjs && node test/ingest-local-stdio.mjs && node test/http-readonly-visibility.mjs && node test/http-readonly-graph-leaks.mjs && node test/http-readonly-ask-wiki.mjs",
+    "test": "node test/full-smoke.mjs && node test/tools-call.mjs && node test/http-transport.mjs && node test/http-readonly.mjs && node test/path-traversal.mjs && node test/ssrf.mjs && node test/ingest-local-stdio.mjs && node test/stdio-ignores-http-env.mjs && node test/quick-capture-path.mjs && node test/http-readonly-visibility.mjs && node test/http-readonly-graph-leaks.mjs && node test/http-readonly-ask-wiki.mjs",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "pnpm build"
   },

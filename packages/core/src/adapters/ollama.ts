@@ -1,5 +1,6 @@
 import type { ChatChunk, ChatRequest, ToolCall, ToolDefinition } from '../types';
 import type { AdapterConfig, LLMAdapter } from './types';
+import { RequestDeadline, readLlmTimeoutMs } from './timeout';
 import { guardLlmFetch } from '../net/llm-host-policy';
 
 interface OllamaToolCall {
@@ -39,18 +40,21 @@ export class OllamaAdapter implements LLMAdapter {
   readonly name = 'ollama' as const;
   readonly supportsTools = true;
   private fetchImpl: typeof fetch;
+  private timeoutMs: number;
   private baseUrl: string;
 
   constructor(private config: AdapterConfig) {
     // Every request goes to the configured endpoint and carries the key (LBV2-19).
     this.fetchImpl = guardLlmFetch(config.fetchImpl ?? fetch.bind(globalThis));
+    this.timeoutMs = config.timeoutMs ?? readLlmTimeoutMs(process.env);
     this.baseUrl = config.baseUrl ?? 'http://localhost:11434';
   }
 
   async *chat(request: ChatRequest): AsyncIterable<ChatChunk> {
+    const deadline = new RequestDeadline(this.timeoutMs);
     let response: Response;
     try {
-      response = await this.fetchImpl(`${this.baseUrl}/api/chat`, {
+      response = await deadline.fetch(this.fetchImpl, `${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -63,11 +67,12 @@ export class OllamaAdapter implements LLMAdapter {
         }),
       });
     } catch (e) {
-      yield { kind: 'error', error: (e as Error).message };
+      yield { kind: 'error', error: deadline.message(e) };
       return;
     }
     if (!response.ok) {
-      const text = await response.text();
+      const text = await deadline.race(response.text()).catch((e: unknown) => deadline.message(e));
+      deadline.clear();
       yield { kind: 'error', error: `HTTP ${response.status}: ${text}` };
       return;
     }
@@ -82,7 +87,7 @@ export class OllamaAdapter implements LLMAdapter {
 
     try {
       while (true) {
-        const { value, done } = await reader.read();
+        const { value, done } = await deadline.race(reader.read());
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -123,9 +128,11 @@ export class OllamaAdapter implements LLMAdapter {
         }
       }
     } catch (e) {
-      yield { kind: 'error', error: (e as Error).message };
+      yield { kind: 'error', error: deadline.message(e) };
       return;
     } finally {
+      deadline.clear();
+      if (deadline.timedOut) void reader.cancel().catch(() => undefined);
       try { reader.releaseLock(); } catch { /* ignore */ }
     }
 

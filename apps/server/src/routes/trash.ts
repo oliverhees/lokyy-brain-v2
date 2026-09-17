@@ -1,6 +1,6 @@
 import { Router, type Response } from 'express';
 import type { ServerContext } from '../context';
-import { isValidTrashEntryId, type FileStore } from '@mindbase/core';
+import { FileStore, isValidTrashEntryId } from '@mindbase/core';
 
 /** Maps store errors to generic client responses; details stay in the server log. */
 function sendTrashError(res: Response, op: string, e: unknown): void {
@@ -19,7 +19,14 @@ function sendTrashError(res: Response, op: string, e: unknown): void {
 
 export function trashRoutes(ctx: ServerContext): Router {
   const router = Router();
-  const store = ctx.store as unknown as FileStore;
+  // The trash is global (<dataDir>/.trash) and its manifests hold root-relative
+  // paths, so it is served from the unscoped FileStore. ctx.store is a
+  // ProjectScopedStore in the default layout and has no trash methods (LBV2-14).
+  const store = ctx.rawStore;
+  if (!(store instanceof FileStore)) {
+    router.use((_req, res) => { res.status(501).json({ error: 'Trash is not available for this store' }); });
+    return router;
+  }
 
   router.get('/', async (_req, res) => {
     try {
