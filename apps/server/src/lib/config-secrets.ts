@@ -128,6 +128,11 @@ export function mergeSecrets(incoming: Record<string, unknown>, stored: AtlasCon
     } else {
       merged.apiKey = stored.apiKey ?? '';
     }
+    // The client claims a stored key (mask) that does not exist, e.g. switching back from
+    // ollama to a cloud provider: refuse instead of saving a keyless cloud config (LBV2-14).
+    if (body['apiKey'] === MASKED_SECRET && !merged.apiKey && !KEYLESS_PROVIDERS.has(merged.provider)) {
+      throw new ConfigInputError('No API key is stored for this provider; enter the API key');
+    }
   }
 
   if (wantsStored(body['braveApiKey'])) {

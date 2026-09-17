@@ -237,6 +237,22 @@ describe('/api/config routes — secret masking (LBV2-9)', () => {
     expect(onDisk.googleTokens).toEqual(BASE.googleTokens);
   });
 
+  it('PUT back to a cloud provider with the mask but no stored key returns 400 (LBV2-14)', async () => {
+    // Switch to ollama first: the stored cloud key is cleared.
+    const toOllama = await request(app).put('/api/config').send({ provider: 'ollama', model: 'llama3' });
+    expect(toOllama.status).toBe(200);
+    expect(ctx.config.apiKey).toBe('');
+
+    const back = await request(app).put('/api/config').send({ provider: 'openai', model: 'gpt-4o-mini', apiKey: MASKED_SECRET });
+    expect(back.status).toBe(400);
+    expect(back.body.error).toMatch(/enter the API key/i);
+    expect(ctx.config.provider).toBe('ollama');
+
+    const withKey = await request(app).put('/api/config').send({ provider: 'openai', model: 'gpt-4o-mini', apiKey: 'sk-new' });
+    expect(withKey.status).toBe(200);
+    expect(ctx.config.apiKey).toBe('sk-new');
+  });
+
   it('PUT without apiKey keeps the stored key and the other sections', async () => {
     await request(app).put('/api/config').send({ provider: 'openai', model: 'm', baseUrl: '', autoSave: true, mergeSaves: false });
     expect(ctx.config.apiKey).toBe('sk-live-secret-1234');
