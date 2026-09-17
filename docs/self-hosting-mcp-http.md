@@ -289,6 +289,8 @@ When the proxy guard is active (`VAULT_PROXY_SECRET` set), attribution comes onl
 
 Without the guard (local, single-user), `X-Mindbase-User` is used as before. If it is absent, the OS username is mapped to a valid name: every character outside the ASCII username alphabet becomes `_`, leading `.`/`-` are removed, `..` is collapsed, and the result is cut to 64 characters (`oliver@corp` → `oliver_corp`, `jürgen` → `j_rgen`); a result without any ASCII letter or digit, or `unknown`, becomes `user`. An invalid explicit header (including `unknown`) still gets `400`.
 
+The MCP tool `mindbase_contribute` uses the same username rules. Over the HTTP transport its `user` argument is **required** (the server's OS account says nothing about the remote caller); a missing `user` is an error. Over stdio an omitted `user` falls back to the local OS account, mapped as above. An explicit `user` is never mapped, only validated.
+
 | Variable | Default | Effect |
 |---|---|---|
 | `VAULT_IDENTITY_HEADER` | `x-authentik-username` | Name of the proxy-set identity header. Only read when `VAULT_PROXY_SECRET` is set. |

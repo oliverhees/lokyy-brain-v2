@@ -130,6 +130,26 @@ describe('config-secrets helpers (LBV2-9)', () => {
     expect(() => mergeSecrets({ provider: 'anthropic' }, BASE)).toThrow(KeyReentryError);
   });
 
+  it('mergeSecrets: keyless OpenAI-compatible custom endpoint is allowed with an empty key (LBV2-14 QA re-check)', () => {
+    const OLLAMA: AtlasConfig = { ...BASE, provider: 'ollama', model: 'llama3', apiKey: '' };
+    const custom = { provider: 'openai', model: 'local-model', apiKey: '', baseUrl: 'http://localhost:1234/v1' };
+    const fromOllama = mergeSecrets(custom, OLLAMA);
+    expect(fromOllama.provider).toBe('openai');
+    expect(fromOllama.apiKey).toBe('');
+    expect(fromOllama.baseUrl).toBe('http://localhost:1234/v1');
+
+    // A stored cloud key is never carried to the new custom endpoint.
+    const fromCloud = mergeSecrets(custom, BASE);
+    expect(fromCloud.apiKey).toBe('');
+    let omitted: AtlasConfig | undefined;
+    try { omitted = mergeSecrets({ provider: 'openai', model: 'local-model', baseUrl: 'http://localhost:1234/v1' }, BASE); } catch (e) {
+      expect(e).toBeInstanceOf(KeyReentryError);
+    }
+    if (omitted) expect(omitted.apiKey).toBe('');
+    // masked key towards a changed endpoint stays a re-entry error
+    expect(() => mergeSecrets({ ...custom, apiKey: MASKED_SECRET }, BASE)).toThrow(KeyReentryError);
+  });
+
   it('mergeSecrets: a switch to a cloud provider that ends without a key is refused (LBV2-14 QA)', () => {
     const OLLAMA: AtlasConfig = { ...BASE, provider: 'ollama', model: 'llama3', apiKey: '' };
     expect(() => mergeSecrets({ provider: 'openai', model: 'gpt-4o-mini' }, OLLAMA)).toThrow(/enter the API key/i);
@@ -139,6 +159,8 @@ describe('config-secrets helpers (LBV2-9)', () => {
     expect(mergeSecrets({ provider: 'openai', model: 'gpt-4o-mini', apiKey: 'sk-new' }, OLLAMA).apiKey).toBe('sk-new');
     // ollama -> ollama stays keyless
     expect(mergeSecrets({ provider: 'ollama', model: 'qwen3' }, OLLAMA).apiKey).toBe('');
+    // cloud provider at its default endpoint (empty or official URL) still needs a key
+    expect(() => mergeSecrets({ provider: 'openai', model: 'm', apiKey: '', baseUrl: 'https://api.openai.com/v1' }, OLLAMA)).toThrow(/enter the API key/i);
     // chat model switch on the same provider with a stored key keeps working
     const sw = mergeSecrets({ provider: 'openai', model: 'gpt-5' }, BASE);
     expect(sw.apiKey).toBe('sk-live-secret-1234');
@@ -266,6 +288,15 @@ describe('/api/config routes — secret masking (LBV2-9)', () => {
     const withKey = await request(app).put('/api/config').send({ provider: 'openai', model: 'gpt-4o-mini', apiKey: 'sk-new' });
     expect(withKey.status).toBe(200);
     expect(ctx.config.apiKey).toBe('sk-new');
+  });
+
+  it('PUT keyless Custom Endpoint (SetupWizard) after ollama returns 200 and stores no key', async () => {
+    expect((await request(app).put('/api/config').send({ provider: 'ollama', model: 'llama3' })).status).toBe(200);
+    const res = await request(app).put('/api/config')
+      .send({ provider: 'openai', model: 'local-model', apiKey: '', baseUrl: 'http://localhost:1234/v1' });
+    expect(res.status).toBe(200);
+    expect(ctx.config.apiKey).toBe('');
+    expect(ctx.config.baseUrl).toBe('http://localhost:1234/v1');
   });
 
   it('PUT without apiKey keeps the stored key and the other sections', async () => {

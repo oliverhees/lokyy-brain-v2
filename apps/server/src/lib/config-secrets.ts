@@ -76,6 +76,17 @@ function normalizeEndpoint(url: string | undefined): string {
   return (url ?? '').trim().replace(/\/+$/, '');
 }
 
+/** OpenAI's own API needs a key; any other base URL for the openai provider is a compatible custom endpoint. */
+function isKeylessCustomEndpoint(provider: string, baseUrl: string | undefined): boolean {
+  const url = normalizeEndpoint(baseUrl);
+  if (provider !== 'openai' || !url) return false;
+  try {
+    return new URL(url).hostname.toLowerCase() !== 'api.openai.com';
+  } catch {
+    return false;
+  }
+}
+
 /** True when the incoming value asks to keep the stored secret (mask or not a string). */
 function wantsStored(incoming: unknown): boolean {
   return typeof incoming !== 'string' || incoming === MASKED_SECRET;
@@ -137,7 +148,10 @@ export function mergeSecrets(incoming: Record<string, unknown>, stored: AtlasCon
     }
   }
   // Any switch to a provider that needs a key must end with one (omitted, empty or masked key).
-  if (merged.provider !== stored.provider && !merged.apiKey && !KEYLESS_PROVIDERS.has(merged.provider)) {
+  // Exception: an OpenAI-compatible custom endpoint (e.g. LM Studio) may run without a key. The key
+  // is then '' — a stored key never reaches it (the mask/omitted branch above refuses that).
+  if (merged.provider !== stored.provider && !merged.apiKey && !KEYLESS_PROVIDERS.has(merged.provider)
+    && !isKeylessCustomEndpoint(merged.provider, merged.baseUrl)) {
     throw new ConfigInputError(ENTER_API_KEY_ERROR);
   }
 
