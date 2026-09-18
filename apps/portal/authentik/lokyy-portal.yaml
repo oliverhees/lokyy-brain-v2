@@ -1,0 +1,108 @@
+# yaml-language-server: $schema=https://goauthentik.io/blueprints/schema.json
+# Lokyy setup portal (LBV2-28): the flow behind invitation links.
+# The portal creates each employee in Authentik (with groups) and hands out a recovery link
+# (POST /api/v3/core/users/<pk>/recovery/). That link runs the brand's recovery flow, so this
+# blueprint sets "lokyy-set-password" as recovery flow of the default brand. The flow asks for a new
+# password (twice, min. 12 characters), stores it and logs the user in.
+# Mount next to the stack blueprint into /blueprints/custom. Groups, vault providers and the portal's
+# own forward-auth provider (app.<domain>) belong to the stack blueprint (embedded outpost list).
+version: 1
+metadata:
+  name: lokyy-portal
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  # The default brand must exist before its recovery flow is set (otherwise this entry would create a
+  # brand without login flows and the default-brand blueprint would skip itself).
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Brand
+      required: true
+
+  - model: authentik_flows.flow
+    id: flow
+    identifiers: { slug: lokyy-set-password }
+    attrs:
+      name: Lokyy - Passwort festlegen
+      title: Passwort festlegen
+      designation: recovery
+      # Opened from a link that already identifies the user (flow token); no login required first
+      authentication: none
+
+  - model: authentik_policies_password.passwordpolicy
+    id: password-policy
+    identifiers: { name: lokyy-password-policy }
+    attrs:
+      name: lokyy-password-policy
+      password_field: password
+      check_static_rules: true
+      check_have_i_been_pwned: false
+      check_zxcvbn: false
+      length_min: 12
+      amount_digits: 0
+      amount_uppercase: 0
+      amount_lowercase: 0
+      amount_symbols: 0
+      error_message: Das Passwort muss mindestens 12 Zeichen lang sein.
+
+  - model: authentik_stages_prompt.prompt
+    id: field-password
+    identifiers: { name: lokyy-set-password-field-password }
+    attrs:
+      name: lokyy-set-password-field-password
+      field_key: password
+      label: Neues Passwort
+      type: password
+      required: true
+      placeholder: Neues Passwort
+      order: 0
+      placeholder_expression: false
+  - model: authentik_stages_prompt.prompt
+    id: field-password-repeat
+    identifiers: { name: lokyy-set-password-field-password-repeat }
+    attrs:
+      name: lokyy-set-password-field-password-repeat
+      field_key: password_repeat
+      label: Passwort wiederholen
+      type: password
+      required: true
+      placeholder: Passwort wiederholen
+      order: 1
+      placeholder_expression: false
+
+  - model: authentik_stages_prompt.promptstage
+    id: stage-prompt
+    identifiers: { name: lokyy-set-password-prompt }
+    attrs:
+      name: lokyy-set-password-prompt
+      fields: [!KeyOf field-password, !KeyOf field-password-repeat]
+      validation_policies: [!KeyOf password-policy]
+  - model: authentik_stages_user_write.userwritestage
+    id: stage-write
+    identifiers: { name: lokyy-set-password-write }
+    attrs:
+      name: lokyy-set-password-write
+      # Only ever updates the user the link belongs to
+      user_creation_mode: never_create
+  - model: authentik_stages_user_login.userloginstage
+    id: stage-login
+    identifiers: { name: lokyy-set-password-login }
+    attrs:
+      name: lokyy-set-password-login
+
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf flow, stage: !KeyOf stage-prompt, order: 10 }
+    attrs: { evaluate_on_plan: true, re_evaluate_policies: false, invalid_response_action: retry }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf flow, stage: !KeyOf stage-write, order: 20 }
+    attrs: { evaluate_on_plan: true, re_evaluate_policies: false, invalid_response_action: retry }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf flow, stage: !KeyOf stage-login, order: 30 }
+    attrs: { evaluate_on_plan: true, re_evaluate_policies: false, invalid_response_action: retry }
+
+  - model: authentik_brands.brand
+    identifiers: { domain: authentik-default }
+    state: present
+    attrs:
+      flow_recovery: !KeyOf flow
