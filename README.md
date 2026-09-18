@@ -1,237 +1,79 @@
-# Lokyy Brain — Karpathy's LLM Wiki, as a product
+# Lokyy Brain V2
 
-[![npm](https://img.shields.io/npm/v/mindbase-mcp?label=mindbase-mcp)](https://www.npmjs.com/package/mindbase-mcp)
-[![npm downloads](https://img.shields.io/npm/dw/mindbase-mcp)](https://www.npmjs.com/package/mindbase-mcp)
-[![CI](https://github.com/frankchu91/mindbase-llm-wiki/actions/workflows/ci.yml/badge.svg)](https://github.com/frankchu91/mindbase-llm-wiki/actions)
 [![License: MIT + PolyForm NC](https://img.shields.io/badge/license-MIT%20%2B%20PolyForm%20NC-orange)](NOTICE.md)
-[![Website](https://img.shields.io/badge/website-live%20demos-blue)](https://frankchu91.github.io/mindbase-llm-wiki/)
-[![Glama score](https://glama.ai/mcp/servers/frankchu91/mindbase/badges/score.svg)](https://glama.ai/mcp/servers/frankchu91/mindbase)
 
-> **An open-source implementation of Andrej Karpathy's LLM Wiki idea: an AI that builds and maintains a wiki from your sources.** Not RAG-in-a-vector-DB. A real markdown wiki on your disk, that an LLM gardens for you between conversations.
+**The knowledge base for a company: every employee gets a personal vault, the company shares one company vault, and an AI keeps both as a maintained wiki.** Claude and other MCP clients reach all of it through one connection per user. LLM calls go to EU-hosted models through EUrouter routes.
+
+Lokyy Brain follows Andrej Karpathy's [LLM-Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f): you add sources (notes, PDFs, web pages); the LLM reads them, cross-references them, flags contradictions and writes structured wiki pages. Knowledge accumulates instead of being re-derived from raw documents on every question.
+
+**Status:** beta, one company server per customer (up to 15 users). What's new: [CHANGELOG](CHANGELOG.md).
+
+<p align="center">
+  <img alt="Lokyy Brain web UI — category tree on the left, the LLM-maintained context.md in the center, chat on the right" src="docs/assets/webui.png" width="920">
+</p>
+
+## Features
+
+- **Personal vault per employee** — own wiki, own sources, own web UI; nobody else can open it.
+- **Company vault** — shared knowledge with writers and readers; readers get a read-only view that hides pages marked `internal` or `pii`.
+- **AI-maintained wiki** — ingest a source, review the takeaways and a checkbox plan, and only what you approve is written. `build` regenerates `context.md`, `lint` audits the wiki for contradictions, stale claims and orphans, `research` answers with cited sources.
+- **Ask with citations** — answers from the wiki cite the pages and sources they come from.
+- **Hybrid search** — full-text plus semantic search (BGE-M3 embeddings from one shared service per server).
+- **MCP access with one connection** — each user gets one MetaMCP endpoint and one API key; behind it sit the personal vault and the company vault. Works with Claude Code, Claude Desktop, Cursor, Windsurf, Cline and other MCP clients.
+- **EU LLM via EUrouter** — the LLM is configured by EUrouter route (routing rule), not by model; vaults only talk to `api.eurouter.ai`.
+- **Setup portal** — German admin UI for the company: setup wizard (company, EUrouter key and route, optional SMTP), inviting employees, roles, disabling and removing users, audit log. Employees find their vault links, MCP URL, API key and ready-to-paste snippets under **Mein Zugang**.
+- **Plain markdown on disk** — every vault is a directory of markdown files; no proprietary database.
+
+## Architecture
+
+One company server runs these services behind Traefik:
+
+| Component | Role |
+|---|---|
+| **Vaults** (`apps/server`, `apps/web`, `apps/mcp`, `packages/core`) | One container per employee plus the company vault (`firma`). Web UI and API on port 4321, MCP over Streamable HTTP for MetaMCP only. Each vault sits on its own internal networks and cannot reach the others. |
+| **Authentik** | Login and groups. Forward-auth protects every vault and the MetaMCP admin UI; group membership decides who may open, write or administer a vault. |
+| **mcp-gate + MetaMCP** | MetaMCP gives each user one MCP endpoint (`https://mcp.<domain>/metamcp/<user>/mcp`) that aggregates their vaults. `mcp-gate` sits in front of it: API key only, sessions bound to key and endpoint, rate and session limits, uniform errors. MetaMCP reaches the vaults only through `vault-connector`, never the other way round. |
+| **Embedding service** (`deploy/stack/embed`) | One BGE-M3 instance for all vaults; per-vault tokens and networks, request limits, fair queueing. |
+| **Setup portal** (`apps/portal`) | Admin and self-service UI at `app.<domain>`, behind Authentik. Provisions Authentik users and MetaMCP accounts; holds no Authentik token itself. |
+| **authentik-gate** (`deploy/stack/authentik-gate`) | The only holder of the least-privilege Authentik service token. Lets the portal manage only its own employees (never superusers or admins, allowlisted groups, no password endpoint). |
+
+Details: [deploy/stack/README.md](deploy/stack/README.md) (reference stack), [docs/self-hosting-mcp-http.md](docs/self-hosting-mcp-http.md) (vault container, MCP over HTTP, access profiles, embedding service) and [docs/setup-portal.md](docs/setup-portal.md) (portal and authentik-gate).
+
+## Deployment
+
+- **Production (Coolify):** follow [docs/beta-runbook.md](docs/beta-runbook.md) — prerequisites, DNS, secrets, [Deploy in Coolify](docs/beta-runbook.md#5-deploy-plain-docker-compose-behind-coolify-proxy-default), network verification, users, MCP provisioning, EUrouter, smoke tests, backup and rollback. Template: `deploy/coolify/compose.yml`.
+- **Local reference stack:** [deploy/stack/README.md](deploy/stack/README.md) — the full setup (Traefik, Authentik, three vaults, MetaMCP, embedding service) on `127.0.0.1:18080` with demo users and attack test suites.
+- **Vault image:** `deploy/Dockerfile` builds the vault from source.
+
+Connecting an AI client: take the MCP URL and API key from **Mein Zugang** in the setup portal, for example with Claude Code:
 
 ```bash
-npx mindbase-app
+claude mcp add --scope user --transport http lokyy-brain https://mcp.<domain>/metamcp/<username>/mcp --header "Authorization: Bearer <api-key>"
 ```
 
-One command: starts the local server, opens the web app, and walks you through picking a **free local model** that fits your RAM. No API key, nothing leaves your machine. (Node 20+)
+## Security
 
-<p align="center">
-  <img alt="Demo: /contribute in the Lokyy Brain web UI — the AI shows takeaways and a checkbox plan, and writes to the LLM wiki only after approval" src="docs/assets/contribute.gif" width="880">
-</p>
+The security model — forward-auth per vault, proxy secrets, per-vault networks, one-way MetaMCP access, the MCP gate, admin groups, LLM host allow-list, disabled capture — is documented in [deploy/stack/README.md → Security model](deploy/stack/README.md#security-model), with the vault-side rules in [docs/self-hosting-mcp-http.md → Security behaviour](docs/self-hosting-mcp-http.md#security-behaviour). The server and MCP server refuse to fetch URLs that point at `localhost` or private addresses (SSRF protection); for a local single-user setup only, `MINDBASE_ALLOW_PRIVATE_FETCH=1` lifts that.
 
-Lokyy Brain implements Andrej Karpathy's [LLM-Wiki pattern](https://x.com/karpathy/status/1911080091498963196): you feed it sources (papers, articles, thoughts); the LLM reads, cross-references, flags contradictions, and writes structured wiki pages. Later, when you ask a question, the wiki already has the synthesized answer — no vector-search re-derivation at query time.
+## Development
 
-**Status:** Early access, actively developed. What's new: [CHANGELOG](CHANGELOG.md) · [Releases](https://github.com/frankchu91/mindbase-llm-wiki/releases)
-
----
-
-## Why Lokyy Brain
-
-You read a lot. Papers, articles, tweets, docs. You want to remember them, connect them, form opinions from them. Today you have two bad options:
-
-- **Notion / Obsidian / Roam:** Passive containers. You do all the organizing. AI features are bolted-on generation, not maintenance.
-- **NotebookLM / Perplexity Pages / ChatGPT search:** RAG-based. Nothing accumulates. Every question re-derives the answer from raw sources.
-
-**Lokyy Brain is the third option:** the LLM actively maintains a persistent, structured wiki as you feed it sources. Knowledge compounds. Your `context.md` gets sharper every time you contribute. The AI *remembers you across sessions* because your beliefs are written down in markdown files — not stored in a chat history that gets summarized away.
-
-Think of it as **a personal Wikipedia that an AI intern writes for you**, kept up to date, cross-referenced, and honest about what it doesn't know.
-
-## How it works (30 seconds)
-
-Three physical layers on disk (Karpathy's model):
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
-    <img alt="Lokyy Brain: you feed sources, the LLM gardens them into a wiki that compounds — plain markdown on your disk" src="docs/assets/hero-light.svg" width="920">
-  </picture>
-</p>
-
-| Layer | Who owns it | What lives there |
-|---|---|---|
-| `sources/` | **You** — append-only, the AI never rewrites it | Quick captures, full notes, PDFs, URLs |
-| `context.md` + `sources/research/` | **The AI** — every change human-approved | The maintained wiki: synthesis, concept pages, `[[wikilinks]]` |
-| `state/` · `logs/` · `artifacts/` | Derived — always rebuildable | Search index, snapshots, lint findings, op history |
-
-Three operations run the loop: **ingest** (AI reads a source, discusses takeaways, you approve the wiki updates), **build** (regenerate `context.md` from everything unbuilt), **lint** (the AI audits its own wiki for contradictions, stale claims, and orphans).
-
-## What makes it different
-
-- **The AI asks before writing.** Every ingest shows takeaways + a checkbox plan; only what you approve gets written. No black-box edits to your knowledge.
-- **You can watch the wiki absorb your notes.** Every note carries a status chip — ✨ *Add to wiki* until digested, ✓ *In wiki* after.
-- **It audits its own knowledge.** One command re-reads the whole wiki and reports contradictions with the exact conflicting sentences quoted. Notion and NotebookLM structurally cannot do this.
-- **Free and local by default.** Hardware-detect wizard installs the best Ollama model for your RAM. Cloud keys optional.
-- **Plain markdown on disk.** Grep it, git it, open it in Obsidian, leave anytime.
-
-## Install
-
-**Browser (fastest):** `npx mindbase-app` — shown above. Everything runs locally at `localhost:4321`.
-
-> **Lokyy Brain v2 — ingesting from `localhost` or your LAN.** The server and MCP server built from this repository refuse to fetch URLs that point at `localhost`, private LAN addresses, or other internal targets (SSRF protection); such URLs fail with `URL not allowed or unreachable`. For a local single-user setup that ingests from those addresses, start the server with `MINDBASE_ALLOW_PRIVATE_FETCH=1`, for example `MINDBASE_ALLOW_PRIVATE_FETCH=1 pnpm -F @mindbase/server dev`. Never set it on a shared or self-hosted deployment. Details: [docs/self-hosting-mcp-http.md](docs/self-hosting-mcp-http.md#outbound-url-fetches-ssrf-protection).
-
-**Claude Code (flagship):** the full Karpathy 8-step ingest with sub-agents, slash commands, and per-agent tool boundaries:
-
-```
-/plugin marketplace add frankchu91/mindbase-llm-wiki
-/plugin install mb@mindbase
+```bash
+pnpm install
+pnpm -F @mindbase/core build
+pnpm test            # all workspace test suites
+pnpm typecheck
+pnpm check:brand     # no old product name or upstream pointer in user-visible surfaces
 ```
 
-Restart when prompted, then type `/` — you should see `/mb:contribute`, `/mb:build`, `/mb:ask`, `/mb:lint` and 8 more. You get 5 sub-agents with strict tool allowlists (the builder has no file-write tool at all — only an atomic-write MCP call), plus a SessionStart hook that auto-injects your project context.
+Monorepo: `packages/core` (wiki engine) · `apps/server` + `apps/web` (vault web server and UI) · `apps/mcp` (MCP server) · `apps/portal` (setup portal) · `deploy/` (images, stack, Coolify template). Package names (`@mindbase/*`) and `MINDBASE_*` variables are internal and stay as they are — see [ADR 0001](docs/adr/0001-rebrand-lokyy-brain.md).
 
-<p align="center">
-  <img alt="The core flow in Claude Code: /mb:contribute with an arXiv link — download, archive, discuss takeaways, approve, commit" src="docs/assets/terminal-contribute.png" width="880">
-</p>
+## Contact
 
-<details>
-<summary><b>Cursor</b></summary>
+Questions, feedback, commercial licensing: [info@lokyy.de](mailto:info@lokyy.de).
 
-Add to `~/.cursor/mcp.json`:
+## License and attribution
 
-```json
-{ "mcpServers": { "mindbase": { "command": "npx", "args": ["-y", "mindbase-mcp"] } } }
-```
-
-Restart Cursor — the tool picker should list `mindbase_contribute` and 48 others. Recommended: add a conventions block to `~/.cursor/rules.md` so the LLM reliably routes "add to mindbase X" to the tools — copy it from the [guide](docs/guide.md#the-llm-in-cursorwindsurf-ignores-my-add-to-mindbase-request).
-
-</details>
-
-<details>
-<summary><b>Windsurf</b></summary>
-
-Cascade settings → MCP → add:
-
-```json
-{ "mcpServers": { "mindbase": { "command": "npx", "args": ["-y", "mindbase-mcp"] } } }
-```
-
-Same rules-file approach as Cursor works for Cascade.
-
-</details>
-
-<details>
-<summary><b>Cline (VSCode)</b></summary>
-
-Cline settings → **MCP Servers**:
-
-```json
-{ "mcpServers": { "mindbase": { "command": "npx", "args": ["-y", "mindbase-mcp"] } } }
-```
-
-Cline auto-detects; every tool call gets a confirmation dialog by default.
-
-</details>
-
-<details>
-<summary><b>Continue.dev</b></summary>
-
-`~/.continue/config.json`, under `experimental.modelContextProtocolServers`:
-
-```json
-{ "experimental": { "modelContextProtocolServers": [ { "transport": { "type": "stdio", "command": "npx", "args": ["-y", "mindbase-mcp"] } } ] } }
-```
-
-MCP tools appear under `@` in chat.
-
-</details>
-
-<details>
-<summary><b>Any other MCP client</b> (Zed, Aider, Goose, Claude Agent SDK…)</summary>
-
-Point it at `npx -y mindbase-mcp` as a stdio server. See your client's MCP docs for the config location.
-
-</details>
-
-**Next:** create your first project and learn the four daily workflows in the **[Guide →](docs/guide.md)**
-
-## The web UI
-
-Since 0.3 the browser app stands on its own — write notes in a full WYSIWYG editor (`Cmd+N`), quick-capture from anywhere (`Cmd+I`), and run the AI operations with approval cards: `/contribute`, `/build`, `/lint`, `/research`. Live demos on the **[website](https://frankchu91.github.io/mindbase-llm-wiki/)**.
-
-<p align="center">
-  <img alt="Lokyy Brain web UI — category tree on the left, the LLM-maintained context.md in the center, chat starters on the right" src="docs/assets/webui.png" width="920">
-</p>
-
-**Free local models:** the setup wizard detects your hardware and installs what fits — `llama3.2:3b` (8GB), `qwen3:14b` (24GB+), or Meta's **Muse Glimmer 30B** (32GB+ Apple Silicon, Ollama ≥ 0.32.7). Measured guidance: qwen3:14b for interactive work (~30s), Glimmer for background lint/build — slower, but its findings quote the exact conflicting sentences. The model switcher on the chat composer flips between them in two clicks.
-
-<details>
-<summary><b>Feature matrix by editor</b></summary>
-
-| Feature | Claude Code | Cursor / Windsurf / Cline / Continue | Web UI |
-|---|---|---|---|
-| Slash commands (`/mb:*`) | ✅ | ❌ (use natural language) | ✅ (`/contribute`, `/build`, `/lint`, `/research`) |
-| MCP tools directly | ✅ | ✅ | ❌ |
-| Karpathy 8-step ingest with approval | ✅ (sub-agents) | ⚠️ Manual via prompt | ✅ (approval cards) |
-| Contribute / ingest PDF & URL | ✅ | ✅ | ✅ (upload + ✨ Process) |
-| Ask wiki with cited answers | ✅ | ✅ | ✅ |
-| Build / health check | ✅ | ✅ | ✅ |
-| Wiki tree browsing + rich editor | ❌ | ❌ | ✅ |
-| `-p project-id` routing | ✅ | ⚠️ natural language | ✅ (switcher) |
-
-</details>
-
-## Where your data lives
-
-Everything is plain markdown under `~/mindbase-data/` (override: `MINDBASE_DATA_DIR`):
-
-```
-~/mindbase-data/projects/my-research/
-├── README.md                 # Ops manual — you edit, LLM reads
-├── context.md                # Synthesized truth — LLM writes, you approve
-├── index.yaml                # Auto-generated catalog
-├── sources/
-│   ├── contributors/<you>/   # Your dated entries + notes (append-only)
-│   ├── research/             # LLM-authored wiki pages
-│   └── raw/                  # PDFs, HTML captures
-├── logs/                     # Chronological operation log
-├── artifacts/                # Briefs, exports, lint findings
-└── state/builder/snapshots/  # context.md snapshots for rollback
-```
-
-No proprietary database — what you see on disk is what Lokyy Brain knows. `git init` it, back it up with anything, delete a project with `rm -rf`.
-
-## Architecture at a glance
-
-```
- Claude Code / Cursor / any MCP editor          Web UI (npx mindbase-app)
-        │  MCP · sub-agents with                       │  /commands ·
-        │  per-agent tool allowlists                   │  approval cards
-        └─────────────┬─────────────────────────┬──────┘
-                      ▼                         ▼
-        ┌──────────────────────────────────────────────┐
-        │  One ops engine: gather context → single     │
-        │  constrained JSON completion → human         │
-        │  approval → whitelisted executors → log      │
-        └─────────────────────┬────────────────────────┘
-                              ▼
-              ~/mindbase-data/ · plain markdown
-              (LLM: Ollama local models or any cloud key)
-```
-
-Monorepo: `packages/core` (TS strict library) · `apps/mcp` (49-tool MCP server) · `apps/server` + `apps/web` (Express + React UI) · `apps/app` (npx launcher) · `apps/plugin` (Claude Code bundle).
-
-## Docs & help
-
-- **[Guide](docs/guide.md)** — first project, the four daily workflows, multi-project routing, troubleshooting
-- **[Website](https://frankchu91.github.io/mindbase-llm-wiki/)** — live demos
-- **[CHANGELOG](CHANGELOG.md)** · **[Issues](https://github.com/frankchu91/mindbase-llm-wiki/issues)** — I reply to every issue same-day during beta
-- **The idea:** [Karpathy's LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-
-## Roadmap
-
-**Next:** browser extension for one-click page capture · audio input via Whisper · unified meta-tool for Cursor/Windsurf slash-like UX.
-**Later:** team projects with human-in-the-loop review · audio digests · desktop app · mobile capture.
-
-## Feedback
-
-Beta through 2026-Q4. If you tried Lokyy Brain and gave up — please tell us why: [info@lokyy.de](mailto:info@lokyy.de). The blockers you hit are gold.
-
-## License
-
-This repository is **Lokyy Brain v2**, a fork of [MindBase](https://github.com/frankchu91/mindbase-llm-wiki), and contains code under two licenses — see [NOTICE.md](NOTICE.md):
+Lokyy Brain V2 is a fork of [MindBase](https://github.com/frankchu91/mindbase-llm-wiki) by Haobing Chu and contains code under two licenses — see [NOTICE.md](NOTICE.md):
 
 - Upstream MindBase code (up to commit `7aa8fcd`, and later changes merged from upstream): [MIT](LICENSE-MIT), Copyright (c) 2026 Haobing Chu.
 - Modifications made in this fork after `7aa8fcd`: [PolyForm Noncommercial 1.0.0](LICENSE). Commercial use of these modifications requires a separate license — contact info@lokyy.de.
-
----
-
-**Built with the belief that AI's most valuable gift is not "generation on demand" but "gardening of a persistent artifact you own."**
