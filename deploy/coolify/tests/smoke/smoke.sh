@@ -6,7 +6,8 @@
 #   first start without manual steps (blueprint, bootstrap admin in lokyy-admins, MetaMCP init, models),
 #   admin login, slot isolation (web, forged headers, networks, MCP keys), no host ports;
 # then upgrades the same project to package M and checks that data, users and keys survived.
-# The portal (apps/portal, LBV2-28) is not started; its users.json is written by this script.
+# The portal (apps/portal, LBV2-28) runs when its Dockerfile exists (e.g. in a local merge with that
+# branch); otherwise it is skipped. users.json is written by this script either way.
 #
 # Usage: deploy/coolify/tests/smoke/smoke.sh [--down]
 #   --down  remove containers, networks and volumes of lokyy-pkg at the end
@@ -34,7 +35,9 @@ fi
 envv() { sed -n "s/^$1=//p" "$env_file"; }
 
 dc() { local pkg=$1; shift; docker compose -p "$PROJECT" --env-file "$env_file" -f "$coolify/compose-$pkg.yml" -f "$here/fake-coolify.override.yml" "$@"; }
-services() { dc "$1" config --services | grep -vx portal; }
+repo=$(cd "$coolify/../.." && pwd)
+has_portal() { [[ -f $repo/apps/portal/Dockerfile ]]; }
+services() { if has_portal; then dc "$1" config --services; else dc "$1" config --services | grep -vx portal; fi; }
 
 curlk() { curl -sk --connect-to "::127.0.0.1:$PORT" "$@"; }
 code() { curlk -o /dev/null -w '%{http_code}' "$@"; }
@@ -113,6 +116,10 @@ create_user() { # create_user <username> <password> <group>...
 # from <vault-service> <url> → OPEN or blocked (plain TCP/HTTP reachability from inside a vault)
 from() { dc "$1" exec -T "$2" node -e "fetch('$3',{signal:AbortSignal.timeout(3000)}).then(()=>console.log('OPEN'),()=>console.log('blocked'))" 2>/dev/null; }
 
+# pfetch <pkg> <service> <method> <url> → HTTP status or "blocked" (node fetch inside that container)
+pfetch() {
+  dc "$1" exec -T "$2" node -e "fetch('$4',{method:'$3',signal:AbortSignal.timeout(3000)}).then(r=>console.log(r.status),()=>console.log('blocked'))" 2>/dev/null
+}
 mcp_init() { # mcp_init <key> <user-endpoint> → HTTP status of an MCP initialize through mcp-gate
   curlk -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $1" -H 'content-type: application/json' \
     -H 'accept: application/json, text/event-stream' \
@@ -135,7 +142,7 @@ admin_pass=$(envv SERVICE_PASSWORD_ADMIN)
 
 isolation_checks() { # isolation_checks <pkg> <last-slot>
   local pkg=$1 last=$2 j
-  for j in alice bob walt rita admin; do rm -f "$jars/$j"; done
+  for j in alice bob walt rita ulla admin; do rm -f "$jars/$j"; done
   echo "== [$pkg] anonymous access is redirected to the login"
   for v in v01 v02 "$last" firma mcp app; do
     expect "anon → $v" "$(curlk -o /dev/null -w '%{http_code} %{redirect_url}' "$(U "$v")/api/config" | sed -E 's#^(302) https://auth\..*#\1 auth#')" "302 auth"
@@ -152,6 +159,7 @@ isolation_checks() { # isolation_checks <pkg> <last-slot>
   login "$jars/bob" "$(U v02)/" bob "$(cat "$work/pass-bob")" || bad "bob login"
   login "$jars/walt" "$(U firma)/" walt "$(cat "$work/pass-walt")" || bad "walt login"
   login "$jars/rita" "$(U v01)/" rita "$(cat "$work/pass-rita")" 2>/dev/null || true
+  login "$jars/ulla" "$(U app)/" ulla "$(cat "$work/pass-ulla")" 2>/dev/null || true
   expect "alice → v01 (own slot)" "$(access "$jars/alice" "$(U v01)/api/config")" "DATA"
   expect "bob → v02 (own slot)" "$(access "$jars/bob" "$(U v02)/api/config")" "DATA"
   expect "alice → v02" "$(access "$jars/alice" "$(U v02)/api/config")" "DENIED"
@@ -181,6 +189,21 @@ isolation_checks() { # isolation_checks <pkg> <last-slot>
   expect "published host ports (only the stand-in proxy)" \
     "$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Ports}}' | grep -c -- '->' )" "1"
 
+  if has_portal; then
+    echo "== [$pkg] portal (app.) and its vault config entrypoint"
+    expect "admin → portal /api/session" "$(access "$jars/admin" "$(U app)/api/session")" "DATA"
+    expect "ulla (lokyy-users) → portal /api/session" "$(access "$jars/ulla" "$(U app)/api/session")" "DATA"
+    local P=10.233.0.93:8090
+    expect "portal → GET /v01/api/config" "$(pfetch "$pkg" portal GET "http://$P/v01/api/config")" "200"
+    expect "portal → GET /firma/api/config" "$(pfetch "$pkg" portal GET "http://$P/firma/api/config")" "200"
+    expect "portal → DELETE /v01/api/config" "$(pfetch "$pkg" portal DELETE "http://$P/v01/api/config")" "404|405"
+    expect "portal → GET /v01/api/wiki (not config)" "$(pfetch "$pkg" portal GET "http://$P/v01/api/wiki")" "404"
+    expect "portal → GET /v01/api/config/../wiki" "$(pfetch "$pkg" portal GET "http://$P/v01/api/config/..%2Fwiki")" "404|400"
+    expect "vault-v01 → portal-admin entrypoint" "$(pfetch "$pkg" vault-v01 GET "http://$P/v02/api/config")" "blocked"
+    expect "metamcp → portal-admin entrypoint" "$(from "$pkg" metamcp "http://$P/v01/api/config" 2>/dev/null || echo blocked)" "blocked"
+    expect "public host with portal-admin path" "$(code "$(U app)/v01/api/config")" "302"
+  fi
+
   echo "== [$pkg] MCP keys per user (through mcp-gate)"
   expect "alice key → alice endpoint" "$(mcp_init "$(key alice)" alice)" "200"
   expect "alice key → bob endpoint" "$(mcp_init "$(key alice)" bob)" "401"
@@ -196,9 +219,10 @@ wait_for "S: metamcp-init finished (automatic)" 120 init_done s metamcp-init
 wait_for "S: model-prefetch verified (automatic)" 60 init_done s model-prefetch
 wait_for "S: vault routes behind forward-auth" 120 routes v01 v15 firma
 
-for u in alice bob walt rita; do [[ -f $work/pass-$u ]] || (umask 077; openssl rand -hex 16 >"$work/pass-$u"); done
+for u in alice bob walt rita ulla; do [[ -f $work/pass-$u ]] || (umask 077; openssl rand -hex 16 >"$work/pass-$u"); done
 create_user alice "$(cat "$work/pass-alice")" vault-v01 && create_user bob "$(cat "$work/pass-bob")" vault-v02 \
   && create_user walt "$(cat "$work/pass-walt")" vault-firma-write && create_user rita "$(cat "$work/pass-rita")" vault-firma-read \
+  && create_user ulla "$(cat "$work/pass-ulla")" vault-v03 lokyy-users \
   && ok "users created via Authentik API (bootstrap token)" || bad "user creation via Authentik API"
 provision s && ok "MCP provisioning inside metamcp (tokens from its env)" || { cat "$work/provision.log"; bad "provisioning"; }
 dc s up -d --force-recreate --no-deps mcp-gate >/dev/null 2>&1
