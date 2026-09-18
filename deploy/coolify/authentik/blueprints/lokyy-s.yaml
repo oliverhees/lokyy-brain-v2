@@ -35,6 +35,39 @@ entries:
   - { model: authentik_core.group, id: group-admins, identifiers: { name: lokyy-admins }, attrs: { name: lokyy-admins } }
   # Every employee the portal invites (portal access, "Mein Zugang")
   - { model: authentik_core.group, id: group-users, identifiers: { name: lokyy-users }, attrs: { name: lokyy-users } }
+  - model: authentik_rbac.role
+    id: role-portal
+    identifiers: { name: lokyy-portal }
+    attrs:
+      name: lokyy-portal
+      permissions:
+        - authentik_core.view_user
+        - authentik_core.add_user
+        - authentik_core.change_user
+        - authentik_core.delete_user
+        - authentik_core.reset_user_password
+        - authentik_core.view_group
+        - authentik_core.add_user_to_group
+        - authentik_core.remove_user_from_group
+        - authentik_core.view_authenticatedsession
+        - authentik_core.delete_authenticatedsession
+  - model: authentik_core.user
+    id: sa-portal
+    identifiers: { username: lokyy-portal }
+    attrs:
+      username: lokyy-portal
+      name: Lokyy Portal (service account)
+      type: service_account
+      path: lokyy-system
+      roles: [!KeyOf role-portal]
+  - model: authentik_core.token
+    identifiers: { identifier: lokyy-portal-api }
+    attrs:
+      identifier: lokyy-portal-api
+      intent: api
+      user: !KeyOf sa-portal
+      expiring: false
+      key: !Env PORTAL_AUTHENTIK_TOKEN
   - model: authentik_core.user
     identifiers: { username: akadmin }
     state: present

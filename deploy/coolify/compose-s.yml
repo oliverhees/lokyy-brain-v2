@@ -214,7 +214,7 @@ services:
       AUTHENTIK_SECRET_KEY: "${SERVICE_HEX_64_AUTHENTIKSECRET}"
       AUTHENTIK_BOOTSTRAP_EMAIL: "${ADMIN_EMAIL:?set ADMIN_EMAIL in Coolify}"
       AUTHENTIK_BOOTSTRAP_PASSWORD: "${SERVICE_PASSWORD_ADMIN}"
-      AUTHENTIK_BOOTSTRAP_TOKEN: "${SERVICE_HEX_64_AUTHENTIKAPITOKEN}"
+      PORTAL_AUTHENTIK_TOKEN: "${SERVICE_HEX_64_PORTALAKTOKEN}"
       AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
       AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
       AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
@@ -247,7 +247,7 @@ services:
       AUTHENTIK_SECRET_KEY: "${SERVICE_HEX_64_AUTHENTIKSECRET}"
       AUTHENTIK_BOOTSTRAP_EMAIL: "${ADMIN_EMAIL:?set ADMIN_EMAIL in Coolify}"
       AUTHENTIK_BOOTSTRAP_PASSWORD: "${SERVICE_PASSWORD_ADMIN}"
-      AUTHENTIK_BOOTSTRAP_TOKEN: "${SERVICE_HEX_64_AUTHENTIKAPITOKEN}"
+      PORTAL_AUTHENTIK_TOKEN: "${SERVICE_HEX_64_PORTALAKTOKEN}"
       AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
       AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
       AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
@@ -273,17 +273,34 @@ services:
       LOKYY_SLOTS: "v01,v02,v03,v04,v05,v06,v07,v08,v09,v10,v11,v12,v13,v14,v15"
       LOKYY_STATE_DIR: "/state"
       AUTHENTIK_URL: "http://authentik-server:9000"
-      AUTHENTIK_API_TOKEN: "${SERVICE_HEX_64_AUTHENTIKAPITOKEN}"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYPORTAL}"
       VAULT_ADMIN_URL: "http://${LOKYY_NET_PREFIX:-10.231}.0.93:8090"
-      LOKYY_PROVISION_DIR: "/provision"
+      METAMCP_URL: "http://metamcp:12008"
+      METAMCP_DATABASE_URL: "postgresql://metamcp:${SERVICE_HEX_64_METAMCPDB}@metamcp-db:5432/metamcp"
+      MCP_TOKEN_V01: "${SERVICE_HEX_64_MCPV01}"
+      MCP_TOKEN_V02: "${SERVICE_HEX_64_MCPV02}"
+      MCP_TOKEN_V03: "${SERVICE_HEX_64_MCPV03}"
+      MCP_TOKEN_V04: "${SERVICE_HEX_64_MCPV04}"
+      MCP_TOKEN_V05: "${SERVICE_HEX_64_MCPV05}"
+      MCP_TOKEN_V06: "${SERVICE_HEX_64_MCPV06}"
+      MCP_TOKEN_V07: "${SERVICE_HEX_64_MCPV07}"
+      MCP_TOKEN_V08: "${SERVICE_HEX_64_MCPV08}"
+      MCP_TOKEN_V09: "${SERVICE_HEX_64_MCPV09}"
+      MCP_TOKEN_V10: "${SERVICE_HEX_64_MCPV10}"
+      MCP_TOKEN_V11: "${SERVICE_HEX_64_MCPV11}"
+      MCP_TOKEN_V12: "${SERVICE_HEX_64_MCPV12}"
+      MCP_TOKEN_V13: "${SERVICE_HEX_64_MCPV13}"
+      MCP_TOKEN_V14: "${SERVICE_HEX_64_MCPV14}"
+      MCP_TOKEN_V15: "${SERVICE_HEX_64_MCPV15}"
+      MCP_TOKEN_FIRMA: "${SERVICE_HEX_64_MCPFIRMA}"
+      MCP_READONLY_TOKEN_FIRMA: "${SERVICE_HEX_64_MCPREADONLYFIRMA}"
     volumes:
       - "lokyy-state:/state"
-      - "lokyy-provision:/provision:ro"
     networks:
       edge: {}
       portal:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.94"
+      metamcp-internal: {}
     depends_on:
       lokyy-init:
         condition: "service_completed_successfully"
@@ -831,12 +848,9 @@ services:
     networks:
       - "metamcp-internal"
   metamcp:
-    build:
-      context: "../.."
-      dockerfile: "deploy/coolify/metamcp/Dockerfile"
+    image: "ghcr.io/metatool-ai/metamcp:2.4.22"
     restart: "unless-stopped"
     mem_limit: "1536m"
-    init: true
     depends_on:
       metamcp-db:
         condition: "service_healthy"
@@ -853,29 +867,6 @@ services:
       NEXT_PUBLIC_APP_URL: "https://mcp.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
       BETTER_AUTH_SECRET: "${SERVICE_HEX_64_METAMCPAUTH}"
       TRANSFORM_LOCALHOST_TO_DOCKER_INTERNAL: "false"
-      MCP_TOKEN_V01: "${SERVICE_HEX_64_MCPV01}"
-      MCP_TOKEN_V02: "${SERVICE_HEX_64_MCPV02}"
-      MCP_TOKEN_V03: "${SERVICE_HEX_64_MCPV03}"
-      MCP_TOKEN_V04: "${SERVICE_HEX_64_MCPV04}"
-      MCP_TOKEN_V05: "${SERVICE_HEX_64_MCPV05}"
-      MCP_TOKEN_V06: "${SERVICE_HEX_64_MCPV06}"
-      MCP_TOKEN_V07: "${SERVICE_HEX_64_MCPV07}"
-      MCP_TOKEN_V08: "${SERVICE_HEX_64_MCPV08}"
-      MCP_TOKEN_V09: "${SERVICE_HEX_64_MCPV09}"
-      MCP_TOKEN_V10: "${SERVICE_HEX_64_MCPV10}"
-      MCP_TOKEN_V11: "${SERVICE_HEX_64_MCPV11}"
-      MCP_TOKEN_V12: "${SERVICE_HEX_64_MCPV12}"
-      MCP_TOKEN_V13: "${SERVICE_HEX_64_MCPV13}"
-      MCP_TOKEN_V14: "${SERVICE_HEX_64_MCPV14}"
-      MCP_TOKEN_V15: "${SERVICE_HEX_64_MCPV15}"
-      MCP_TOKEN_FIRMA: "${SERVICE_HEX_64_MCPFIRMA}"
-      MCP_READONLY_TOKEN_FIRMA: "${SERVICE_HEX_64_MCPREADONLYFIRMA}"
-      LOKYY_PUBLIC_BASE: "https://mcp.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
-      LOKYY_USERS_FILE: "/etc/lokyy/users.json"
-      LOKYY_PROVISION_DIR: "/var/lib/lokyy-provision"
-    volumes:
-      - "lokyy-state:/etc/lokyy:ro"
-      - "lokyy-provision:/var/lib/lokyy-provision"
     networks:
       edge:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.11"
@@ -894,14 +885,10 @@ services:
     environment:
       MODE: "gate"
       GATE_UPSTREAM: "http://metamcp:12008"
-      GATE_USERS_FILE: "/etc/lokyy/users.json"
-    volumes:
-      - "lokyy-state:/etc/lokyy:ro"
+      GATE_MAX_BINDINGS: "375"
     depends_on:
       metamcp:
         condition: "service_healthy"
-      lokyy-init:
-        condition: "service_completed_successfully"
     networks:
       edge:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.12"
@@ -987,7 +974,6 @@ services:
     cap_add:
       - "CHOWN"
       - "FOWNER"
-      - "FSETID"
     security_opt:
       - "no-new-privileges:true"
     network_mode: "none"
@@ -996,7 +982,6 @@ services:
       ADMIN_EMAIL: "${ADMIN_EMAIL:?set ADMIN_EMAIL in Coolify}"
     volumes:
       - "lokyy-state:/state"
-      - "lokyy-provision:/provision"
 networks:
   coolify:
     external: true
@@ -1219,7 +1204,6 @@ volumes:
   metamcp-db: {}
   models: {}
   lokyy-state: {}
-  lokyy-provision: {}
   vault-v01: {}
   vault-v01-home: {}
   vault-v02: {}

@@ -126,8 +126,6 @@ for (const pkg of pkgs) {
         assert.ok(!vol.startsWith('/') && !vol.startsWith('.') && !vol.startsWith('$'), `${s}: bind mount ${vol}`);
       }
     }
-    assert.ok(c.services['mcp-gate'].volumes?.includes('lokyy-state:/etc/lokyy:ro'));
-    assert.equal(c.services['mcp-gate'].environment?.GATE_USERS_FILE, '/etc/lokyy/users.json');
     assert.ok(c.services.portal.volumes?.includes('lokyy-state:/state'));
     const writers = svcs.filter((s) => (c.services[s].volumes ?? []).some((v) => v.startsWith('lokyy-state:') && !v.endsWith(':ro')));
     assert.deepEqual(writers.sort(), ['lokyy-init', 'portal']);
@@ -250,7 +248,7 @@ test('portal wiring (LBV2-28 contract)', () => {
     const t = c.services['lokyy-traefik'];
     const pnets = p.networks as Record<string, { ipv4_address?: string }>;
     const tnets = t.networks as Record<string, { ipv4_address?: string }>;
-    assert.deepEqual(Object.keys(pnets).sort(), ['edge', 'portal']);
+    assert.deepEqual(Object.keys(pnets).sort(), ['edge', 'metamcp-internal', 'portal']);
     assert.equal(pnets.portal.ipv4_address, '${LOKYY_NET_PREFIX:-10.231}.0.94');
     assert.equal(tnets.portal.ipv4_address, '${LOKYY_NET_PREFIX:-10.231}.0.93');
     assert.deepEqual(c.networks.portal.ipam?.config[0], { subnet: '${LOKYY_NET_PREFIX:-10.231}.0.80/28', ip_range: '${LOKYY_NET_PREFIX:-10.231}.0.80/29' });
@@ -264,7 +262,7 @@ test('portal wiring (LBV2-28 contract)', () => {
     assert.equal(env.LOKYY_DOMAIN, '${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}');
     assert.equal(env.LOKYY_SLOTS, slotNames(pkg).join(','));
     assert.equal(env.VAULT_ADMIN_URL, 'http://${LOKYY_NET_PREFIX:-10.231}.0.93:8090');
-    assert.equal(env.AUTHENTIK_API_TOKEN, c.services['authentik-server'].environment?.AUTHENTIK_BOOTSTRAP_TOKEN);
+    assert.equal(env.AUTHENTIK_API_TOKEN, undefined, 'the portal gets no Authentik token (authentik-gate holds it)');
     assert.equal(env.VAULT_PROXY_SECRET, t.environment?.PROXY_SECRET_PORTAL);
   }
 });
@@ -365,9 +363,9 @@ test('LOW-1: BASE_DOMAIN and ADMIN_EMAIL validated before any service uses them;
     assert.deepEqual(init.entrypoint, ['/lokyy/init-check.sh']);
     assert.equal(init.restart, 'no');
     assert.deepEqual(init.cap_drop, ['ALL']);
-    assert.deepEqual(init.cap_add, ['CHOWN', 'FOWNER', 'FSETID'], 'FSETID: keep the setgid bit on lokyy-provision');
+    assert.deepEqual(init.cap_add, ['CHOWN', 'FOWNER']);
     assert.equal(init.network_mode, 'none');
-    assert.deepEqual(init.volumes, ['lokyy-state:/state', 'lokyy-provision:/provision']);
+    assert.deepEqual(init.volumes, ['lokyy-state:/state']);
     const users = ['BASE_DOMAIN', 'ADMIN_EMAIL'];
     for (const [name, svc] of Object.entries(c.services)) {
       if (name === 'lokyy-init') continue;
@@ -378,20 +376,50 @@ test('LOW-1: BASE_DOMAIN and ADMIN_EMAIL validated before any service uses them;
   }
 });
 
-test('watcher design: metamcp runs MetaMCP + provisioning watcher; portal reads results read-only', () => {
+test('direct provisioning (LBV2-28 final): portal provisions MetaMCP itself; no watcher, no users file outside the portal', () => {
   for (const pkg of pkgs) {
     const c = buildCompose(pkg);
     const m = c.services.metamcp;
-    assert.deepEqual(m.build, { context: '../..', dockerfile: 'deploy/coolify/metamcp/Dockerfile' });
-    assert.equal(m.init, true, 'tini reaps the MetaMCP processes the supervisor restarts');
-    assert.deepEqual(m.volumes, ['lokyy-state:/etc/lokyy:ro', 'lokyy-provision:/var/lib/lokyy-provision']);
-    assert.equal(m.environment?.LOKYY_PUBLIC_BASE, 'https://mcp.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}');
+    assert.equal(m.image, 'ghcr.io/metatool-ai/metamcp:2.4.22');
+    assert.equal(m.build, undefined);
+    assert.equal(m.volumes, undefined);
+    assert.ok(!Object.keys(m.environment ?? {}).some((k) => k.startsWith('MCP_TOKEN') || k.startsWith('MCP_READONLY')), 'metamcp needs no vault tokens');
     const p = c.services.portal;
-    assert.ok(p.volumes?.includes('lokyy-provision:/provision:ro'));
-    assert.equal(p.environment?.LOKYY_PROVISION_DIR, '/provision');
-    assert.ok(!('METAMCP_DATABASE_URL' in (p.environment ?? {})));
-    assert.ok(!netKeys(c, 'portal').includes('metamcp-internal'));
-    const writers = Object.keys(c.services).filter((s) => (c.services[s].volumes ?? []).some((v) => v.startsWith('lokyy-provision:') && !v.endsWith(':ro')));
-    assert.deepEqual(writers.sort(), ['lokyy-init', 'metamcp']);
+    assert.deepEqual(netKeys(c, 'portal'), ['edge', 'metamcp-internal', 'portal']);
+    const env = p.environment ?? {};
+    assert.equal(env.METAMCP_URL, 'http://metamcp:12008');
+    assert.equal(env.METAMCP_DATABASE_URL, c.services.metamcp.environment?.DATABASE_URL);
+    for (const v of vaultNames(pkg)) assert.equal(env[`MCP_TOKEN_${v.toUpperCase()}`], c.services[`vault-${v}`].environment?.MCP_HTTP_TOKEN);
+    assert.equal(env.MCP_READONLY_TOKEN_FIRMA, c.services['vault-firma'].environment?.MCP_HTTP_READONLY_TOKEN);
+    assert.deepEqual(p.volumes, ['lokyy-state:/state']);
+    assert.ok(!('lokyy-provision' in c.volumes));
+    // users.json (mode 600) is read by nobody but the portal; the gate cap comes from the slot count
+    const readers = Object.keys(c.services).filter((s) => (c.services[s].volumes ?? []).some((v) => v.startsWith('lokyy-state:')));
+    assert.deepEqual(readers.sort(), ['lokyy-init', 'portal']);
+    const g = c.services['mcp-gate'].environment ?? {};
+    assert.equal(g.GATE_USERS_FILE, undefined);
+    assert.equal(g.GATE_MAX_BINDINGS, String(Math.max(100, Math.ceil(slotNames(pkg).length * 20 * 1.25))));
+  }
+});
+
+test('MED-3: least-privilege Authentik service account for the portal; no bootstrap token anywhere', () => {
+  for (const pkg of pkgs) {
+    const c = buildCompose(pkg);
+    const b = renderBlueprint(pkg);
+    for (const perm of ['view_user', 'add_user', 'change_user', 'delete_user', 'reset_user_password', 'view_group',
+      'add_user_to_group', 'remove_user_from_group', 'view_authenticatedsession', 'delete_authenticatedsession']) {
+      assert.ok(b.includes(`        - authentik_core.${perm}\n`), perm);
+    }
+    assert.equal((b.match(/        - authentik_\w+\.\w+\n/g) ?? []).filter((l) => !l.includes('scopemapping')).length, 10, 'exactly 10 permissions');
+    assert.ok(b.includes('      type: service_account\n'));
+    assert.ok(b.includes('      key: !Env PORTAL_AUTHENTIK_TOKEN\n'));
+    assert.ok(b.includes('      expiring: false\n') && b.includes('      intent: api\n'));
+    const ak = c.services['authentik-worker'].environment ?? {};
+    assert.equal(ak.PORTAL_AUTHENTIK_TOKEN, '${SERVICE_HEX_64_PORTALAKTOKEN}');
+    assert.equal(ak.AUTHENTIK_BOOTSTRAP_TOKEN, undefined, 'no superuser API token');
+    for (const [name, svc] of Object.entries(c.services)) {
+      if (name.startsWith('authentik-')) continue;
+      assert.ok(!JSON.stringify(svc).includes('SERVICE_HEX_64_PORTALAKTOKEN'), `${name} holds the service-account token`);
+    }
   }
 });

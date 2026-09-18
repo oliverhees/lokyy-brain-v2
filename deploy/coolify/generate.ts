@@ -38,7 +38,6 @@ export interface Service {
   tmpfs?: string[];
   sysctls?: Record<string, string>;
   pids_limit?: number;
-  init?: boolean;
   cap_add?: string[];
   network_mode?: string;
   user?: string;
@@ -97,7 +96,7 @@ const secret = {
   portalProxy: magic.hex('proxyportal'),
   authentikSecret: magic.hex('authentiksecret'),
   authentikDb: magic.hex('authentikdb'),
-  authentikApiToken: magic.hex('authentikapitoken'),
+  portalAuthentikToken: magic.hex('portalaktoken'),
   adminPassword: magic.password('admin'),
   metamcpDb: magic.hex('metamcpdb'),
   metamcpAuth: magic.hex('metamcpauth'),
@@ -255,10 +254,11 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     AUTHENTIK_POSTGRESQL__PASSWORD: secret.authentikDb,
     AUTHENTIK_SECRET_KEY: secret.authentikSecret,
     // First start: user akadmin with this e-mail and password (password shown in Coolify's env list);
-    // the blueprint puts akadmin into lokyy-admins. The bootstrap token is the portal's API token.
+    // the blueprint puts akadmin into lokyy-admins. No bootstrap API token (superuser) is created.
     AUTHENTIK_BOOTSTRAP_EMAIL: EMAIL,
     AUTHENTIK_BOOTSTRAP_PASSWORD: secret.adminPassword,
-    AUTHENTIK_BOOTSTRAP_TOKEN: secret.authentikApiToken,
+    // Key of the portal's least-privilege service-account token (blueprint lokyy-portal-api)
+    PORTAL_AUTHENTIK_TOKEN: secret.portalAuthentikToken,
     AUTHENTIK_ERROR_REPORTING__ENABLED: 'false',
     AUTHENTIK_DISABLE_UPDATE_CHECK: 'true',
     AUTHENTIK_DISABLE_STARTUP_ANALYTICS: 'true',
@@ -300,14 +300,18 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
       LOKYY_PACKAGE: pkg,
       LOKYY_SLOTS: slotNames(pkg).join(','),
       LOKYY_STATE_DIR: '/state',
+      // TODO(LBV2-28 authentik-gate): AUTHENTIK_URL points to the gate, which alone holds the service-account token
       AUTHENTIK_URL: 'http://authentik-server:9000',
-      AUTHENTIK_API_TOKEN: secret.authentikApiToken,
       VAULT_PROXY_SECRET: secret.portalProxy,
       VAULT_ADMIN_URL: `http://${TRAEFIK_PORTAL_IP}:8090`,
-      LOKYY_PROVISION_DIR: '/provision',
+      // Direct provisioning (LBV2-28): MetaMCP API + database, vault tokens for the users' MCP servers
+      METAMCP_URL: 'http://metamcp:12008',
+      METAMCP_DATABASE_URL: `postgresql://metamcp:${secret.metamcpDb}@metamcp-db:5432/metamcp`,
+      ...Object.fromEntries(vaults.map((v) => [`MCP_TOKEN_${v.toUpperCase()}`, secret.mcpToken(v)])),
+      MCP_READONLY_TOKEN_FIRMA: secret.mcpReadonlyFirma,
     },
-    volumes: ['lokyy-state:/state', 'lokyy-provision:/provision:ro'],
-    networks: { edge: {}, portal: { ipv4_address: PORTAL_IP } },
+    volumes: ['lokyy-state:/state'],
+    networks: { edge: {}, portal: { ipv4_address: PORTAL_IP }, 'metamcp-internal': {} },
   };
 
   // -------------------------------------------------------------------- Vaults
@@ -370,23 +374,12 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     BETTER_AUTH_SECRET: secret.metamcpAuth,
     TRANSFORM_LOCALHOST_TO_DOCKER_INTERNAL: 'false',
   };
-  // Vault tokens for provisioning (metamcp/provision.mjs reads MCP_TOKEN_<VAULT>); MetaMCP stores them anyway.
-  for (const v of vaults) metamcpEnv[`MCP_TOKEN_${v.toUpperCase()}`] = secret.mcpToken(v);
-  metamcpEnv.MCP_READONLY_TOKEN_FIRMA = secret.mcpReadonlyFirma;
-  // Provisioning watcher (LBV2-28 contract): reads users.json (lokyy-state, ro), provisions with
-  // provision.mjs, writes metamcp-clients.json to lokyy-provision (read by the portal only)
-  metamcpEnv.LOKYY_PUBLIC_BASE = `https://mcp.${DOMAIN}`;
-  metamcpEnv.LOKYY_USERS_FILE = '/etc/lokyy/users.json';
-  metamcpEnv.LOKYY_PROVISION_DIR = '/var/lib/lokyy-provision';
   services.metamcp = {
-    build: { context: REPO, dockerfile: 'deploy/coolify/metamcp/Dockerfile' },
+    image: 'ghcr.io/metatool-ai/metamcp:2.4.22',
     restart: 'unless-stopped',
     mem_limit: '1536m',
-    // Supervisor restarts MetaMCP (a process group) to end sessions; tini reaps what is left
-    init: true,
     depends_on: { 'metamcp-db': { condition: 'service_healthy' } },
     environment: metamcpEnv,
-    volumes: ['lokyy-state:/etc/lokyy:ro', 'lokyy-provision:/var/lib/lokyy-provision'],
     // No vault network: vaults are reached only through vault-connector. edge is not internal (MetaMCP
     // itself needs no internet; the edge network has it for Authentik and the portal)
     networks: { edge: { ipv4_address: EDGE_IP.metamcp }, 'metamcp-internal': {}, 'mcp-upstream': {} },
@@ -402,8 +395,9 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
   // Session-binding proxy for MCP clients; session cap from the users file the portal writes.
   services['mcp-gate'] = {
     ...gateBase,
-    environment: { MODE: 'gate', GATE_UPSTREAM: 'http://metamcp:12008', GATE_USERS_FILE: '/etc/lokyy/users.json' },
-    volumes: ['lokyy-state:/etc/lokyy:ro'],
+    // users.json is the portal's private file (mode 600): the session cap comes from the package size,
+    // LBV2-24 formula users x 20 x 1.25 (at least 100) with one user per slot
+    environment: { MODE: 'gate', GATE_UPSTREAM: 'http://metamcp:12008', GATE_MAX_BINDINGS: String(Math.max(100, Math.ceil(slotNames(pkg).length * 20 * 1.25))) },
     depends_on: { metamcp: { condition: 'service_healthy' } },
     networks: { edge: { ipv4_address: EDGE_IP['mcp-gate'] } },
   };
@@ -446,26 +440,24 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     if (opts.embed) networks[`embed-${v}`] = network(`embed-${v}`, { internal: true });
   }
 
-  const volumes: Record<string, Record<string, never>> = { 'authentik-db': {}, 'metamcp-db': {}, models: {}, 'lokyy-state': {}, 'lokyy-provision': {} };
+  const volumes: Record<string, Record<string, never>> = { 'authentik-db': {}, 'metamcp-db': {}, models: {}, 'lokyy-state': {} };
   for (const v of vaults) { volumes[`vault-${v}`] = {}; volumes[`vault-${v}-home`] = {}; }
 
   // LOW-1: one-shot check of the operator input before anything uses it (Traefik rules, blueprint, SQL in
-  // metamcp-init), and ownership of the shared state volumes (portal uid 1000 writes users.json, the
-  // MetaMCP watcher uid 1001 writes metamcp-clients.json) before any container mounts them.
+  // metamcp-init), and ownership of the portal's state volume (uid 1000) before the portal mounts it.
   services['lokyy-init'] = {
     build: { context: REPO, dockerfile: 'deploy/coolify/metamcp-init/Dockerfile' },
     restart: 'no',
     entrypoint: ['/lokyy/init-check.sh'],
     user: '0',
     cap_drop: ['ALL'],
-    // FSETID: chmod keeps the setgid bit on a directory whose group is not root's
-    cap_add: ['CHOWN', 'FOWNER', 'FSETID'],
+    cap_add: ['CHOWN', 'FOWNER'],
     security_opt: ['no-new-privileges:true'],
     network_mode: 'none',
     environment: { BASE_DOMAIN: DOMAIN, ADMIN_EMAIL: EMAIL },
-    volumes: ['lokyy-state:/state', 'lokyy-provision:/provision'],
+    volumes: ['lokyy-state:/state'],
   };
-  const usesInput = (svc: Service) => JSON.stringify(svc).match(/\$\{(BASE_DOMAIN|ADMIN_EMAIL)|"lokyy-(state|provision):/);
+  const usesInput = (svc: Service) => JSON.stringify(svc).match(/\$\{(BASE_DOMAIN|ADMIN_EMAIL)|"lokyy-state:/);
   for (const [name, svc] of Object.entries(services)) {
     if (name !== 'lokyy-init' && usesInput(svc)) svc.depends_on = { ...svc.depends_on, 'lokyy-init': { condition: 'service_completed_successfully' } };
   }
@@ -654,6 +646,9 @@ const PROXY_PROPERTY_MAPPINGS = [
   "        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]",
 ];
 
+const PORTAL_PERMISSIONS = ['view_user', 'add_user', 'change_user', 'delete_user', 'reset_user_password', 'view_group',
+  'add_user_to_group', 'remove_user_from_group', 'view_authenticatedsession', 'delete_authenticatedsession'];
+
 // Authentik blueprint: groups, one forward-auth proxy provider + application + group binding per vault,
 // the embedded outpost, and the bootstrap admin (akadmin) in lokyy-admins. No other users: the portal
 // creates them and assigns slots.
@@ -676,6 +671,35 @@ export function renderBlueprint(pkg: PackageName): string {
   for (const v of slots) L.push(group(v, `vault-${v}`));
   L.push(group('firma-write', 'vault-firma-write'), group('firma-read', 'vault-firma-read'), group('admins', 'lokyy-admins'));
   L.push('  # Every employee the portal invites (portal access, "Mein Zugang")', group('users', 'lokyy-users'));
+  // MED-3: the portal's least-privilege service account (LBV2-28): exactly the calls of
+  // apps/portal/src/server/authentik.ts; no superuser, no RBAC, flow, provider or token permissions. Its
+  // token key comes from a Coolify magic variable; only authentik-gate receives it.
+  L.push(
+    '  - model: authentik_rbac.role',
+    '    id: role-portal',
+    '    identifiers: { name: lokyy-portal }',
+    '    attrs:',
+    '      name: lokyy-portal',
+    '      permissions:',
+    ...PORTAL_PERMISSIONS.map((p) => `        - authentik_core.${p}`),
+    '  - model: authentik_core.user',
+    '    id: sa-portal',
+    '    identifiers: { username: lokyy-portal }',
+    '    attrs:',
+    '      username: lokyy-portal',
+    '      name: Lokyy Portal (service account)',
+    '      type: service_account',
+    '      path: lokyy-system',
+    '      roles: [!KeyOf role-portal]',
+    '  - model: authentik_core.token',
+    '    identifiers: { identifier: lokyy-portal-api }',
+    '    attrs:',
+    '      identifier: lokyy-portal-api',
+    '      intent: api',
+    '      user: !KeyOf sa-portal',
+    '      expiring: false',
+    '      key: !Env PORTAL_AUTHENTIK_TOKEN',
+  );
   L.push(
     '  - model: authentik_core.user',
     '    identifiers: { username: akadmin }',

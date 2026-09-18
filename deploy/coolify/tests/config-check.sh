@@ -41,7 +41,7 @@ for pkg in s m; do
   check "$pkg: every subnet rendered under 10.231" '[[ $(q "[.networks[] | (.ipam.config // [])[] | .subnet | select(startswith(\"10.231.\") | not)] | length") == 0 ]]'
 
   # LBV2-28 portal wiring: portal only on edge + portal; admin entrypoint bound to Traefik's portal address
-  check "$pkg: portal networks edge,portal" '[[ $(q ".services.portal.networks | keys | join(\",\")") == edge,portal ]]'
+  check "$pkg: portal networks edge,metamcp-internal,portal (never a vault network)" '[[ $(q ".services.portal.networks | keys | join(\",\")") == edge,metamcp-internal,portal ]]'
   check "$pkg: portal network members lokyy-traefik,portal" '[[ $(q "[.services | to_entries[] | select(.value.networks | has(\"portal\")) | .key] | sort | join(\",\")") == lokyy-traefik,portal ]]'
   check "$pkg: portal-admin entrypoint on 10.231.0.93 only" 'q ".services[\"lokyy-traefik\"].command[]" | grep -qx -- "--entrypoints.portal-admin.address=10.231.0.93:8090"'
   check "$pkg: portal has fixed address 10.231.0.94 (ipAllowList)" '[[ $(q ".services.portal.networks.portal.ipv4_address") == 10.231.0.94 && $(q ".services[\"lokyy-traefik\"].environment.PORTAL_IP") == 10.231.0.94 ]]'

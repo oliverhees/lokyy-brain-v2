@@ -48,19 +48,18 @@ test('traefik: refuses invalid BASE_DOMAIN', () => {
 
 function initCheck(env: Record<string, string>) {
   const root = mkdtempSync(join(tmpdir(), 'lokyy-init-'));
-  mkdirSync(join(root, 'state')); mkdirSync(join(root, 'provision'));
+  mkdirSync(join(root, 'state'));
   const bin = fakeBin({ chown: 'echo "chown $*" >> "$LOG"', chmod: 'echo "chmod $*" >> "$LOG"' });
   const r = spawnSync('sh', [join(coolify, 'metamcp-init/init-check.sh')], {
-    env: { PATH: `${bin}:/usr/bin:/bin`, LOG: join(root, 'log'), LOKYY_STATE: join(root, 'state'), LOKYY_PROVISION: join(root, 'provision'), ...env }, encoding: 'utf8',
+    env: { PATH: `${bin}:/usr/bin:/bin`, LOG: join(root, 'log'), LOKYY_STATE: join(root, 'state'), ...env }, encoding: 'utf8',
   });
   let log = ''; try { log = String(spawnSync('cat', [join(root, 'log')], { encoding: 'utf8' }).stdout); } catch { /* none */ }
   return { code: r.status, err: r.stderr, log, root };
 }
-test('init-check: accepts a normal domain and e-mail, then prepares volume ownership', () => {
+test('init-check: accepts a normal domain and e-mail, then prepares the portal state volume', () => {
   const r = initCheck({ BASE_DOMAIN: 'lokyy.example.de', ADMIN_EMAIL: 'ops.team+x@example.de' });
   assert.equal(r.code, 0, r.err);
   assert.match(r.log, /chown 1000:1000 .*state/);
-  assert.match(r.log, /chown 1001:1000 .*provision/);
   assert.ok(statSync(r.root).isDirectory());
 });
 test('init-check: rejects injection-prone input', () => {

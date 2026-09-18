@@ -43,7 +43,7 @@ curlk() { curl -sk --connect-to "::127.0.0.1:$PORT" "$@"; }
 code() { curlk -o /dev/null -w '%{http_code}' "$@"; }
 U() { printf 'https://%s.%s' "$1" "$DOMAIN"; }
 api() { # api <method> <path> [json]
-  curlk -X "$1" -H "Authorization: Bearer $(envv SERVICE_HEX_64_AUTHENTIKAPITOKEN)" -H 'content-type: application/json' \
+  curlk -X "$1" -H "Authorization: Bearer $(envv SERVICE_HEX_64_PORTALAKTOKEN)" -H 'content-type: application/json' \
     ${3:+-d "$3"} "$(U auth)/api/v3$2"
 }
 
@@ -120,6 +120,13 @@ from() { dc "$1" exec -T "$2" node -e "fetch('$3',{signal:AbortSignal.timeout(30
 pfetch() {
   dc "$1" exec -T "$2" node -e "fetch('$4',{method:'$3',signal:AbortSignal.timeout(3000)}).then(r=>console.log(r.status),()=>console.log('blocked'))" 2>/dev/null
 }
+# every proxy provider has the 5 managed scope mappings (read via ak shell: the portal account may not list providers)
+scope_mappings() {
+  dc "$1" exec -T authentik-worker ak shell -c "
+from authentik.providers.proxy.models import ProxyProvider
+bad = [p.name for p in ProxyProvider.objects.all() if p.property_mappings.count() != 5]
+print('all' if ProxyProvider.objects.exists() and not bad else ','.join(bad) or 'none')" 2>/dev/null | tail -1
+}
 mcp_ok() { [[ $(mcp_init "$1" "$2") == 200 ]]; }
 mcp_init() { # mcp_init <key> <user-endpoint> → HTTP status of an MCP initialize through mcp-gate
   curlk -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $1" -H 'content-type: application/json' \
@@ -127,26 +134,25 @@ mcp_init() { # mcp_init <key> <user-endpoint> → HTTP status of an MCP initiali
     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
     "$(U mcp)/metamcp/$2/mcp"
 }
-# users_json <generation> <jq users array>: writes users.json like the portal (uid 1000, tmp + rename)
-users_json() {
-  jq -n --argjson g "$1" --argjson u "$2" '{companyVault:"firma",generation:$g,users:$u}' >"$work/users.json"
-  docker run --rm -i --user 1000:1000 -v "${PROJECT}_lokyy-state:/state" alpine:3.22 \
-    sh -c 'cat >/state/.users.json.tmp && mv /state/.users.json.tmp /state/users.json' <"$work/users.json"
-}
-# clients_for <generation>: waits for the watcher's metamcp-clients.json of that generation (read as the portal would)
-read_clients() { docker run --rm --user 1000:1000 -v "${PROJECT}_lokyy-provision:/p:ro" alpine:3.22 cat /p/metamcp-clients.json 2>/dev/null; }
-clients_for() {
-  local deadline=$(( $(date +%s) + 300 ))
-  until [[ $(read_clients | jq -r '.sourceGeneration' 2>/dev/null) == "$1" ]]; do
-    (( $(date +%s) > deadline )) && return 1
-    sleep 3
+# provision <users-array-json> [rotate-json]: what the portal does (direct provisioning, LBV2-28), using the
+# shared provisioner deploy/stack/metamcp/provision.mjs inside the metamcp container; restarts MetaMCP when
+# access changed, like the portal and provision.sh do. Vault tokens come from the Coolify env, never argv.
+provision_run() {
+  local users=$1 rotate=${2:-[]} args=()
+  for v in $(grep -oE '^SERVICE_HEX_64_MCP(V[0-9]+|FIRMA|READONLYFIRMA)=' "$env_file" | sed 's/^SERVICE_HEX_64_MCP//; s/=$//'); do
+    local name=MCP_TOKEN_$v; [[ $v == READONLYFIRMA ]] && name=MCP_READONLY_TOKEN_FIRMA
+    export "$name=$(envv "SERVICE_HEX_64_MCP$v")"; args+=(-e "$name")
   done
-  read_clients >"$work/clients.json"
+  export LOKYY_USERS; LOKYY_USERS=$(jq -cn --argjson u "$users" '{companyVault:"firma",users:$u}')
+  export LOKYY_ROTATE=$rotate LOKYY_PUBLIC_BASE; LOKYY_PUBLIC_BASE=$(U mcp)
+  dc "$PKG" exec -T -w /app/apps/backend -e LOKYY_USERS -e LOKYY_ROTATE -e LOKYY_PUBLIC_BASE "${args[@]}" metamcp \
+    node --input-type=module - <"$stack/metamcp/provision.mjs" >"$work/clients.json" 2>"$work/provision.log"
+  if [[ $(jq -r .restartMetamcp "$work/clients.json") == true ]]; then dc "$PKG" restart metamcp >/dev/null; fi
 }
-provision() { # stands in for the portal: users.json into lokyy-state; the watcher in metamcp provisions
-  users_json 1 '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true,"keyRotation":"a1"},
-                 {"username":"bob","role":"writer","vault":"v02","allowVaultNameMismatch":true}]'
-  clients_for 1 && [[ $(jq -r '.status' "$work/clients.json") == ok ]]
+provision() {
+  PKG=$1 provision_run '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true},
+                         {"username":"bob","role":"writer","vault":"v02","allowVaultNameMismatch":true}]'
+  [[ $(jq -r '.status' "$work/clients.json") == ok ]]
 }
 key() { jq -r --arg u "$1" '.users[] | select(.username == $u) | .apiKey' "$work/clients.json"; }
 
@@ -237,49 +243,42 @@ create_user alice "$(cat "$work/pass-alice")" vault-v01 && create_user bob "$(ca
   && create_user walt "$(cat "$work/pass-walt")" vault-firma-write && create_user rita "$(cat "$work/pass-rita")" vault-firma-read \
   && create_user ulla "$(cat "$work/pass-ulla")" vault-v03 lokyy-users \
   && ok "users created via Authentik API (bootstrap token)" || bad "user creation via Authentik API"
-provision s && ok "provisioning watcher: users.json generation 1 provisioned, clients file readable by the portal uid" || { dc s logs metamcp | grep lokyy-supervisor | tail -20; bad "provisioning watcher"; }
+provision s && ok "MCP provisioning (provision.mjs, as the portal does)" || { cat "$work/provision.log"; bad "provisioning"; }
 dc s up -d --force-recreate --no-deps mcp-gate >/dev/null 2>&1
 wait_for "S: mcp-gate healthy after users.json" 60 healthy s
 isolation_checks s v15
 
-echo "== [s] provisioning watcher: rotation, removal, a failing entry does not block others"
+echo "== [s] provisioning: rotation, removal, a failing entry does not block others"
 old_alice=$(key alice) old_bob=$(key bob)
-restarts_before=$(dc s logs metamcp 2>/dev/null | grep -c 'restarting MetaMCP')
-users_json 2 '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true,"keyRotation":"a2"},
-               {"username":"zed","role":"writer","vault":"v01","allowVaultNameMismatch":true},
-               {"username":"carl","role":"writer","vault":"v04","allowVaultNameMismatch":true}]'
-clients_for 2 && ok "generation 2 processed" || bad "generation 2 not processed"
+PKG=s provision_run '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true},
+                      {"username":"zed","role":"writer","vault":"v01","allowVaultNameMismatch":true},
+                      {"username":"carl","role":"writer","vault":"v04","allowVaultNameMismatch":true}]' '["alice"]'
 expect "run status with one invalid entry" "$(jq -r .status "$work/clients.json")" "failed"
-expect "per-user status" "$(jq -r '[.users[] | "\(.username)=\(.status)"] | join(",")' "$work/clients.json")" "alice=ok,carl=ok,zed=failed"
+expect "per-user status" "$(jq -r '[.users[] | "\(.username)=\(.status)"] | sort | join(",")' "$work/clients.json")" "alice=ok,carl=ok,zed=failed"
 expect "no key for the failed entry" "$(jq -r '.users[] | select(.username=="zed") | .apiKey // "none"' "$work/clients.json")" "none"
 expect "bob removed" "$(jq -r '.removed | join(",")' "$work/clients.json")" "bob"
-expect "alice key rotated (keyRotation a1 -> a2)" "$([[ $(key alice) != "$old_alice" && -n $(key alice) ]] && echo new || echo same)" "new"
-expect "keyRotation recorded" "$(jq -r '.users[] | select(.username=="alice") | .keyRotation' "$work/clients.json")" "a2"
-# MetaMCP was restarted by the watcher (migrations + start take a while): wait until the new key works
-wait_for "MCP endpoint answers after the watcher's restart" 240 mcp_ok "$(key alice)" alice
-expect "MetaMCP restarted by the watcher" "$(( $(dc s logs metamcp 2>/dev/null | grep -c 'restarting MetaMCP') - restarts_before ))" "1"
+expect "alice key rotated" "$([[ $(key alice) != "$old_alice" && -n $(key alice) ]] && echo new || echo same)" "new"
+wait_for "MCP endpoint answers after the MetaMCP restart" 240 mcp_ok "$(key alice)" alice
 expect "old alice key" "$(mcp_init "$old_alice" alice)" "401"
 expect "removed bob's key" "$(mcp_init "$old_bob" bob)" "401"
-expect "new alice key" "$(mcp_init "$(key alice)" alice)" "200"
 expect "carl key" "$(mcp_init "$(key carl)" carl)" "200"
-expect "file mode 0640, group 1000" "$(docker run --rm -v "${PROJECT}_lokyy-provision:/p:ro" alpine:3.22 stat -c '%a %g' /p/metamcp-clients.json)" "640 1000"
-expect "no API key in MetaMCP logs" "$(dc s logs metamcp 2>/dev/null | grep -c 'sk_mt_')" "0"
-users_json 3 '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true,"keyRotation":"a2"},
-               {"username":"bob","role":"writer","vault":"v02","allowVaultNameMismatch":true}]'
-clients_for 3 && [[ $(jq -r .status "$work/clients.json") == ok ]] && ok "generation 3 (bob back, carl removed) ok" || bad "generation 3"
-wait_for "MCP endpoint answers after generation 3" 240 mcp_ok "$(key bob)" bob
-expect "alice key unchanged when keyRotation unchanged" "$(mcp_init "$(key alice)" alice)" "200"
+PKG=s provision_run '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true},
+                      {"username":"bob","role":"writer","vault":"v02","allowVaultNameMismatch":true}]'
+[[ $(jq -r .status "$work/clients.json") == ok ]] && ok "bob back, carl removed" || bad "second provisioning run"
+wait_for "MCP endpoint answers after the MetaMCP restart" 240 mcp_ok "$(key bob)" bob
+expect "alice key unchanged without rotation" "$(mcp_init "$(key alice)" alice)" "200"
 
 echo "== [s] Authentik providers carry the proxy scope mappings (non-empty identity on a fresh stack)"
+PKG=s
 expect "proxy providers with 5 property mappings / all" \
-  "$(api GET '/providers/proxy/?page_size=200' | jq -r 'if (.results | length) > 0 and all(.results[]; (.property_mappings | length) == 5) then "all" else "\([.results[] | select((.property_mappings | length) != 5) | .name] | join(","))" end')" "all"
+  "$(scope_mappings "$PKG")" "all"
 
 # data that must survive the upgrade
 dc s exec -T vault-v01 sh -c 'echo lbv2-27 > /data/upgrade-marker' && ok "marker written to vault-v01 volume" || bad "marker write"
 alice_key=$(key alice)
 
-# The portal rewrites users.json from its own state when it starts; this smoke writes users.json itself, so
-# the portal is stopped before the upgrade (its wiring was checked above; M only adds slots).
+# The portal reconciles MetaMCP from its own state; this smoke provisions its test users directly, so the
+# portal is stopped before the upgrade (its wiring was checked above; M only adds slots).
 if has_portal; then dc s stop portal >/dev/null 2>&1 && dc s rm -f portal >/dev/null 2>&1; fi
 
 # ------------------------------------------------------------------- upgrade to M
@@ -290,9 +289,8 @@ wait_for "M: blueprint lokyy-slots re-applied" 300 blueprint m
 wait_for "M: routes for new slots (worker re-applies the blueprint)" 900 routes v01 v16 v30 firma
 expect "vault-v01 data survived S → M" "$(dc m exec -T vault-v01 cat /data/upgrade-marker)" "lbv2-27"
 expect "M: 31 vault services running" "$(dc m ps --format '{{.Service}}' | grep -cE '^vault-(v[0-9]+|firma)$')" "31"
-expect "M: proxy providers with 5 property mappings" \
-  "$(api GET '/providers/proxy/?page_size=200' | jq -r 'if (.results | length) > 0 and all(.results[]; (.property_mappings | length) == 5) then "all" else "\([.results[] | select((.property_mappings | length) != 5) | .name] | join(","))" end')" "all"
-sleep 15; read_clients >"$work/clients.json"
+PKG=m; expect "M: proxy providers with 5 property mappings" \
+  "$(scope_mappings "$PKG")" "all"
 expect "alice's MCP key unchanged after upgrade" "$(key alice)" "$alice_key"
 isolation_checks m v30
 
