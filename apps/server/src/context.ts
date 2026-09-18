@@ -21,6 +21,7 @@ import type { RSSWorker } from './lib/rss-worker';
 import type { SRSExtractor } from './lib/srs-worker';
 import type { EmbeddingIndexer } from './lib/embedding-indexer';
 import type { SynthesisWorker } from './lib/synthesis-worker';
+import { extractPdfText } from './lib/extract-pdf';
 
 export interface ServerContext {
   store: Store;
@@ -245,6 +246,9 @@ export async function createContext(dataDir?: string): Promise<ServerContext> {
         apiKey: config.apiKey,
         model: config.model,
         baseUrl: config.baseUrl || undefined,
+        ruleId: config.ruleId,
+        extractPdfText: (data, o) => extractPdfText(new Uint8Array(data), { maxChars: o.maxChars }),
+        maxDocumentChars: config.maxContextChars,
       });
     },
     reloadConfig: async () => {

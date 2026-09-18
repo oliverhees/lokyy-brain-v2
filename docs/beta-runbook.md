@@ -202,7 +202,9 @@ llm/configure-eurouter.sh --dry-run   # which vault uses which key source (never
 llm/configure-eurouter.sh
 ```
 
-Per-vault keys are recommended: a leaked key or one heavy user cannot exhaust the whole budget, and one vault can be revoked alone. Note: `GET /api/config` shows the key to anyone who can open that vault's web UI — another reason for per-vault keys.
+Per-vault keys are recommended: a leaked key or one heavy user cannot exhaust the whole budget, and one vault can be revoked alone.
+
+Route (routing rule): an admin picks it in the vault's Settings → Provider → EUrouter → Route; it is stored as `ruleId` and sent as `rule_id` instead of a model (the route brings its models). `configure-eurouter.sh` keeps an existing `ruleId` (it only merges provider, base URL, model and key). See `docs/self-hosting-mcp-http.md#eurouter-routes-routing-rules`. Note: `GET /api/config` shows the key to anyone who can open that vault's web UI — another reason for per-vault keys.
 
 ## 11. Connecting an MCP client
 
@@ -315,7 +317,7 @@ Keep backups encrypted and off the server (e.g. restic to a storage box); also b
 
 - **MetaMCP stores API keys and vault bearer tokens in plain text** in `metamcp-db` (accepted risk, see `deploy/stack/README.md`): DB stays on an internal network, backups encrypted, rotate everything on suspected exposure.
 - **Embedding model stays loaded** after the first search (~2.6 GiB per vault until restart); reindex happens only on server start. Model unload after idle is a follow-up.
-- **PDF chat via EUrouter is untested** without a real key (the OpenAI adapter uses `/v1/responses` for document blocks; EUrouter's route answers `400` to empty requests).
+- **PDF chat via EUrouter** sends locally extracted text (no figures/layout) via chat completions with the route; text longer than `maxContextChars` (default 50000 characters) is refused. `/v1/responses` is never used for EUrouter.
 - `GET /api/config` returns the vault's EUrouter key to everyone with web access to that vault.
 - The stack attack suites are not yet runnable against the server (localhost URLs, demo users); only the manual smoke tests in section 12 apply.
 - Adding a vault slot (u4, u5) is a manual template change: copy a vault block, its `web-`/`mcp-` networks (new subnets), volumes, `vault-connector` networks/aliases/`CONNECTOR_VAULTS`, the `lokyy-traefik` networks and host rules, blueprint group/provider/application/binding/outpost entries, and the env variables.
