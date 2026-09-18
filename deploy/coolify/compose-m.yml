@@ -1617,6 +1617,7 @@ services:
     cap_add:
       - "CHOWN"
       - "FOWNER"
+      - "FSETID"
     security_opt:
       - "no-new-privileges:true"
     network_mode: "none"

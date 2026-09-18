@@ -458,7 +458,8 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     entrypoint: ['/lokyy/init-check.sh'],
     user: '0',
     cap_drop: ['ALL'],
-    cap_add: ['CHOWN', 'FOWNER'],
+    // FSETID: chmod keeps the setgid bit on a directory whose group is not root's
+    cap_add: ['CHOWN', 'FOWNER', 'FSETID'],
     security_opt: ['no-new-privileges:true'],
     network_mode: 'none',
     environment: { BASE_DOMAIN: DOMAIN, ADMIN_EMAIL: EMAIL },

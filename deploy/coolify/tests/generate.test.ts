@@ -365,7 +365,7 @@ test('LOW-1: BASE_DOMAIN and ADMIN_EMAIL validated before any service uses them;
     assert.deepEqual(init.entrypoint, ['/lokyy/init-check.sh']);
     assert.equal(init.restart, 'no');
     assert.deepEqual(init.cap_drop, ['ALL']);
-    assert.deepEqual(init.cap_add, ['CHOWN', 'FOWNER']);
+    assert.deepEqual(init.cap_add, ['CHOWN', 'FOWNER', 'FSETID'], 'FSETID: keep the setgid bit on lokyy-provision');
     assert.equal(init.network_mode, 'none');
     assert.deepEqual(init.volumes, ['lokyy-state:/state', 'lokyy-provision:/provision']);
     const users = ['BASE_DOMAIN', 'ADMIN_EMAIL'];

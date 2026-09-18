@@ -40,6 +40,8 @@ Check: `docker exec <vault-v01 container> node -e "fetch('http://169.254.169.254
 
 ## Upgrade S → M
 
+**Only upward.** M → S is not supported: slots `v16`–`v30` would lose their services while their volumes and Authentik users stay behind. To shrink, export the data of those slots, remove their people in the portal, then create a fresh S application.
+
 In the same Coolify application change *Docker Compose location* to `/deploy/coolify/compose-m.yml` and deploy. Volumes, users, slots and MCP keys stay; Coolify generates the magic variables of the new slots. The new hosts (`v16.`–`v30.`) answer `404` until Authentik has applied the updated blueprint (measured ~6–10 minutes after the deploy); existing slots keep working meanwhile. Never delete and re-create the application for an upgrade: the volumes belong to it.
 
 ## Where things are
@@ -48,7 +50,8 @@ In the same Coolify application change *Docker Compose location* to `/deploy/coo
 |---|---|
 | Admin password | Coolify env `SERVICE_PASSWORD_ADMIN` (user `akadmin`, e-mail `ADMIN_EMAIL`) |
 | All other secrets | Coolify env `SERVICE_*` (vault MCP tokens `SERVICE_HEX_64_MCP<SLOT>`, proxy secrets `SERVICE_HEX_64_PROXY<SLOT>`, Authentik API token `SERVICE_HEX_64_AUTHENTIKAPITOKEN`, …). Never change one by hand without the rotation procedure below |
-| Slot → person assignment | `users.json` in volume `lokyy-state` (written only by the portal; read-only for `mcp-gate`) |
+| Slot → person assignment | `users.json` in volume `lokyy-state` (written only by the portal; read-only for `mcp-gate` and `metamcp`) |
+| MCP endpoint + key per person | `metamcp-clients.json` in volume `lokyy-provision` (written by the provisioning watcher in `metamcp`, read-only for the portal, file mode 0640) |
 | Vault data | volumes `vault-<slot>` (and `vault-<slot>-home`), `vault-firma` |
 | Users, groups, MFA | volume `authentik-db` |
 | MCP accounts and keys (plain text) | volume `metamcp-db` — encrypt its backups |
@@ -60,7 +63,7 @@ Volume names are prefixed with the application's UUID (`docker volume ls | grep 
 | Variable | Default | When to set |
 |---|---|---|
 | `LOKYY_NET_PREFIX` | `10.231` | Another Docker network on the server already uses `10.231.x.x`. Set e.g. `10.232` **before the first deploy**, and adjust the firewall rules above |
-| `LOKYY_TRUSTED_PROXY_CIDRS` | private ranges | Tighten to the `coolify` network's subnet (`docker network inspect coolify -f '{{(index .IPAM.Config 0).Subnet}}'`). Only affects which peers may set the client IP (`X-Forwarded-For`, used for MCP rate limits and Authentik logs); host and scheme are pinned per route regardless |
+| `LOKYY_TRUSTED_PROXY_CIDRS` | the `coolify` network's subnet, detected at start | Which peers may set `X-Forwarded-For` (client IP for MCP rate limits and Authentik's per-IP throttling). Set it only to narrow further, e.g. to coolify-proxy's address `/32`. Never add `LOKYY_NET_PREFIX` ranges: vaults could then forge client IPs. Host and scheme are pinned per route regardless. `lokyy-traefik` refuses to start if it cannot tell which network is Coolify's |
 | `VAULT_MEM_LIMIT` | `3500m` | Per-vault memory limit (LBV2-20: idle ~200 MiB, peak 2.6 GiB with the embedding model loaded) |
 
 ## Operations
@@ -78,11 +81,13 @@ Security model (same as `deploy/stack`, see its README): each vault is only on i
 
 Coolify-specific design:
 
-- Request path: internet → coolify-proxy (TLS, Let's Encrypt) → `lokyy-traefik` → service. Only `lokyy-traefik` joins the `coolify` network and only it carries `traefik.*` labels (one TLS router per host).
+- Request path: internet → coolify-proxy (TLS, Let's Encrypt) → `lokyy-traefik` → service. Only `lokyy-traefik` joins the `coolify` network and only it carries `traefik.*` labels (one TLS router per host, names prefixed with the Coolify resource UUID so two installations on one server do not collide).
+- Other Coolify apps share the `coolify` network and could register a container named like one of ours. `lokyy-traefik` therefore reaches every upstream by fixed IP (vaults `.14` on their `web-` network; Authentik `.10`, MetaMCP `.11`, gate `.12` on `edge`; portal `.94`), never by name.
+- `lokyy-init` (one-shot, no network) validates `BASE_DOMAIN` / `ADMIN_EMAIL` before anything uses them and prepares ownership of the shared state volumes.
 - `lokyy-traefik` routes from a baked-in file (Go template: `BASE_DOMAIN` and proxy secrets from its environment). It has no Docker socket and reads no labels, so coolify-proxy and the inner Traefik can never pick up each other's routes. It deletes aliasing headers (`X_authentik_username`) and refuses to start with an invalid `BASE_DOMAIN`.
 - Repository assets are baked into images (blueprint into the Authentik image, routes into the Traefik image, model manifest/prefetch/offline loader into the vault image, `init.sh` into the MetaMCP init image): no bind mounts into a checkout.
 - Networks are project-scoped with fixed /28 subnets from `LOKYY_NET_PREFIX`: infrastructure `<prefix>.0.x`, `egress` `<prefix>.1.0/26`, `firma` `<prefix>.2.x`, slot `vNN` `<prefix>.(2+NN).0/28` (web) and `.16/28` (mcp). S and M share the same names and subnets, so an upgrade only adds.
-- The Authentik bootstrap token (`SERVICE_HEX_64_AUTHENTIKAPITOKEN`) is the portal's API token; `metamcp` receives the vault MCP tokens so provisioning runs without a host shell.
+- The Authentik bootstrap token (`SERVICE_HEX_64_AUTHENTIKAPITOKEN`) is the portal's API token. MCP provisioning runs inside `metamcp`: a supervisor starts MetaMCP and watches `users.json`; every new content is provisioned once (`deploy/stack/metamcp/provision.mjs`: removals first, every user on its own), results go to `lokyy-provision`, and MetaMCP is restarted when access changed (at most 3 times per 10 minutes). The portal never gets MetaMCP database access or vault tokens.
 
 Tests: `deploy/coolify/tests/config-check.sh` (static: generator tests, `docker compose config` with Coolify-like env, network/label/secret invariants for both packages) and `deploy/coolify/tests/smoke/smoke.sh` (live on a dev machine: package S behind a coolify-proxy stand-in, admin login, slot isolation, MCP keys, then upgrade to M with data kept).
 
