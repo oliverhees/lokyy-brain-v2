@@ -25,6 +25,8 @@ interface RawListEntry {
   id: string;
   size: number;
   kind: 'binary' | 'text';
+  /** Present for sources ingested via /api/ingest/* (listed under their raw id). */
+  title?: string;
 }
 
 /**
@@ -51,7 +53,7 @@ export async function getRawDoc(id: string): Promise<RawDocFull> {
 
   return {
     id,
-    title: id,
+    title: entry.title ?? id,
     content: body,
     meta: {},
     has_binary: entry.kind === 'binary',

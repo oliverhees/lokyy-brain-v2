@@ -4,12 +4,14 @@ import request from 'supertest';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createContext } from '../../../context.js';
+import { createContext, type ServerContext } from '../../../context.js';
+import { ingestPaste } from '@mindbase/core';
 import { treeRoutes } from '../index.js';
 
 describe('tree raw routes', () => {
   let dataDir: string;
   let app: express.Application;
+  let ctx: ServerContext;
   beforeEach(async () => {
     dataDir = join(tmpdir(), `tree-raw-test-${Date.now()}`);
     const proj = join(dataDir, 'projects', 'r');
@@ -19,7 +21,7 @@ describe('tree raw routes', () => {
     await writeFile(join(proj, 'context.md'), '# c');
     await writeFile(join(proj, 'index.yaml'), 'project:\n  id: r\n');
     await writeFile(join(dataDir, 'config.json'), JSON.stringify({ currentProjectId: 'r' }));
-    const ctx = await createContext(dataDir);
+    ctx = await createContext(dataDir);
     app = express();
     app.use(express.json());
     app.use('/api/tree', treeRoutes(ctx));
@@ -46,6 +48,24 @@ describe('tree raw routes', () => {
     });
     expect(res.status).toBe(200);
     expect(res.body).toContain('# raw');
+  });
+
+  describe('sources ingested via /api/ingest/text (LBV2-32)', () => {
+    it('are listed under their raw id with title and opened by date + id', async () => {
+      const raw = await ingestPaste(ctx.store, { text: 'Basel lies on the Rhine.', title: 'Basel note' });
+      const list = await request(app).get('/api/tree/raw');
+      const entry = list.body.entries.find((e: { id: string }) => e.id === raw.id);
+      expect(entry).toMatchObject({ id: raw.id, kind: 'text', title: 'Basel note' });
+      expect(list.body.entries.some((e: { id: string }) => e.id.endsWith('.meta.json'))).toBe(false);
+      const res = await request(app).get(`/api/tree/raw/${entry.date}/${raw.id}`);
+      expect(res.status).toBe(200);
+      expect(res.body.body).toBe('Basel lies on the Rhine.');
+    });
+
+    it('an unknown id still answers 404', async () => {
+      const res = await request(app).get('/api/tree/raw/2026-06-09/nosuch');
+      expect(res.status).toBe(404);
+    });
   });
 
   describe('path traversal (LBV2-11)', () => {
