@@ -292,3 +292,66 @@ describe('OpenAIAdapter — EUrouter routing rules (LBV2-30)', () => {
     expect(await adapter.testConnection()).toEqual({ ok: true });
   });
 });
+
+describe('OpenAIAdapter — PDF chat through EUrouter (LBV2-30)', () => {
+  const EU = 'https://api.eurouter.ai/api/v1';
+  const RULE = '3f1c2b9a-8d4e-4f6a-9b2c-1d2e3f4a5b6c';
+  const done = () => sseResponse(['data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n', 'data: [DONE]\n\n']);
+  const pdfMessage = {
+    role: 'user' as const,
+    content: [
+      { type: 'text' as const, text: 'Summarize the attached PDF.' },
+      { type: 'document' as const, media_type: 'application/pdf' as const, data: Buffer.from('%PDF-fake').toString('base64') },
+    ],
+  };
+
+  async function run(cfg: { extractPdfText?: (d: Uint8Array) => Promise<string>; maxDocumentChars?: number; baseUrl?: string }) {
+    const fetchImpl = vi.fn().mockResolvedValue(done());
+    const adapter = new OpenAIAdapter({
+      apiKey: 'k', model: 'gpt-4o', baseUrl: cfg.baseUrl ?? EU, ruleId: RULE,
+      extractPdfText: cfg.extractPdfText, maxDocumentChars: cfg.maxDocumentChars,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const chunks: ChatChunk[] = [];
+    for await (const c of adapter.chat({ model: 'gpt-4o', messages: [pdfMessage] })) chunks.push(c);
+    return { fetchImpl, chunks };
+  }
+
+  it('extracts the PDF text locally and sends it via chat/completions with model and rule_id, never /responses', async () => {
+    const extract = vi.fn(async (d: Uint8Array) => { expect(Buffer.from(d).toString()).toBe('%PDF-fake'); return 'Hello EU PDF'; });
+    const { fetchImpl, chunks } = await run({ extractPdfText: extract });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${EU}/chat/completions`);
+    const body = JSON.parse(String(init.body)) as { model: string; rule_id: string; messages: Array<{ content: string }> };
+    expect(body.model).toBe('gpt-4o');
+    expect(body.rule_id).toBe(RULE);
+    expect(body.messages[0]!.content).toContain('Summarize the attached PDF.');
+    expect(body.messages[0]!.content).toContain('Hello EU PDF');
+    expect(chunks.some((c) => c.kind === 'done')).toBe(true);
+  });
+
+  it('refuses a PDF whose text is too long for the model context, without calling EUrouter', async () => {
+    const { fetchImpl, chunks } = await run({ extractPdfText: async () => 'x'.repeat(101), maxDocumentChars: 100 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const err = chunks.find((c) => c.kind === 'error') as { error: string } | undefined;
+    expect(err?.error).toBe('The PDF text (101 characters) is too long for the model context (limit 100 characters). Use a shorter document or raise maxContextChars.');
+  });
+
+  it('fails clearly when no local PDF extractor is configured', async () => {
+    const { fetchImpl, chunks } = await run({});
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect((chunks.find((c) => c.kind === 'error') as { error: string } | undefined)?.error).toBe('PDF text extraction is not available for EUrouter');
+  });
+
+  it('fails clearly when the PDF has no extractable text', async () => {
+    const { fetchImpl, chunks } = await run({ extractPdfText: async () => '   ' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect((chunks.find((c) => c.kind === 'error') as { error: string } | undefined)?.error).toBe('The PDF contains no extractable text');
+  });
+
+  it('keeps using the Responses API for other hosts', async () => {
+    const { fetchImpl } = await run({ baseUrl: 'https://api.openai.com', extractPdfText: async () => 'unused' });
+    expect(String(fetchImpl.mock.calls[0]![0])).toBe('https://api.openai.com/v1/responses');
+  });
+});

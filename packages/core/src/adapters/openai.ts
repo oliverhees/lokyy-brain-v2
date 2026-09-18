@@ -104,6 +104,8 @@ function parseSSEEvents(buf: string): SSEEvent[] {
   return events;
 }
 
+const DEFAULT_MAX_DOCUMENT_CHARS = 50000;
+
 export class OpenAIAdapter implements LLMAdapter {
   readonly name = 'openai' as const;
   readonly supportsTools = true;
@@ -178,11 +180,55 @@ export class OpenAIAdapter implements LLMAdapter {
   }
 
   async *chat(request: ChatRequest): AsyncIterable<ChatChunk> {
-    if (this.hasDocumentBlock(request.messages)) {
+    if (this.hasDocumentBlock(request.messages) && isEurouterBaseUrl(this.baseUrl)) {
+      // EUrouter's /responses only reaches a few providers (none behind an EU
+      // rule), so PDFs travel as locally extracted text (LBV2-30).
+      yield* this.chatWithExtractedPdfs(request);
+    } else if (this.hasDocumentBlock(request.messages)) {
       yield* this.chatViaResponses(request);
     } else {
       yield* this.chatViaCompletions(request);
     }
+  }
+
+  private async *chatWithExtractedPdfs(request: ChatRequest): AsyncIterable<ChatChunk> {
+    const extract = this.config.extractPdfText;
+    if (!extract) {
+      yield { kind: 'error', error: 'PDF text extraction is not available for EUrouter' };
+      return;
+    }
+    const limit = this.config.maxDocumentChars ?? DEFAULT_MAX_DOCUMENT_CHARS;
+    let total = 0;
+    const messages: ChatMessage[] = [];
+    for (const m of request.messages) {
+      if (!Array.isArray(m.content)) { messages.push(m); continue; }
+      const blocks: ContentBlock[] = [];
+      for (const b of m.content) {
+        if (b.type !== 'document') { blocks.push(b); continue; }
+        let text: string;
+        try {
+          text = (await extract(Buffer.from(b.data, 'base64'))).trim();
+        } catch {
+          yield { kind: 'error', error: 'Could not extract text from the PDF' };
+          return;
+        }
+        if (!text) {
+          yield { kind: 'error', error: 'The PDF contains no extractable text' };
+          return;
+        }
+        total += text.length;
+        blocks.push({ type: 'text', text: `PDF document text:\n\n${text}` });
+      }
+      messages.push({ ...m, content: blocks });
+    }
+    if (total > limit) {
+      yield {
+        kind: 'error',
+        error: `The PDF text (${total} characters) is too long for the model context (limit ${limit} characters). Use a shorter document or raise maxContextChars.`,
+      };
+      return;
+    }
+    yield* this.chatViaCompletions({ ...request, messages });
   }
 
   private async *chatViaCompletions(request: ChatRequest): AsyncIterable<ChatChunk> {

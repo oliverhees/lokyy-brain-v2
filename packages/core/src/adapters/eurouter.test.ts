@@ -12,7 +12,7 @@ describe('isEurouterBaseUrl', () => {
   it.each([EU, 'https://API.EUROUTER.AI/api/v1/', 'https://api.eurouter.ai/api/v1/chat/completions'])('accepts %s', (u) => {
     expect(isEurouterBaseUrl(u)).toBe(true);
   });
-  it.each(['', undefined, 'https://api.openai.com', 'https://eurouter.ai/api/v1', 'https://api.eurouter.ai.evil.example/v1', 'https://evil.example/api.eurouter.ai', 'not a url'])(
+  it.each(['', undefined, 'http://api.eurouter.ai/api/v1', 'ftp://api.eurouter.ai/x', 'https://api.openai.com', 'https://eurouter.ai/api/v1', 'https://api.eurouter.ai.evil.example/v1', 'https://evil.example/api.eurouter.ai', 'not a url'])(
     'rejects %s', (u) => {
       expect(isEurouterBaseUrl(u)).toBe(false);
     },
@@ -66,6 +66,22 @@ describe('listEurouterRules', () => {
     const fetchImpl = vi.fn().mockResolvedValue(json({ error: 'invalid key eur_key' }, 401));
     await expect(listEurouterRules({ apiKey: 'eur_key', baseUrl: EU, fetchImpl: fetchImpl as unknown as typeof fetch }))
       .rejects.toThrow(/^EUrouter routing rules request failed \(HTTP 401\)$/);
+  });
+
+  it('drops disabled rules (enabled === false) and keeps rules without the flag', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(json({ data: [
+      { id: RULE, name: 'on', enabled: true },
+      { id: '11111111-2222-4333-8444-555555555555', name: 'off', enabled: false },
+      { id: '22222222-3333-4444-8555-666666666666', name: 'unflagged' },
+    ] }));
+    const rules = await listEurouterRules({ apiKey: 'k', baseUrl: EU, fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(rules.map((r) => r.name)).toEqual(['on', 'unflagged']);
+  });
+
+  it('carries the HTTP status on failures so callers can tell a rejected key apart', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(json({}, 403));
+    await expect(listEurouterRules({ apiKey: 'k', baseUrl: EU, fetchImpl: fetchImpl as unknown as typeof fetch }))
+      .rejects.toMatchObject({ name: 'EurouterHttpError', status: 403 });
   });
 
   it('fails on an unexpected response shape', async () => {

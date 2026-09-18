@@ -11,6 +11,14 @@ const RULE_ID = /^([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0
 
 export const EUROUTER_RULE_NOT_FOUND = 'EUrouter routing rule not found or disabled';
 
+/** A non-2xx answer from EUrouter; `status` lets callers tell a rejected key (401/403) apart. */
+export class EurouterHttpError extends Error {
+  override readonly name = 'EurouterHttpError';
+  constructor(readonly status: number) {
+    super(`EUrouter routing rules request failed (HTTP ${status})`);
+  }
+}
+
 export interface EurouterRule {
   id: string;
   name: string;
@@ -25,7 +33,8 @@ export function isEurouterRuleId(value: unknown): value is string {
 export function isEurouterBaseUrl(url: string | undefined): boolean {
   if (!url) return false;
   try {
-    return new URL(url).hostname.toLowerCase() === EUROUTER_HOST;
+    const u = new URL(url);
+    return u.protocol === 'https:' && u.hostname.toLowerCase() === EUROUTER_HOST;
   } catch {
     return false;
   }
@@ -40,12 +49,13 @@ export function eurouterRulesUrl(baseUrl: string): string {
 function toRule(entry: unknown): EurouterRule | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const e = entry as Record<string, unknown>;
-  if (!isEurouterRuleId(e['id']) || typeof e['name'] !== 'string') return null;
+  if (!isEurouterRuleId(e['id']) || typeof e['name'] !== 'string' || e['enabled'] === false) return null;
   return { id: e['id'], name: e['name'], model: typeof e['model'] === 'string' ? e['model'] : null };
 }
 
 /**
- * Lists the enabled routing rules the key can use. Errors carry only the HTTP
+ * Lists the enabled routing rules the key can use (the API answers one
+ * unpaginated `{ data: [...] }`; disabled rules are dropped). Errors carry only the HTTP
  * status, never the response body or the key.
  */
 export async function listEurouterRules(opts: { apiKey: string; baseUrl: string; fetchImpl?: typeof fetch }): Promise<EurouterRule[]> {
@@ -55,7 +65,7 @@ export async function listEurouterRules(opts: { apiKey: string; baseUrl: string;
     method: 'GET',
     headers: { authorization: `Bearer ${opts.apiKey}`, accept: 'application/json' },
   });
-  if (!r.ok) throw new Error(`EUrouter routing rules request failed (HTTP ${r.status})`);
+  if (!r.ok) throw new EurouterHttpError(r.status);
   const body = (await r.json().catch(() => null)) as { data?: unknown } | null;
   if (!body || !Array.isArray(body.data)) throw new Error('EUrouter routing rules response was not understood');
   return body.data.map(toRule).filter((rule): rule is EurouterRule => rule !== null);

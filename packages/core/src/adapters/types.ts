@@ -19,4 +19,8 @@ export interface AdapterConfig {
   timeoutMs?: number;
   /** EUrouter routing rule id (UUID), sent as `rule_id` to api.eurouter.ai only (LBV2-30). */
   ruleId?: string;
+  /** Local PDF → text. EUrouter gets PDFs as extracted text via chat/completions, never /responses (LBV2-30). */
+  extractPdfText?: (data: Uint8Array) => Promise<string>;
+  /** Max characters of extracted PDF text per request (default 50000, the server's maxContextChars default). */
+  maxDocumentChars?: number;
 }
