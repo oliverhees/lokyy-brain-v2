@@ -15,6 +15,22 @@ export interface GateOptions {
   ratePerMinute?: number;
   maxBodyBytes?: number;
   timeoutMs?: number;
+  /** fetch used for Authentik (tests inject a fake) */
+  fetch?: typeof fetch;
+}
+
+export interface GateRequest {
+  method: string;
+  path: string;
+  authorization: string | undefined;
+  /** raw body; null when larger than the limit */
+  body: Buffer | null;
+}
+
+export interface GateResponse {
+  status: number;
+  body?: unknown;
+  headers?: Record<string, string>;
 }
 
 interface RawUser extends AuthentikUserLike {
@@ -42,9 +58,10 @@ const MANAGED_PATH = 'lokyy';
 
 const digest = (s: string) => createHash('sha256').update(s).digest();
 
-export function createGate(o: GateOptions): http.Server {
+/** Transport-independent core of the gate (the HTTP server below and in-process tests use it). */
+export function createGateHandler(o: GateOptions): (req: GateRequest) => Promise<GateResponse> {
+  const doFetch = o.fetch ?? fetch;
   const base = o.authentikUrl.replace(/\/+$/, '');
-  const maxBody = o.maxBodyBytes ?? 16 * 1024;
   const timeoutMs = o.timeoutMs ?? 15_000;
   const rate = o.ratePerMinute ?? 120;
   const secretDigest = digest(o.secret);
@@ -59,7 +76,7 @@ export function createGate(o: GateOptions): http.Server {
     for (const [k, v] of Object.entries(query ?? {})) url.searchParams.set(k, v);
     let res: Response;
     try {
-      res = await fetch(url, {
+      res = await doFetch(url, {
         method,
         headers: { authorization: `Bearer ${o.authentikToken}`, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -188,42 +205,44 @@ export function createGate(o: GateOptions): http.Server {
     throw new GateError(404, 'not_found');
   }
 
-  // ---------------------------------------------------------------- HTTP
-  const server = http.createServer((req, res) => {
-    const reply = (status: number, body?: unknown) => {
-      res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
-      res.end(body === undefined ? '' : JSON.stringify(body));
-    };
-    const auth = req.headers.authorization;
+  return async (req) => {
+    const auth = req.authorization;
     const given = typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : '';
-    if (!timingSafeEqual(digest(given), secretDigest)) { req.resume(); reply(401, { error: 'unauthorized' }); return; }
+    if (!timingSafeEqual(digest(given), secretDigest)) return { status: 401, body: { error: 'unauthorized' } };
     const t = Date.now();
     if (bucket.reset <= t) bucket = { count: 0, reset: t + 60_000 };
-    if (++bucket.count > rate) { req.resume(); res.setHeader('retry-after', String(Math.ceil((bucket.reset - t) / 1000))); reply(429, { error: 'rate_limited' }); return; }
+    if (++bucket.count > rate) return { status: 429, body: { error: 'rate_limited' }, headers: { 'retry-after': String(Math.ceil((bucket.reset - t) / 1000)) } };
+    if (req.body === null) return { status: 413, body: { error: 'too_large' } };
+    let body: unknown;
+    if (req.body.length > 0) {
+      try { body = JSON.parse(req.body.toString('utf8')); } catch { return { status: 400, body: { error: 'invalid_json' } }; }
+    }
+    try {
+      return await handle(req.method, req.path.split('?')[0]!, body);
+    } catch (e) {
+      if (e instanceof GateError) return { status: e.status, body: { error: e.message } };
+      o.log(`internal error: ${(e as Error).message}`);
+      return { status: 500, body: { error: 'internal' } };
+    }
+  };
+}
 
+export function createGate(o: GateOptions): http.Server {
+  const handler = createGateHandler(o);
+  const maxBody = o.maxBodyBytes ?? 16 * 1024;
+  const server = http.createServer((req, res) => {
     let size = 0;
     const chunks: Buffer[] = [];
-    let tooLarge = false;
     req.on('data', (c: Buffer) => {
       size += c.length;
-      if (size > maxBody) { tooLarge = true; return; }
-      chunks.push(c);
+      if (size <= maxBody) chunks.push(c);
     });
     req.on('end', () => {
-      if (tooLarge) { reply(413, { error: 'too_large' }); return; }
-      let body: unknown;
-      if (chunks.length > 0) {
-        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { reply(400, { error: 'invalid_json' }); return; }
-      }
-      const path = (req.url ?? '/').split('?')[0]!;
-      handle(req.method ?? 'GET', path, body).then(
-        (r) => reply(r.status, r.body),
-        (e: unknown) => {
-          if (e instanceof GateError) { reply(e.status, { error: e.message }); return; }
-          o.log(`internal error: ${(e as Error).message}`);
-          reply(500, { error: 'internal' });
-        },
-      );
+      handler({ method: req.method ?? 'GET', path: req.url ?? '/', authorization: req.headers.authorization, body: size > maxBody ? null : Buffer.concat(chunks) })
+        .then((r) => {
+          res.writeHead(r.status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...r.headers });
+          res.end(r.body === undefined ? '' : JSON.stringify(r.body));
+        });
     });
   });
   server.requestTimeout = 30_000;
