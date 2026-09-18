@@ -3,7 +3,7 @@
 import { Browser } from '../integration/browser.ts';
 
 const port = process.env['E2E_PUBLIC_PORT'] ?? '18380';
-const deadline = Date.now() + 300_000;
+const deadline = Date.now() + 600_000;
 for (;;) {
   try {
     const r = await new Browser().visit(`http://app.portal.localhost:${port}/api/session`, { username: 'akadmin', password: process.env['AUTHENTIK_ADMIN_PASS']! });
@@ -13,6 +13,6 @@ for (;;) {
   } catch (e) {
     console.log(`not ready: ${(e as Error).message.slice(0, 120)}`);
   }
-  if (Date.now() > deadline) { console.error('portal identity not ready after 300 s'); process.exit(1); }
+  if (Date.now() > deadline) { console.error('portal identity not ready after 600 s'); process.exit(1); }
   await new Promise((res) => setTimeout(res, 5000));
 }

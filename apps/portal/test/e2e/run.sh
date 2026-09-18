@@ -44,9 +44,9 @@ compose=(docker compose -p "$project" -f compose.yml --env-file "$envfile")
 
 wait_for() { # wait_for <description> <command...>
   local what=$1; shift
-  local deadline=$((SECONDS + 300))
+  local deadline=$((SECONDS + 600)) # first boot of Authentik can be slow on a busy host
   until "$@" >/dev/null 2>&1; do
-    ((SECONDS < deadline)) || { echo "$what not ready after 300s" >&2; exit 1; }
+    ((SECONDS < deadline)) || { echo "$what not ready after 600s" >&2; exit 1; }
     sleep 5
   done
 }
