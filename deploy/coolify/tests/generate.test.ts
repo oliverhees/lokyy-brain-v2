@@ -175,15 +175,20 @@ for (const pkg of pkgs) {
     for (const m of d.matchAll(/env `([A-Z0-9_]+)`/g)) assert.ok(m[1] in env, `lokyy-traefik env ${m[1]}`);
   });
 
-  test(`${pkg}: blueprint is re-applied on every deploy (S -> M upgrade adds slots immediately)`, () => {
-    const b = c.services['authentik-blueprint'];
-    // Queued for the worker (an apply in a second process deadlocks with the worker's own tasks)
-    assert.equal(b.command?.[0], 'shell');
-    assert.match(String(b.command?.[2]), /blueprints_discovery\.send\(\)/);
-    assert.equal(b.restart, 'no');
-    assert.deepEqual(b.depends_on, { 'authentik-server': { condition: 'service_healthy' } });
-    assert.deepEqual(b.networks, ['authentik-internal']);
-    assert.deepEqual(b.build, c.services['authentik-worker'].build);
+  test(`${pkg}: only the Authentik worker applies the blueprint (a second applier deadlocks)`, () => {
+    assert.equal(c.services['authentik-blueprint'], undefined);
+    // the blueprint is baked into the image, so a changed package recreates the worker, whose startup
+    // discovery applies the changed file
+    assert.deepEqual(c.services['authentik-worker'].build?.args, { LOKYY_PACKAGE: pkg });
+  });
+
+  test(`${pkg}: connector address cannot be taken by a dynamically addressed container`, () => {
+    const cfg = c.networks['mcp-upstream'].ipam?.config[0];
+    assert.equal(cfg?.subnet, '${LOKYY_NET_PREFIX:-10.231}.0.48/28');
+    assert.equal(cfg?.ip_range, '${LOKYY_NET_PREFIX:-10.231}.0.48/29');
+    const nets = c.services['vault-connector'].networks as Record<string, { ipv4_address?: string }>;
+    assert.equal(nets['mcp-upstream'].ipv4_address, '${LOKYY_NET_PREFIX:-10.231}.0.62');
+    assert.equal(c.services['vault-connector'].environment?.CONNECTOR_LISTEN_HOST, '${LOKYY_NET_PREFIX:-10.231}.0.62');
   });
 
   test(`${pkg}: blueprint has one group, provider, app and binding per slot`, () => {

@@ -40,7 +40,7 @@ Check: `docker exec <vault-v01 container> node -e "fetch('http://169.254.169.254
 
 ## Upgrade S → M
 
-In the same Coolify application change *Docker Compose location* to `/deploy/coolify/compose-m.yml` and deploy. Volumes, users, slots and MCP keys stay; Coolify generates the magic variables of the new slots. Never delete and re-create the application for an upgrade: the volumes belong to it.
+In the same Coolify application change *Docker Compose location* to `/deploy/coolify/compose-m.yml` and deploy. Volumes, users, slots and MCP keys stay; Coolify generates the magic variables of the new slots. The new hosts (`v16.`–`v30.`) answer `404` until Authentik has applied the updated blueprint (measured ~6–10 minutes after the deploy); existing slots keep working meanwhile. Never delete and re-create the application for an upgrade: the volumes belong to it.
 
 ## Where things are
 
@@ -65,7 +65,7 @@ Volume names are prefixed with the application's UUID (`docker volume ls | grep 
 
 ## Operations
 
-- **Health:** in Coolify all services except `model-prefetch` and `metamcp-init` (one-shot, "exited 0") must be running/healthy. `https://v01.<BASE_DOMAIN>/` must answer with a redirect to `auth.` — never with vault content.
+- **Health:** in Coolify all services except `model-prefetch` and `metamcp-init` (one-shot, "exited 0") must be running/healthy. Right after a deploy vault hosts may answer `404` for a few minutes until the Authentik worker has applied the blueprint. `https://v01.<BASE_DOMAIN>/` must answer with a redirect to `auth.` — never with vault content.
 - **Rotation after suspected exposure** (MCP tokens, proxy secrets): delete the affected `SERVICE_*` variables in Coolify so it generates new ones, redeploy, then re-run provisioning from the portal (hands out new MCP keys). Authentik secret key and database passwords: maintenance window only (Postgres passwords also need `ALTER USER` inside the database).
 - **Backup:** `pg_dump` of `authentik-db` and `metamcp-db` (the latter encrypted), tar of the `vault-*` volumes (stop the vault briefly for a consistent copy). Test one restore before onboarding people.
 - **Rollback:** deploy the previous commit/tag in Coolify. Data-shape changes are not undone by a redeploy: restore from backup.

@@ -47,7 +47,7 @@ export interface Network {
   internal?: boolean;
   driver?: string;
   driver_opts?: Record<string, string>;
-  ipam?: { config: { subnet: string }[] };
+  ipam?: { config: { subnet: string; ip_range?: string }[] };
 }
 export interface Compose {
   services: Record<string, Service>;
@@ -59,7 +59,8 @@ const REPO = '../..';
 const NET = '${LOKYY_NET_PREFIX:-10.231}';
 const DOMAIN = '${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}';
 const EMAIL = '${ADMIN_EMAIL:?set ADMIN_EMAIL in Coolify}';
-const CONNECTOR_IP = `${NET}.0.50`;
+// Outside the dynamic ip_range of mcp-upstream: a recreated metamcp can never take the connector's address
+const CONNECTOR_IP = `${NET}.0.62`;
 const EMBED_PORT = 8090;
 
 export const slotNames = (pkg: PackageName): string[] =>
@@ -228,16 +229,9 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
   });
   services['authentik-server'] = authentik('server', ['edge', 'authentik-internal']);
   services['authentik-worker'] = authentik('worker', ['authentik-internal']);
-  // One-shot on every deploy: the worker re-discovers a changed blueprint file only on its schedule, so an
-  // S -> M upgrade would leave the new slots without provider (404) for a long time. Queues the worker's
-  // discovery task (applies files whose hash changed); applying from this container instead deadlocks
-  // with the worker's own tasks.
-  services['authentik-blueprint'] = {
-    ...authentik('shell', ['authentik-internal']),
-    command: ['shell', '-c', 'from authentik.blueprints.v1.tasks import blueprints_discovery; blueprints_discovery.send()'],
-    restart: 'no',
-    depends_on: { 'authentik-server': { condition: 'service_healthy' } },
-  };
+  // The blueprint is baked into the image: a changed package recreates the worker, whose startup discovery
+  // applies the changed file (M: ~6 min until the new slots route). Never add a second applier (e.g.
+  // `ak apply_blueprint` in another container): concurrent applies deadlock in Postgres.
 
   // -------------------------------------------------------------------- Portal
   // Setup portal (LBV2-28, apps/portal). Writes users.json into lokyy-state (the only writer).
@@ -362,7 +356,7 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     edge: network('edge'),
     'authentik-internal': network('authentik-internal', { internal: true }),
     'metamcp-internal': network('metamcp-internal', { internal: true }),
-    'mcp-upstream': network('mcp-upstream', { internal: true }),
+    'mcp-upstream': { internal: true, ipam: { config: [{ subnet: subnet('mcp-upstream'), ip_range: `${NET}.0.48/29` }] } },
     portal: network('portal', { internal: true }),
     'model-egress': network('model-egress'),
     egress: network('egress', { driver: 'bridge', driver_opts: { 'com.docker.network.bridge.enable_icc': 'false' } }),

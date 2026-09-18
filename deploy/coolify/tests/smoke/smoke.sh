@@ -171,7 +171,7 @@ isolation_checks() { # isolation_checks <pkg> <last-slot>
   expect "anon → v02 with v02's real proxy secret" "$(code -H "X-Vault-Proxy-Secret: $(envv SERVICE_HEX_64_PROXYV02)" "$(U v02)/api/config")" "302"
 
   echo "== [$pkg] networks"
-  for target in "http://vault-v02:4321" "http://vault-$last:4321" "http://authentik-server:9000" "http://metamcp:12008" "http://metamcp-db:5432" "http://vault-connector:4322" "http://10.233.0.50:4322"; do
+  for target in "http://vault-v02:4321" "http://vault-$last:4321" "http://authentik-server:9000" "http://metamcp:12008" "http://metamcp-db:5432" "http://vault-connector:4322" "http://10.233.0.62:4322"; do
     expect "vault-v01 → $target" "$(from "$pkg" vault-v01 "$target")" "blocked"
   done
   expect "vault-$last → http://vault-v01:4321" "$(from "$pkg" "vault-$last" http://vault-v01:4321)" "blocked"
@@ -193,7 +193,6 @@ dc s up -d --build $(services s) >"$work/up-s.log" 2>&1 || { tail -20 "$work/up-
 wait_for "S: all services healthy" 600 healthy s
 wait_for "S: blueprint lokyy-slots applied (automatic)" 300 blueprint s
 wait_for "S: metamcp-init finished (automatic)" 120 init_done s metamcp-init
-wait_for "S: blueprint discovery queued (automatic)" 120 init_done s authentik-blueprint
 wait_for "S: model-prefetch verified (automatic)" 60 init_done s model-prefetch
 wait_for "S: vault routes behind forward-auth" 120 routes v01 v15 firma
 
@@ -214,9 +213,8 @@ alice_key=$(key alice)
 echo "== upgrade the same project to package M"
 dc m up -d --build $(services m) >"$work/up-m.log" 2>&1 || { tail -20 "$work/up-m.log"; bad "compose up M"; }
 wait_for "M: all services healthy" 600 healthy m
-wait_for "M: blueprint discovery queued" 180 init_done m authentik-blueprint
 wait_for "M: blueprint lokyy-slots re-applied" 300 blueprint m
-wait_for "M: routes for new slots" 180 routes v01 v16 v30 firma
+wait_for "M: routes for new slots (worker re-applies the blueprint)" 900 routes v01 v16 v30 firma
 expect "vault-v01 data survived S → M" "$(dc m exec -T vault-v01 cat /data/upgrade-marker)" "lbv2-27"
 expect "M: 31 vault services running" "$(dc m ps --format '{{.Service}}' | grep -cE '^vault-(v[0-9]+|firma)$')" "31"
 expect "alice's MCP key unchanged after upgrade" "$(key alice)" "$alice_key"

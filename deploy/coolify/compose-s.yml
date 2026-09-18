@@ -243,37 +243,6 @@ services:
     shm_size: "512mb"
     networks:
       - "authentik-internal"
-  authentik-blueprint:
-    build:
-      context: "../.."
-      dockerfile: "deploy/coolify/authentik/Dockerfile"
-      args:
-        LOKYY_PACKAGE: "s"
-    restart: "no"
-    command:
-      - "shell"
-      - "-c"
-      - "from authentik.blueprints.v1.tasks import blueprints_discovery; blueprints_discovery.send()"
-    mem_limit: "1g"
-    depends_on:
-      authentik-server:
-        condition: "service_healthy"
-    environment:
-      AUTHENTIK_POSTGRESQL__HOST: "authentik-db"
-      AUTHENTIK_POSTGRESQL__NAME: "authentik"
-      AUTHENTIK_POSTGRESQL__USER: "authentik"
-      AUTHENTIK_POSTGRESQL__PASSWORD: "${SERVICE_HEX_64_AUTHENTIKDB}"
-      AUTHENTIK_SECRET_KEY: "${SERVICE_HEX_64_AUTHENTIKSECRET}"
-      AUTHENTIK_BOOTSTRAP_EMAIL: "${ADMIN_EMAIL:?set ADMIN_EMAIL in Coolify}"
-      AUTHENTIK_BOOTSTRAP_PASSWORD: "${SERVICE_PASSWORD_ADMIN}"
-      AUTHENTIK_BOOTSTRAP_TOKEN: "${SERVICE_HEX_64_AUTHENTIKAPITOKEN}"
-      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
-      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
-      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
-      BASE_DOMAIN: "${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
-    shm_size: "512mb"
-    networks:
-      - "authentik-internal"
   portal:
     build:
       context: "../.."
@@ -895,10 +864,10 @@ services:
     environment:
       MODE: "connector"
       CONNECTOR_VAULTS: "v01,v02,v03,v04,v05,v06,v07,v08,v09,v10,v11,v12,v13,v14,v15,firma"
-      CONNECTOR_LISTEN_HOST: "${LOKYY_NET_PREFIX:-10.231}.0.50"
+      CONNECTOR_LISTEN_HOST: "${LOKYY_NET_PREFIX:-10.231}.0.62"
     networks:
       mcp-upstream:
-        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.50"
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.62"
         aliases:
           - "mcp.vault-v01"
           - "mcp.vault-v02"
@@ -971,6 +940,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.0.48/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.0.48/29"
   portal:
     internal: true
     ipam:
