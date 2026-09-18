@@ -34,6 +34,12 @@ export class FakeMetamcp {
   mcpSessions = new Map<string, string>(); // session id → endpoint name
   mutations: string[] = [];
   failProc: string | null = null;
+  /** every HTTP request fails (MetaMCP down); the database still works */
+  httpDown = false;
+  /** deleting API keys in the database fails */
+  failRevoke = false;
+  /** sign-in of this MetaMCP user id fails (one broken account) */
+  failUser: string | null = null;
   maxConcurrentLogins = 0;
   toolsByToken: Record<string, string[]>;
 
@@ -75,6 +81,12 @@ export class FakeMetamcp {
         this.apiKeys = this.apiKeys.filter((x) => x.user_id !== id);
         return { rows: [] };
       }
+      if (s.startsWith('delete from api_keys where user_id')) {
+        if (this.failRevoke) throw new Error('db: permission denied');
+        const before = this.apiKeys.length;
+        this.apiKeys = this.apiKeys.filter((k) => k.user_id !== p[0]);
+        return { rows: [], rowCount: before - this.apiKeys.length } as { rows: Row[] };
+      }
       if (s.startsWith('select key from api_keys')) {
         return { rows: this.apiKeys.filter((k) => k.user_id === p[0] && k.name === p[1] && k.is_active).map((k) => ({ key: k.key })) };
       }
@@ -85,6 +97,7 @@ export class FakeMetamcp {
 
   // ------------------------------------------------------------- HTTP
   fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
+    if (this.httpDown) throw new TypeError('fetch failed');
     const url = new URL(String(input));
     const method = (init.method ?? 'GET').toUpperCase();
     const headers = new Headers(init.headers);
@@ -93,6 +106,7 @@ export class FakeMetamcp {
     if (url.pathname === '/api/auth/sign-in/email' && method === 'POST') {
       if (!headers.get('origin')) return json(403, { message: 'missing origin' });
       const user = [...this.users.values()].find((u) => u.email === body.email);
+      if (user && user.id === this.failUser) return json(500, { message: 'broken account' });
       const hash = user && this.accounts.get(user.id);
       if (!user || !hash || !(await verify(body.password, hash))) return json(401, { message: 'invalid' });
       const token = randomUUID();

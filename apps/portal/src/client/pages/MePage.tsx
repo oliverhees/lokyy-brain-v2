@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ExternalLink, Eye, EyeOff, KeyRound, RefreshCw } from 'lucide-react';
 import { de } from '../../shared/i18n/de.ts';
 import { ApiError, errorMessage } from '../api.ts';
@@ -28,6 +28,9 @@ export function MePage() {
   const [busy, setBusy] = useState<'reveal' | 'rotate' | null>(null);
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [confirmRotate, setConfirmRotate] = useState(false);
+  // First visit after setting the password: mark the invitation as accepted (GET /api/me has no side effects).
+  const loaded = data !== null;
+  useEffect(() => { if (loaded) void api.post('/api/me/activate').catch(() => {}); }, [api, loaded]);
 
   if (loading) return <Loading />;
   if (error instanceof ApiError && (error.code === 'no_access' || error.code === 'disabled')) {

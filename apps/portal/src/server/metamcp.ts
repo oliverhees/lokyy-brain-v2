@@ -25,7 +25,7 @@ const VAULT_RE = /^[a-z][a-z0-9-]{0,30}$/;
 const USERNAME_RE = /^[a-z][a-z0-9-]{1,30}$/;
 
 export interface Db {
-  query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+  query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
 }
 
 // ------------------------------------------------------------------ better-auth password hash
@@ -53,7 +53,8 @@ function token(env: Record<string, string | undefined>, vault: string, readonly 
   return v;
 }
 
-export function validateUsersSpec(spec: UsersJson, env: Record<string, string | undefined>): void {
+/** Structural rules of provision.mjs; with env also every user's tokens (as provision.mjs does). */
+export function validateUsersSpec(spec: UsersJson, env?: Record<string, string | undefined>): void {
   const company = spec.companyVault;
   if (typeof company !== 'string' || !VAULT_RE.test(company)) throw new Error('invalid companyVault');
   if (!Array.isArray(spec.users)) throw new Error('users must be an array');
@@ -69,9 +70,14 @@ export function validateUsersSpec(spec: UsersJson, env: Record<string, string | 
     if (!['reader', 'writer'].includes(u.role)) throw new Error(`${u.username}: role must be reader or writer`);
     if (seen.has(u.username)) throw new Error(`duplicate user ${u.username}`);
     seen.add(u.username);
-    token(env, u.vault);
-    token(env, company, u.role === 'reader');
+    if (env) userTokens(env, u, company);
   }
+}
+
+/** Throws when a vault token of this user's servers is missing. */
+function userTokens(env: Record<string, string | undefined>, u: UsersJson['users'][number], company: string): void {
+  token(env, u.vault);
+  token(env, company, u.role === 'reader');
 }
 
 // ------------------------------------------------------------------ provisioner
@@ -86,6 +92,8 @@ export interface ProvisionedUser {
 export interface ProvisionResult {
   status: 'ok' | 'failed';
   error?: string;
+  /** users whose reconcile or tripwire failed (the others and all removals were still processed) */
+  failedUsers: string[];
   /** Open MetaMCP sessions may still carry outdated upstream credentials (see header comment). */
   restartMetamcp: boolean;
   users: ProvisionedUser[];
@@ -130,47 +138,102 @@ export class MetamcpProvisioner {
     return typeof key === 'string' ? key : null;
   }
 
-  /** Brings MetaMCP to the state of spec (create, update, remove unlisted lokyy- users). Never throws. */
-  reconcile(spec: UsersJson, opts: { rotate?: string[] } = {}): Promise<ProvisionResult> {
-    const run = this.#queue.then(() => this.#reconcile(spec, opts.rotate ?? []));
+  /**
+   * Revokes a user's MetaMCP API keys immediately, directly in MetaMCP's database and outside the
+   * provisioning queue (disable, remove, role change must not depend on MetaMCP HTTP or on other users).
+   * MetaMCP checks the key on every request, so open sessions stop working too. Throws on DB errors.
+   * Returns the number of deleted keys.
+   */
+  async revoke(username: string): Promise<number> {
+    const r = await this.#o.db.query('delete from api_keys where user_id = $1', [`${ID_PREFIX}${username}`]);
+    this.#o.log(`${username}: API keys revoked (${r.rowCount ?? 0})`);
+    return r.rowCount ?? 0;
+  }
+
+  /**
+   * Brings MetaMCP to the state of spec (create, update, remove unlisted lokyy- users). Never throws.
+   * Pass a function to read the spec inside the queue: a run waiting behind another one then uses the
+   * current state, never a stale snapshot (e.g. a rotation queued before a disable).
+   */
+  reconcile(spec: UsersJson | (() => Promise<UsersJson>), opts: { rotate?: string[] } = {}): Promise<ProvisionResult> {
+    const run = this.#queue.then(async () => {
+      let current: UsersJson;
+      try {
+        current = typeof spec === 'function' ? await spec() : spec;
+      } catch (e) {
+        return { status: 'failed' as const, error: (e as Error).message, failedUsers: [], restartMetamcp: false, users: [] };
+      }
+      return this.#reconcile(current, opts.rotate ?? []);
+    });
     this.#queue = run.catch(() => undefined);
     return run;
   }
 
   async #reconcile(spec: UsersJson, rotateList: string[]): Promise<ProvisionResult> {
     const clients: Client[] = [];
+    const failed = new Map<string, string>();
+    const errors: string[] = [];
     const state = { restart: false };
     const strip = (c: Client): ProvisionedUser => ({ username: c.username, role: c.role, vault: c.vault, url: c.url, ...(c.tools ? { tools: c.tools } : {}) });
     try {
-      validateUsersSpec(spec, this.#o.env);
-      const listedNames = new Set(spec.users.map((u) => u.username));
-      for (const r of rotateList) if (r !== '*' && !listedNames.has(r)) throw new Error(`rotate ${r}: not provisioned`);
-      const rotate = (u: string) => rotateList.includes('*') || rotateList.includes(u);
+      validateUsersSpec(spec); // structural errors stop the run; token problems fail only that user
+    } catch (e) {
+      this.#o.log(`FAILED: ${(e as Error).message}`);
+      return { status: 'failed', error: (e as Error).message, failedUsers: spec.users?.map((u) => u.username) ?? [], restartMetamcp: false, users: [] };
+    }
+    const listedNames = new Set(spec.users.map((u) => u.username));
+    const rotate = (u: string) => rotateList.includes('*') || rotateList.includes(u);
+    // A rotation for a user who is no longer listed (e.g. disabled meanwhile) is moot: the account goes away.
+    for (const r of rotateList) if (r !== '*' && !listedNames.has(r)) this.#o.log(`rotate ${r}: not provisioned any more, skipped`);
 
-      for (const u of spec.users) clients.push(await this.#reconcileUser(u, spec.companyVault, rotate(u.username), state));
-
+    // Removals first and independently: a broken account of someone else must never keep a removed user alive.
+    try {
       const listed = new Set(spec.users.map((u) => `${ID_PREFIX}${u.username}`));
       const { rows } = await this.#o.db.query('select id from users where id like $1', [`${ID_PREFIX}%`]);
       for (const id of rows.map((r) => String(r['id'])).filter((id) => !listed.has(id))) {
         const username = id.slice(ID_PREFIX.length);
-        await this.#withLogin(username, async (trpc) => {
-          for (const k of (await trpc('apiKeys.list', undefined, false)).apiKeys ?? []) if (k.user_id === id || k.user_id === undefined) await trpc('apiKeys.delete', { uuid: k.uuid }).catch(() => {});
-          for (const e of (await trpc('endpoints.list', undefined, false)).data) if (e.user_id === id) await trpc('endpoints.delete', { uuid: e.uuid });
-          for (const n of (await trpc('namespaces.list', undefined, false)).data) if (n.user_id === id) await trpc('namespaces.delete', { uuid: n.uuid });
-          for (const s of (await trpc('mcpServers.list', undefined, false)).data) if (s.user_id === id) await trpc('mcpServers.delete', { uuid: s.uuid });
-        });
-        state.restart = true;
-        await this.#o.db.query('delete from users where id = $1', [id]); // cascades any remaining owned rows
-        this.#o.log(`${username}: removed (not provisioned any more)`);
+        try {
+          await this.#o.db.query('delete from api_keys where user_id = $1', [id]);
+          await this.#withLogin(username, async (trpc) => {
+            for (const e of (await trpc('endpoints.list', undefined, false)).data) if (e.user_id === id) await trpc('endpoints.delete', { uuid: e.uuid });
+            for (const n of (await trpc('namespaces.list', undefined, false)).data) if (n.user_id === id) await trpc('namespaces.delete', { uuid: n.uuid });
+            for (const s of (await trpc('mcpServers.list', undefined, false)).data) if (s.user_id === id) await trpc('mcpServers.delete', { uuid: s.uuid });
+          });
+        } catch (e) {
+          this.#o.log(`${username}: MetaMCP cleanup failed (${(e as Error).message}); deleting the account in the database`);
+        } finally {
+          state.restart = true;
+          await this.#o.db.query('delete from users where id = $1', [id]); // cascades any remaining owned rows
+          this.#o.log(`${username}: removed (not provisioned any more)`);
+        }
       }
-
-      for (const c of clients) await this.#tripwire(c);
-      this.#o.log(`ok: ${clients.map((c) => `${c.username}(${c.role}) tools ${c.tools?.total}, company ${c.tools?.company}`).join('; ')}`);
-      return { status: 'ok', restartMetamcp: state.restart, users: clients.map(strip) };
     } catch (e) {
-      this.#o.log(`FAILED: ${(e as Error).message}`);
-      return { status: 'failed', error: (e as Error).message, restartMetamcp: state.restart, users: clients.map(strip) };
+      errors.push(`removal: ${(e as Error).message}`);
     }
+
+    for (const u of spec.users) {
+      try {
+        userTokens(this.#o.env, u, spec.companyVault);
+        clients.push(await this.#reconcileUser(u, spec.companyVault, rotate(u.username), state));
+      } catch (e) {
+        failed.set(u.username, (e as Error).message);
+      }
+    }
+    for (const c of clients) {
+      try {
+        await this.#tripwire(c);
+      } catch (e) {
+        failed.set(c.username, (e as Error).message);
+      }
+    }
+    for (const [u, m] of failed) errors.push(`${u}: ${m}`);
+    const users = clients.filter((c) => !failed.has(c.username)).map(strip);
+    if (errors.length > 0) {
+      this.#o.log(`FAILED: ${errors.join('; ')}`);
+      return { status: 'failed', error: errors.join('; '), failedUsers: [...failed.keys()], restartMetamcp: state.restart, users };
+    }
+    this.#o.log(`ok: ${clients.map((c) => `${c.username}(${c.role}) tools ${c.tools?.total}, company ${c.tools?.company}`).join('; ')}`);
+    return { status: 'ok', failedUsers: [], restartMetamcp: state.restart, users };
   }
 
   async #withLogin<T>(username: string, fn: (trpc: Trpc, id: string) => Promise<T>): Promise<T> {

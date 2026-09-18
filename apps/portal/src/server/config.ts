@@ -1,12 +1,19 @@
-// Portal configuration from the environment (Coolify magic variables in production).
+// Portal configuration from the environment (Coolify magic variables in production; names agreed with
+// LBV2-27, see docs/setup-portal.md).
 import { parseSlots } from './slots.ts';
 
 export interface PortalConfig {
   port: number;
   domain: string;
   slots: string[];
+  /** lokyy-state volume (read-write, portal only) */
   stateDir: string;
+  /** LOKYY_PACKAGE, shown to admins; null when unset */
+  package: string | null;
+  /** Value Traefik sets as X-Vault-Proxy-Secret on the app.<domain> router */
   proxySecret: string;
+  /** SMTP hosts allowed although they resolve to private addresses (SMTP_ALLOWED_HOSTS) */
+  smtpAllowedHosts: string[];
   publicOrigin: string;
   staticDir: string;
   authentik: { url: string; publicUrl: string; token: string };
@@ -29,10 +36,14 @@ export function loadConfig(env: Record<string, string | undefined>): PortalConfi
   };
   const domain = req('LOKYY_DOMAIN');
   if (!DOMAIN_RE.test(domain)) throw new Error('LOKYY_DOMAIN must be a bare domain like example.com');
-  const proxySecret = req('PORTAL_PROXY_SECRET');
-  if (proxySecret.length < 32 || proxySecret.trim() !== proxySecret) throw new Error('PORTAL_PROXY_SECRET must be at least 32 characters without surrounding whitespace');
+  const proxySecret = req('VAULT_PROXY_SECRET');
+  if (proxySecret.length < 32 || proxySecret.trim() !== proxySecret) throw new Error('VAULT_PROXY_SECRET must be at least 32 characters without surrounding whitespace');
   const inviteValidity = env['PORTAL_INVITE_VALIDITY'] ?? 'days=7';
-  if (!/^(days|hours)=\d{1,2}$/.test(inviteValidity)) throw new Error('PORTAL_INVITE_VALIDITY must look like days=7 or hours=48');
+  const iv = /^(days|hours)=(\d{1,3})$/.exec(inviteValidity);
+  // Invitation links are login credentials: at most 14 days.
+  if (!iv || Number(iv[2]) < 1 || Number(iv[2]) * (iv[1] === 'days' ? 24 : 1) > 14 * 24) {
+    throw new Error('PORTAL_INVITE_VALIDITY must be days=1…14 or hours=1…336');
+  }
   const scheme = env['LOKYY_PUBLIC_SCHEME'] ?? 'https';
   if (scheme !== 'https' && scheme !== 'http') throw new Error('LOKYY_PUBLIC_SCHEME must be https or http');
   const port = env['LOKYY_PUBLIC_PORT'] ?? '';
@@ -42,8 +53,10 @@ export function loadConfig(env: Record<string, string | undefined>): PortalConfi
     port: Number(env['PORT'] ?? 3000),
     domain,
     slots: parseSlots(env['LOKYY_SLOTS']),
-    stateDir: env['PORTAL_STATE_DIR'] ?? '/state',
+    stateDir: env['LOKYY_STATE_DIR'] ?? '/state',
+    package: env['LOKYY_PACKAGE']?.trim().slice(0, 100) || null,
     proxySecret,
+    smtpAllowedHosts: (env['SMTP_ALLOWED_HOSTS'] ?? '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
     publicOrigin: env['PORTAL_PUBLIC_ORIGIN'] ?? `${scheme}://app.${domain}${port ? `:${port}` : ''}`,
     staticDir: env['PORTAL_STATIC_DIR'] ?? new URL('../../dist/client', import.meta.url).pathname,
     authentik: { url: env['AUTHENTIK_URL'] ?? 'http://authentik-server:9000', publicUrl: env['AUTHENTIK_PUBLIC_URL'] ?? `${scheme}://auth.${domain}${port ? `:${port}` : ''}`, token: req('AUTHENTIK_API_TOKEN') },

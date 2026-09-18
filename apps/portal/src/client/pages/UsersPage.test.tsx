@@ -110,6 +110,67 @@ describe('UsersPage', () => {
     expect(api.calls.some((c) => c.path === '/api/admin/provision')).toBe(true);
   });
 
+  it('release of a retired slot needs the typed slot name and warns about the data', async () => {
+    const api = fakeApi({ 'GET /api/admin/users': list([], { retired: [{ slot: 'v03', formerUsername: 'carl', retiredAt: 't' }] }), 'POST /api/admin/slots/v03/release': null });
+    m = await mount(<UsersPage />, api);
+    await click(byText(m.container, 'Freigeben'));
+    expect(m.container.querySelector('dialog[open]')?.textContent).toContain('sieht diese Daten');
+    const confirm = [...m.container.querySelectorAll('dialog[open] button')].find((b) => b.textContent === 'Platz freigeben') as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    await type(input(m.container, 'Zur Bestätigung „v03“'), 'v03');
+    await click(confirm);
+    expect(api.calls.find((c) => c.path === '/api/admin/slots/v03/release')?.body).toEqual({ confirm: 'v03' });
+    expect(m.container.textContent).toContain('Vault-Platz freigegeben');
+  });
+
+  it('inviting a former username offers (unchecked) to restore the old vault; only an explicit tick sends restoreSlot', async () => {
+    const api = fakeApi({
+      'GET /api/admin/users': list([], { retired: [{ slot: 'v03', formerUsername: 'carl', retiredAt: 't' }] }),
+      'POST /api/admin/users': { user: row({ username: 'carl', slot: 'v01', status: 'invited' }), inviteLink: 'https://auth.example.com/x', mailed: false },
+    });
+    m = await mount(<UsersPage />, api);
+    await click(byText(m.container, 'Mitarbeitende einladen'));
+    await type(input(m.container, 'Name'), 'Carl Neu');
+    await type(input(m.container, 'E-Mail-Adresse'), 'carl@example.com');
+    await type(input(m.container, 'Benutzername'), 'carl');
+    const box = input(m.container, 'Früheren Vault v03');
+    expect(box.checked).toBe(false);
+    expect(m.container.textContent).toContain('Nur ankreuzen, wenn es dieselbe Person ist');
+    await click(byText(m.container, 'Einladen'));
+    expect(api.calls.find((c) => c.method === 'POST')?.body).not.toHaveProperty('restoreSlot');
+  });
+
+  it('sends restoreSlot when ticked', async () => {
+    const api = fakeApi({
+      'GET /api/admin/users': list([], { retired: [{ slot: 'v03', formerUsername: 'carl', retiredAt: 't' }] }),
+      'POST /api/admin/users': { user: row({ username: 'carl', slot: 'v03', status: 'invited' }), inviteLink: 'https://auth.example.com/x', mailed: false },
+    });
+    m = await mount(<UsersPage />, api);
+    await click(byText(m.container, 'Mitarbeitende einladen'));
+    await type(input(m.container, 'Name'), 'Carl');
+    await type(input(m.container, 'E-Mail-Adresse'), 'carl@example.com');
+    await type(input(m.container, 'Benutzername'), 'carl');
+    await click(input(m.container, 'Früheren Vault v03'));
+    await click(byText(m.container, 'Einladen'));
+    expect(api.calls.find((c) => c.method === 'POST')?.body).toMatchObject({ restoreSlot: true });
+  });
+
+  it('moves focus to the first invalid field after a validation error', async () => {
+    m = await mount(<UsersPage />, fakeApi({ 'GET /api/admin/users': list([]), 'POST /api/admin/users': () => new ApiError(400, 'invalid_input', { email: 'format', username: 'reserved' }) }));
+    await click(byText(m.container, 'Mitarbeitende einladen'));
+    await type(input(m.container, 'Name'), 'Anna');
+    await click(byText(m.container, 'Einladen'));
+    expect(document.activeElement).toBe(input(m.container, 'E-Mail-Adresse'));
+  });
+
+  it('the table sits in a focusable, labelled scroll region with a hint for narrow screens', async () => {
+    m = await mount(<UsersPage />, fakeApi({ 'GET /api/admin/users': list([row()]) }));
+    const region = m.container.querySelector('[role="region"]')!;
+    expect(region.getAttribute('tabindex')).toBe('0');
+    expect(region.getAttribute('aria-label')).toContain('seitlich scrollbar');
+    expect(region.querySelector('table')).not.toBeNull();
+  });
+
   it('lists retired slots', async () => {
     m = await mount(<UsersPage />, fakeApi({ 'GET /api/admin/users': list([], { retired: [{ slot: 'v03', formerUsername: 'carl', retiredAt: 't' }] }) }));
     expect(m.container.textContent).toContain('v03 – zuletzt carl');

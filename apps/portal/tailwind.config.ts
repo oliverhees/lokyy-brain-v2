@@ -14,6 +14,7 @@ export default {
         strong: 'var(--bg-3)',
         input: 'var(--input-bg)',
         line: 'var(--hairline)',
+        control: 'var(--portal-control-border)',
         'line-soft': 'var(--hairline-soft)',
         fg: 'var(--text-high)',
         muted: 'var(--text-mid)',

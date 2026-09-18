@@ -8,6 +8,7 @@ export interface Session {
   hasAccess: boolean;
   setupComplete: boolean;
   companyName: string | null;
+  package?: string | null;
 }
 
 export interface UserRow {
@@ -22,6 +23,9 @@ export interface UserRow {
   activatedAt: string | null;
 }
 
+export interface Route { id: string; name: string }
+export interface VaultLlm { keyHint: string; ruleId: string; ruleName: string }
+
 export interface ProvisioningRun { at: string; status: 'ok' | 'failed'; error?: string; restartMetamcp: boolean }
 
 export interface UsersResponse {
@@ -35,12 +39,13 @@ export interface InviteResponse { user: UserRow; inviteLink: string; mailed: boo
 
 export interface SetupStatus {
   company: { name: string } | null;
-  llm: { mode: 'shared' | 'per-vault'; model: string; keyHints: Record<string, string>; baseUrl: string } | null;
+  llm: { mode: 'shared' | 'per-vault'; vaults: Record<string, VaultLlm>; baseUrl: string } | null;
   smtp: { host: string; port: number; secure: boolean; username: string; from: string; passwordSet: boolean } | null;
   setupCompletedAt: string | null;
   vaults: string[];
   slots: { total: number; free: number };
   lastProvisioning: ProvisioningRun | null;
+  package?: string | null;
 }
 
 export interface MyAccess {

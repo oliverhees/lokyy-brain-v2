@@ -20,6 +20,7 @@
   --portal-success: #067647;                   /* 5.9:1 on white */
   --portal-success-soft: rgba(6, 118, 71, 0.08);
   --portal-warn: #93370d;                      /* 7.9:1 on white */
+  --portal-control-border: #8e8e93;            /* input/select borders, WCAG 1.4.11: 3.3:1 on white */
 }
 
 :root[data-theme="dark"] {
@@ -33,6 +34,7 @@
   --portal-success: var(--good);               /* #4ade80: 9.6:1 */
   --portal-success-soft: rgba(74, 222, 128, 0.12);
   --portal-warn: var(--warn);                  /* #eab308: 8.9:1 */
+  --portal-control-border: var(--text-mid);    /* #948a7e: 5.4:1 on #221d18 (--hairline is 1.26:1) */
 }
 
 html { color-scheme: light dark; }

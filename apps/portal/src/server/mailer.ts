@@ -2,11 +2,14 @@
 import nodemailer from 'nodemailer';
 import type SMTPTransport from 'nodemailer/lib/smtp-transport';
 import type { Mailer, SmtpWithPassword } from './service.ts';
+import { checkSmtpHost, type Resolve } from './smtp-guard.ts';
 
-export function smtpTransportOptions(smtp: SmtpWithPassword): SMTPTransport.Options {
+/** address: the checked IP to connect to; TLS still verifies the configured hostname. */
+export function smtpTransportOptions(smtp: SmtpWithPassword, address: string): SMTPTransport.Options {
   const { settings: s, password } = smtp;
   return {
-    host: s.host,
+    host: address,
+    tls: { servername: s.host },
     port: s.port,
     secure: s.secure,
     // Without implicit TLS insist on STARTTLS: the mail carries a login link.
@@ -21,12 +24,24 @@ export function smtpTransportOptions(smtp: SmtpWithPassword): SMTPTransport.Opti
   };
 }
 
-export function createMailer(smtp: SmtpWithPassword | null): Mailer | null {
+export interface SmtpGuard {
+  allowed: readonly string[];
+  resolve?: Resolve;
+}
+
+export function createMailer(smtp: SmtpWithPassword | null, guard: SmtpGuard): Mailer | null {
   if (!smtp) return null;
-  const transport = nodemailer.createTransport(smtpTransportOptions(smtp));
   return {
     async send(msg) {
-      await transport.sendMail({ from: smtp.settings.from, to: msg.to, subject: msg.subject, text: msg.text });
+      // checked on every send: the DNS answer may have changed since the admin saved the host
+      const check = await checkSmtpHost(smtp.settings.host, guard.allowed, guard.resolve);
+      if (!check.ok) throw new Error(`SMTP host ${smtp.settings.host} refused (${check.reason})`);
+      const transport = nodemailer.createTransport(smtpTransportOptions(smtp, check.address));
+      try {
+        await transport.sendMail({ from: smtp.settings.from, to: msg.to, subject: msg.subject, text: msg.text });
+      } finally {
+        transport.close();
+      }
     },
   };
 }

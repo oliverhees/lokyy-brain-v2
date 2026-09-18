@@ -38,11 +38,18 @@ export interface RetiredSlot {
   retiredAt: string;
 }
 
+export interface VaultLlm {
+  /** masked key ("••••abcd"); the key itself lives only in the vault */
+  keyHint: string;
+  /** EUrouter route (routing rule) */
+  ruleId: string;
+  ruleName: string;
+}
+
 export interface LlmSettings {
   mode: 'shared' | 'per-vault';
-  model: string;
-  /** vault ("firma", "v01", …) → masked key ("••••abcd"); the keys themselves live only in the vaults */
-  keyHints: Record<string, string>;
+  /** vault ("firma", "v01", …) → what was applied to it */
+  vaults: Record<string, VaultLlm>;
   updatedAt: string;
 }
 

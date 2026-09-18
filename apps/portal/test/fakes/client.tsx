@@ -73,3 +73,19 @@ export async function click(el: HTMLElement): Promise<void> {
   await act(async () => { el.click(); });
   await flush();
 }
+
+export const selectByLabel = (c: HTMLElement, label: string): HTMLSelectElement => {
+  const l = [...c.querySelectorAll('label')].find((x) => x.textContent?.startsWith(label));
+  if (!l) throw new Error(`no label ${label}`);
+  const el = c.querySelector(`#${CSS.escape(l.htmlFor)}`) as HTMLSelectElement | null;
+  if (!el) throw new Error(`no select for ${label}`);
+  return el;
+};
+
+export async function choose(el: HTMLSelectElement, value: string): Promise<void> {
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+    setter.call(el, value);
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}

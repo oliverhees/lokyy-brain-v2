@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
-import { harness, type Harness } from '../../test/fakes/harness.ts';
+import { harness, RULE_A, type Harness } from '../../test/fakes/harness.ts';
 import { createApp, csrfToken } from './app.ts';
 import { AuditLog } from './audit.ts';
 import { join } from 'node:path';
@@ -15,7 +15,7 @@ beforeEach(() => {
   h = harness();
   app = createApp({
     service: h.service, audit: new AuditLog(join(h.dir, 'audit.log')), proxySecret: PROXY, csrfSecret: CSRF_SECRET,
-    publicOrigin: 'https://app.example.com', staticDir: null, log: () => {},
+    publicOrigin: 'https://app.example.com', packageName: 'team-10', staticDir: null, log: () => {},
   });
 });
 afterEach(() => h.cleanup());
@@ -23,7 +23,7 @@ afterEach(() => h.cleanup());
 type Who = { user: string; groups?: string };
 const admin: Who = { user: 'akadmin', groups: 'authentik Admins|lokyy-admins' };
 const as = (who: Who, req: request.Test, { csrf = true } = {}) => {
-  req.set('x-portal-proxy-secret', PROXY).set('x-authentik-username', who.user);
+  req.set('x-vault-proxy-secret', PROXY).set('x-authentik-username', who.user);
   if (who.groups !== undefined) req.set('x-authentik-groups', who.groups);
   if (csrf) req.set('x-csrf-token', csrfToken(CSRF_SECRET, who.user));
   return req;
@@ -38,11 +38,11 @@ describe('perimeter', () => {
 
   it('rejects requests without or with a wrong proxy secret', async () => {
     expect((await request(app).get('/api/session').set('x-authentik-username', 'akadmin')).status).toBe(403);
-    expect((await request(app).get('/api/session').set('x-portal-proxy-secret', 'x'.repeat(40)).set('x-authentik-username', 'akadmin')).status).toBe(403);
+    expect((await request(app).get('/api/session').set('x-vault-proxy-secret', 'x'.repeat(40)).set('x-authentik-username', 'akadmin')).status).toBe(403);
   });
 
   it('rejects requests without identity', async () => {
-    expect((await request(app).get('/api/session').set('x-portal-proxy-secret', PROXY)).status).toBe(401);
+    expect((await request(app).get('/api/session').set('x-vault-proxy-secret', PROXY)).status).toBe(401);
   });
 
   it('sets hardening headers and no-store on the API', async () => {
@@ -61,6 +61,8 @@ describe('session', () => {
     expect(r.body).toMatchObject({ username: 'akadmin', isAdmin: true, csrfToken: csrfToken(CSRF_SECRET, 'akadmin'), hasAccess: false });
     const e = await as({ user: 'anna', groups: 'vault-v01' }, request(app).get('/api/session'));
     expect(e.body.isAdmin).toBe(false);
+    expect(r.body.package).toBe('team-10');
+    expect(e.body).not.toHaveProperty('package');
   });
 
   it('a duplicated groups header grants nothing', async () => {
@@ -112,6 +114,12 @@ describe('admin API', () => {
     expect((await as(admin, request(app).post('/api/admin/users/anna/enable'))).status).toBe(204);
     expect((await as(admin, request(app).delete('/api/admin/users/anna').send({ confirm: 'anna', keepData: true }))).status).toBe(204);
     expect((await as(admin, request(app).get('/api/admin/users'))).body.retired).toHaveLength(1);
+    const again = await as(admin, request(app).post('/api/admin/users').send({ username: 'anna', email: 'anna@example.com', displayName: 'Anna', role: 'reader', restoreSlot: true }));
+    expect(again.body.user.slot).toBe('v01');
+    expect((await as(admin, request(app).delete('/api/admin/users/anna').send({ confirm: 'anna', keepData: true }))).status).toBe(204);
+    expect((await as(admin, request(app).post('/api/admin/slots/v01/release').send({ confirm: 'v01' }))).status).toBe(204);
+    expect((await as(admin, request(app).get('/api/admin/users'))).body.retired).toHaveLength(0);
+    expect((await as(admin, request(app).post('/api/admin/slots/..%2F/release').send({ confirm: 'x' }))).status).toBe(404);
   });
 
   it('maps validation errors to 400 with field codes', async () => {
@@ -125,11 +133,13 @@ describe('admin API', () => {
   });
 
   it('setup endpoints never return secrets', async () => {
-    await as(admin, request(app).put('/api/admin/setup/llm').send({ mode: 'shared', model: 'm', sharedKey: 'sk-eu-abcdefghijkl1234' }));
+    const routes = await as(admin, request(app).post('/api/admin/setup/llm/routes').send({ apiKey: 'sk-eu-abcdefghijkl1234' }));
+    expect(routes.body.routes[0]).toEqual(RULE_A);
+    await as(admin, request(app).put('/api/admin/setup/llm').send({ mode: 'shared', apiKey: 'sk-eu-abcdefghijkl1234', ruleId: RULE_A.id }));
     await as(admin, request(app).put('/api/admin/setup/smtp').send({ host: 'smtp.example.com', port: 587, secure: false, username: 'u', password: 'mail-pass-123', from: 'noreply@example.com' }));
     const r = await as(admin, request(app).get('/api/admin/setup'));
     expect(JSON.stringify(r.body)).not.toMatch(/abcdefghijkl|mail-pass-123/);
-    expect(r.body.llm.keyHints.firma).toBe('••••1234');
+    expect(r.body.llm.vaults.firma).toEqual({ keyHint: '••••1234', ruleId: RULE_A.id, ruleName: 'eu-standard' });
   });
 
   it('shows the audit log to admins', async () => {
@@ -166,6 +176,14 @@ describe('Mein Zugang', () => {
     const k2 = (await as(anna, request(app).post('/api/me/key/rotate'))).body.apiKey;
     expect(k2).not.toBe(k1);
     expect((await as(anna, request(app).post('/api/me/key/reveal'), { csrf: false })).status).toBe(403);
+  });
+
+  it('GET /api/me has no side effects; activation is an explicit POST with CSRF', async () => {
+    await as(anna, request(app).get('/api/me'));
+    expect((await h.service.listUsers()).users[0]!.status).toBe('invited');
+    expect((await as(anna, request(app).post('/api/me/activate'), { csrf: false })).status).toBe(403);
+    expect((await as(anna, request(app).post('/api/me/activate'))).status).toBe(204);
+    expect((await h.service.listUsers()).users[0]!.status).toBe('active');
   });
 
   it('users without a slot get 404 no_access', async () => {

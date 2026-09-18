@@ -2,14 +2,16 @@
 // employee's own access. Orchestrates state store, Authentik, MetaMCP provisioning, vault LLM config
 // and mail. The HTTP layer (app.ts) only authenticates, authorises and maps errors.
 import {
-  EUROUTER_BASE_URL, validateCompanyName, validateEurouterKey, validateInvite, validateModel, validateRole, validateSmtp,
+  EUROUTER_BASE_URL, validateCompanyName, validateEurouterKey, validateInvite, validateRole, validateRuleId, validateSmtp,
   type FieldErrors, type Role,
 } from '../shared/validation.ts';
 import { inviteMail } from '../shared/i18n/mail.de.ts';
 import { AuthentikClient, AuthentikError, managedGroupsFor } from './authentik.ts';
 import type { MetamcpProvisioner, ProvisionResult } from './metamcp.ts';
 import { COMPANY_VAULT, nextFreeSlot, toUsersJson } from './slots.ts';
-import type { PortalState, SlotUser, SmtpSettings, StateStore } from './state.ts';
+import type { PortalState, SlotUser, SmtpSettings, StateStore, VaultLlm } from './state.ts';
+import { EurouterError, type RoutingRule } from './eurouter.ts';
+import type { HostCheck } from './smtp-guard.ts';
 import type { AuditLog } from './audit.ts';
 
 export { EUROUTER_BASE_URL };
@@ -27,9 +29,19 @@ export class ServiceError extends Error {
   }
 }
 
+export interface VaultLlmConfig {
+  apiKey: string;
+  /** EUrouter route; the vault sends it as rule_id, without a model (vault config field ruleId, LBV2-30) */
+  ruleId: string;
+}
+
 export interface VaultAdmin {
-  /** Points the vault's LLM at EUrouter with this key and model (vault admin config API). */
-  configureLlm(vault: string, llm: { apiKey: string; model: string }): Promise<void>;
+  /** Points the vault's LLM at EUrouter with this key and route (vault admin config API). */
+  configureLlm(vault: string, llm: VaultLlmConfig): Promise<void>;
+}
+
+export interface Routes {
+  listRules(apiKey: string): Promise<RoutingRule[]>;
 }
 
 export interface Mailer {
@@ -52,6 +64,9 @@ export interface ServiceDeps {
   audit: AuditLog;
   authentik: AuthentikClient;
   metamcp: MetamcpProvisioner;
+  eurouter: Routes;
+  /** Refuses SMTP hosts that resolve to private addresses (unless allow-listed) */
+  smtpHostCheck: (host: string) => Promise<HostCheck>;
   vaultAdmin: VaultAdmin;
   mailerFactory: (smtp: SmtpWithPassword | null) => Mailer | null;
   /** Authentik duration of invitation links, e.g. "days=7" */
@@ -88,7 +103,7 @@ export class PortalService {
     const taken = new Set([...s.users.map((u) => u.slot), ...s.retired.map((r) => r.slot)]);
     return {
       company: s.company,
-      llm: s.llm ? { mode: s.llm.mode, model: s.llm.model, keyHints: s.llm.keyHints, baseUrl: EUROUTER_BASE_URL } : null,
+      llm: s.llm ? { mode: s.llm.mode, vaults: s.llm.vaults ?? {}, baseUrl: EUROUTER_BASE_URL } : null,
       smtp: s.smtp ? { ...s.smtp, passwordSet: Boolean(secrets.smtpPassword) } : null,
       setupCompletedAt: s.setupCompletedAt,
       vaults: this.vaults,
@@ -105,48 +120,71 @@ export class PortalService {
     await this.#d.audit.write({ actor, action: 'setup.company', details: { name } });
   }
 
-  async setLlm(actor: string, input: { mode: unknown; model: unknown; sharedKey?: unknown; keys?: unknown }): Promise<{ failed: string[] }> {
+  /** Routes (routing rules) of an EUrouter key; also the live check of the key. */
+  async listRoutes(actor: string, input: { apiKey: unknown }): Promise<RoutingRule[]> {
+    const e = validateEurouterKey(input.apiKey);
+    if (e) throw new ServiceError(400, 'invalid_input', { apiKey: e });
+    const rules = await this.#rules((input.apiKey as string).trim(), 'apiKey');
+    await this.#d.audit.write({ actor, action: 'setup.llm.routes', details: { count: rules.length } });
+    return rules;
+  }
+
+  /** EUrouter key + route for all vaults (shared) or per vault; the route brings its models. */
+  async setLlm(actor: string, input: { mode?: unknown; apiKey?: unknown; ruleId?: unknown; vaults?: unknown }): Promise<{ failed: string[] }> {
     const fields: FieldErrors = {};
-    const modelErr = validateModel(input.model);
-    if (modelErr) fields['model'] = modelErr;
-    const plan = new Map<string, string>();
+    const wanted: { vault: string; apiKey: string; ruleId: string; prefix: string }[] = [];
     if (input.mode === 'shared') {
-      const e = validateEurouterKey(input.sharedKey);
-      if (e) fields['sharedKey'] = e;
-      else for (const v of this.vaults) plan.set(v, input.sharedKey as string);
+      const k = validateEurouterKey(input.apiKey);
+      const r = validateRuleId(input.ruleId);
+      if (k) fields['apiKey'] = k;
+      if (r) fields['ruleId'] = r;
+      if (!k && !r) for (const v of this.vaults) wanted.push({ vault: v, apiKey: (input.apiKey as string).trim(), ruleId: input.ruleId as string, prefix: '' });
     } else if (input.mode === 'per-vault') {
-      const keys = input.keys;
-      if (!keys || typeof keys !== 'object' || Array.isArray(keys)) fields['keys'] = 'required';
+      const vs = input.vaults;
+      if (!vs || typeof vs !== 'object' || Array.isArray(vs) || Object.keys(vs).length === 0) fields['vaults'] = 'required';
       else {
-        for (const [vault, key] of Object.entries(keys as Record<string, unknown>)) {
-          if (!this.vaults.includes(vault)) { fields[`keys.${vault}`] = 'unknown_vault'; continue; }
-          if (key === '' || key === undefined || key === null) continue; // left empty: keep that vault as it is
-          const e = validateEurouterKey(key);
-          if (e) fields[`keys.${vault}`] = e; else plan.set(vault, key as string);
+        for (const [vault, cfg] of Object.entries(vs as Record<string, { apiKey?: unknown; ruleId?: unknown } | null>)) {
+          if (!this.vaults.includes(vault)) { fields[`vaults.${vault}`] = 'unknown_vault'; continue; }
+          const k = validateEurouterKey(cfg?.apiKey);
+          const r = validateRuleId(cfg?.ruleId);
+          if (k) fields[`vaults.${vault}.apiKey`] = k;
+          if (r) fields[`vaults.${vault}.ruleId`] = r;
+          if (!k && !r) wanted.push({ vault, apiKey: (cfg!.apiKey as string).trim(), ruleId: cfg!.ruleId as string, prefix: `vaults.${vault}.` });
         }
-        if (plan.size === 0 && Object.keys(fields).length === 0) fields['keys'] = 'required';
       }
     } else {
       fields['mode'] = 'invalid';
     }
     if (Object.keys(fields).length > 0) throw new ServiceError(400, 'invalid_input', fields);
 
-    const model = input.model as string;
-    const failed: string[] = [];
-    const applied: Record<string, string> = {};
-    for (const [vault, key] of plan) {
-      try {
-        await this.#d.vaultAdmin.configureLlm(vault, { apiKey: key, model });
-        applied[vault] = hint(key);
-      } catch (e) {
-        this.#d.log(`LLM config for vault ${vault} failed: ${(e as Error).message}`);
-        failed.push(vault);
-      }
+    // Live check: every key must be accepted by EUrouter and the route must belong to that key.
+    const rulesByKey = new Map<string, RoutingRule[]>();
+    const names = new Map<string, string>();
+    for (const w of wanted) {
+      if (!rulesByKey.has(w.apiKey)) rulesByKey.set(w.apiKey, await this.#rules(w.apiKey, `${w.prefix}apiKey`));
+      const rule = rulesByKey.get(w.apiKey)!.find((r) => r.id === w.ruleId);
+      if (!rule) throw new ServiceError(400, 'invalid_input', { [`${w.prefix}ruleId`]: 'unknown_route' });
+      names.set(w.vault, rule.name);
     }
-    await this.#d.store.update((s) => {
-      s.llm = { mode: input.mode as 'shared' | 'per-vault', model, keyHints: { ...(s.llm?.keyHints ?? {}), ...applied }, updatedAt: now() };
+
+    const failed: string[] = [];
+    const applied: Record<string, VaultLlm> = {};
+    for (const w of wanted) {
+      let ok = true;
+      try {
+        await this.#d.vaultAdmin.configureLlm(w.vault, { apiKey: w.apiKey, ruleId: w.ruleId });
+        applied[w.vault] = { keyHint: hint(w.apiKey), ruleId: w.ruleId, ruleName: names.get(w.vault)! };
+      } catch (e) {
+        ok = false;
+        this.#d.log(`LLM config for vault ${w.vault} failed: ${(e as Error).message}`);
+        failed.push(w.vault);
+      }
+      await this.#d.audit.write({ actor, action: 'vault.config', target: w.vault, details: { ok, ruleId: w.ruleId } });
+    }
+    await this.#d.store.update((st) => {
+      st.llm = { mode: input.mode as 'shared' | 'per-vault', vaults: { ...(st.llm?.vaults ?? {}), ...applied }, updatedAt: now() };
     });
-    await this.#d.audit.write({ actor, action: 'setup.llm', details: { mode: String(input.mode), model, vaults: Object.keys(applied), failed } });
+    await this.#d.audit.write({ actor, action: 'setup.llm', details: { mode: String(input.mode), vaults: Object.keys(applied), failed } });
     return { failed };
   }
 
@@ -154,6 +192,10 @@ export class PortalService {
     const errors = validateSmtp({ ...input, username: input.username ?? '', password: input.password });
     const current = await this.#d.store.readSecrets();
     if (input.password === undefined && !current.smtpPassword && input.username) errors['password'] = 'required';
+    if (!errors['host']) {
+      const check = await this.#d.smtpHostCheck(input.host as string);
+      if (!check.ok) errors['host'] = check.reason === 'private' ? 'private_host' : 'unresolvable';
+    }
     if (Object.keys(errors).length > 0) throw new ServiceError(400, 'invalid_input', errors);
     if (typeof input.password === 'string' && input.password.length > 0) {
       await this.#d.store.updateSecrets((sec) => { sec.smtpPassword = input.password as string; });
@@ -205,7 +247,7 @@ export class PortalService {
     };
   }
 
-  async invite(actor: string, input: { username: unknown; email: unknown; displayName: unknown; role: unknown }): Promise<InviteResult> {
+  async invite(actor: string, input: { username: unknown; email: unknown; displayName: unknown; role: unknown; restoreSlot?: unknown }): Promise<InviteResult> {
     const fields = validateInvite(input);
     if (Object.keys(fields).length > 0) throw new ServiceError(400, 'invalid_input', fields);
     const username = input.username as string;
@@ -213,11 +255,14 @@ export class PortalService {
     const displayName = (input.displayName as string).trim();
     const role = input.role as Role;
 
-    // Reserve a slot. A former user coming back gets their old slot (and data) again.
+    // Reserve a slot. The retired slot (and data) of a former user with this name is only restored on the
+    // admin's explicit request: the same username may belong to a different person now (audit M1).
+    const restore = input.restoreSlot === true;
     const reserved = await this.#d.store.update((s) => {
       if (s.users.some((u) => u.username === username)) throw new ServiceError(409, 'username_exists');
       if (s.users.some((u) => u.email.toLowerCase() === email.toLowerCase())) throw new ServiceError(409, 'email_exists');
-      const former = s.retired.find((r) => r.formerUsername === username && this.#d.slots.includes(r.slot));
+      const former = restore ? s.retired.find((r) => r.formerUsername === username && this.#d.slots.includes(r.slot)) : undefined;
+      if (restore && !former) throw new ServiceError(409, 'no_retired_slot');
       const slot = former?.slot ?? nextFreeSlot(this.#d.slots, s);
       if (!slot) throw new ServiceError(409, 'no_free_slot');
       if (former) s.retired = s.retired.filter((r) => r !== former);
@@ -241,7 +286,7 @@ export class PortalService {
     const link = await this.#inviteLink(pk);
     await this.#provision();
     const mail = await this.#mailInvite(username, link);
-    await this.#d.audit.write({ actor, action: 'user.invite', target: username, details: { slot: reserved.user.slot, role, mailed: mail.mailed } });
+    await this.#d.audit.write({ actor, action: 'user.invite', target: username, details: { slot: reserved.user.slot, role, mailed: mail.mailed, restoredSlot: reserved.former !== null } });
     return { user: await this.#get(username), inviteLink: link, ...mail };
   }
 
@@ -260,6 +305,8 @@ export class PortalService {
     if (err) throw new ServiceError(400, 'invalid_input', { role: err });
     const u = await this.#get(username);
     const from = u.role;
+    // Old key first and independently of MetaMCP HTTP: open sessions must not keep the old access (audit H1).
+    const revoked = await this.#revoke(username);
     await this.#patch(username, (x) => { x.role = role as Role; });
     try {
       if (u.status !== 'disabled') await this.#d.authentik.setGroups(await this.#ensureAuthentik({ ...u, role: role as Role }), managedGroupsFor(u.slot, role as Role));
@@ -268,21 +315,27 @@ export class PortalService {
       throw this.#mapAuthentik(e);
     }
     await this.#provision();
-    await this.#d.audit.write({ actor, action: 'user.role', target: username, details: { from, to: role as string } });
+    await this.#d.audit.write({ actor, action: 'user.role', target: username, details: { from, to: role as string, revoked } });
+    if (!revoked) throw new ServiceError(502, 'revocation_failed');
     return this.#get(username);
   }
 
   async disable(actor: string, username: string): Promise<void> {
     const u = await this.#get(username);
+    // Revoke first, independently of Authentik and MetaMCP HTTP; everything else still runs if it fails.
+    const revoked = await this.#revoke(username);
+    await this.#patch(username, (x) => { x.status = 'disabled'; });
+    let authentikError: Error | null = null;
     if (u.authentikPk !== null) {
       try {
         await this.#d.authentik.setActive(u.authentikPk, false);
         await this.#d.authentik.endSessions(username);
-      } catch (e) { throw this.#mapAuthentik(e); }
+      } catch (e) { authentikError = this.#mapAuthentik(e); }
     }
-    await this.#patch(username, (x) => { x.status = 'disabled'; });
-    await this.#provision(); // not in users.json any more → MetaMCP account and key removed
-    await this.#d.audit.write({ actor, action: 'user.disable', target: username });
+    await this.#provision(); // not provisioned any more → MetaMCP account removed
+    await this.#d.audit.write({ actor, action: 'user.disable', target: username, details: { revoked, authentik: authentikError === null } });
+    if (!revoked) throw new ServiceError(502, 'revocation_failed');
+    if (authentikError) throw authentikError;
   }
 
   async enable(actor: string, username: string): Promise<void> {
@@ -300,8 +353,15 @@ export class PortalService {
   async remove(actor: string, username: string, opts: { confirm: unknown; keepData: unknown }): Promise<void> {
     const u = await this.#get(username);
     if (opts.confirm !== username) throw new ServiceError(400, 'confirm_mismatch');
-    // Wiping needs a vault-side API that does not exist yet; never pretend to have deleted data.
+    // Wiping needs a vault-side API (separate item); never pretend to have deleted data.
     if (opts.keepData !== true) throw new ServiceError(400, 'wipe_unsupported');
+    const revoked = await this.#revoke(username);
+    if (!revoked) {
+      // Keep the user (disabled) so the removal can be retried; access must be gone before the record is.
+      await this.#patch(username, (x) => { x.status = 'disabled'; });
+      await this.#d.audit.write({ actor, action: 'user.remove', target: username, details: { slot: u.slot, revoked: false } });
+      throw new ServiceError(502, 'revocation_failed');
+    }
     try {
       if (u.authentikPk !== null) {
         await this.#d.authentik.endSessions(username);
@@ -313,7 +373,19 @@ export class PortalService {
       s.retired.push({ slot: u.slot, formerUsername: username, retiredAt: now() });
     });
     await this.#provision();
-    await this.#d.audit.write({ actor, action: 'user.remove', target: username, details: { slot: u.slot, keepData: true } });
+    await this.#d.audit.write({ actor, action: 'user.remove', target: username, details: { slot: u.slot, keepData: true, revoked: true } });
+  }
+
+  /** Explicitly frees a retired slot: the next invitation gets it, including the former user's vault data. */
+  async releaseSlot(actor: string, slot: string, opts: { confirm: unknown }): Promise<void> {
+    if (opts.confirm !== slot) throw new ServiceError(400, 'confirm_mismatch');
+    const former = await this.#d.store.update((s) => {
+      const r = s.retired.find((x) => x.slot === slot);
+      if (!r) throw new ServiceError(404, 'slot_not_retired');
+      s.retired = s.retired.filter((x) => x !== r);
+      return r.formerUsername;
+    });
+    await this.#d.audit.write({ actor, action: 'slot.release', target: slot, details: { formerUsername: former } });
   }
 
   /** Re-runs MetaMCP provisioning for everyone (after a failure). */
@@ -324,7 +396,9 @@ export class PortalService {
   }
 
   // ---------------------------------------------------------------- self service
-  async markActive(username: string): Promise<void> {
+  /** First use after setting the password (explicit POST from the UI; GET /api/me has no side effects). */
+  async activate(username: string): Promise<void> {
+    await this.#self(username);
     await this.#d.store.update((s) => {
       const u = s.users.find((x) => x.username === username);
       if (u && u.status === 'invited') { u.status = 'active'; u.activatedAt = now(); u.updatedAt = now(); }
@@ -333,7 +407,6 @@ export class PortalService {
 
   async myAccess(username: string) {
     const u = await this.#self(username);
-    if (u.status === 'invited') await this.markActive(username);
     const s = await this.#d.store.read();
     return {
       username: u.username,
@@ -409,12 +482,36 @@ export class PortalService {
     } catch (e) { throw this.#mapAuthentik(e); }
   }
 
+  /** Revokes the user's MetaMCP keys directly in MetaMCP's database; false (and logged) on failure. */
+  async #revoke(username: string): Promise<boolean> {
+    try {
+      await this.#d.metamcp.revoke(username);
+      return true;
+    } catch (e) {
+      this.#d.log(`revoking MetaMCP keys of ${username} failed: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
+  async #rules(apiKey: string, field: string): Promise<RoutingRule[]> {
+    try {
+      return await this.#d.eurouter.listRules(apiKey);
+    } catch (e) {
+      if (e instanceof EurouterError && e.code === 'invalid_key') throw new ServiceError(400, 'invalid_input', { [field]: 'invalid_key' });
+      this.#d.log(`EUrouter: ${(e as Error).message}`);
+      throw new ServiceError(502, 'eurouter_unavailable');
+    }
+  }
+
   async #provision(rotate: string[] = []): Promise<ProvisionResult> {
-    const state = await this.#d.store.read();
-    const result = await this.#d.metamcp.reconcile(toUsersJson(state), { rotate });
-    const listed = new Set(toUsersJson(state).users.map((u) => u.username));
+    // The state is read inside the provisioning queue: a run waiting behind another one never uses a
+    // stale snapshot (e.g. a rotation that was queued before a disable).
+    let spec = toUsersJson(await this.#d.store.read()); // replaced by the in-queue read
+    const result = await this.#d.metamcp.reconcile(async () => (spec = toUsersJson(await this.#d.store.read())), { rotate });
+    const listed = new Set(spec.users.map((u) => u.username));
+    const failedUsers = new Set(result.failedUsers);
     await this.#d.store.update((s: PortalState) => {
-      for (const u of s.users) if (listed.has(u.username)) u.provisioning = result.status === 'ok' ? 'ok' : 'failed';
+      for (const u of s.users) if (listed.has(u.username)) u.provisioning = failedUsers.has(u.username) ? 'failed' : 'ok';
       s.lastProvisioning = { at: now(), status: result.status, restartMetamcp: result.restartMetamcp, ...(result.error ? { error: result.error } : {}) };
     });
     if (result.status !== 'ok') this.#d.log(`MetaMCP provisioning failed: ${result.error}`);

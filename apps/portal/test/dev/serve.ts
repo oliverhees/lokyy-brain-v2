@@ -20,7 +20,7 @@ if (process.env['DEV_SEED'] !== '0') {
   await h.service.setCompany('akadmin', { name: 'Muster GmbH' });
   await h.service.invite('akadmin', { username: 'anna', email: 'anna@example.com', displayName: 'Anna Muster', role: 'reader' });
   await h.service.invite('akadmin', { username: 'ben', email: 'ben@example.com', displayName: 'Ben Beispiel', role: 'writer' });
-  await h.service.markActive('ben');
+  await h.service.activate('ben');
 }
 
 const app = express();

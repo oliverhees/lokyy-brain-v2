@@ -1,10 +1,10 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { UserPlus, Users } from 'lucide-react';
 import { de } from '../../shared/i18n/de.ts';
 import { ApiError, errorMessage } from '../api.ts';
 import { useApi, useLoad } from '../context.tsx';
 import type { InviteResponse, Role, UserRow, UsersResponse } from '../types.ts';
-import { Alert, Badge, Button, Card, CopyBlock, Dialog, LoadError, Loading, RadioGroup, TextField, fieldError } from '../components/ui.tsx';
+import { Alert, Badge, Button, Card, CheckboxField, CopyBlock, Dialog, LoadError, Loading, RadioGroup, TextField, fieldError } from '../components/ui.tsx';
 
 const t = de.users;
 
@@ -29,8 +29,12 @@ function StatusBadge({ u }: { u: UserRow }) {
 }
 
 // ------------------------------------------------------------------ invite
-function InviteDialog({ open, onClose, onInvited }: { open: boolean; onClose: () => void; onInvited: () => void }) {
+function InviteDialog({ open, onClose, onInvited, retired }: {
+  open: boolean; onClose: () => void; onInvited: () => void; retired: UsersResponse['retired'];
+}) {
   const api = useApi();
+  const formRef = useRef<HTMLFormElement>(null);
+  const [restore, setRestore] = useState(false);
   const [form, setForm] = useState({ displayName: '', email: '', username: '', role: 'reader' as Role });
   const [usernameTouched, setUsernameTouched] = useState(false);
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -40,14 +44,20 @@ function InviteDialog({ open, onClose, onInvited }: { open: boolean; onClose: ()
 
   const close = () => {
     setForm({ displayName: '', email: '', username: '', role: 'reader' });
-    setUsernameTouched(false); setFields({}); setFormError(null); setResult(null);
+    setUsernameTouched(false); setFields({}); setFormError(null); setResult(null); setRestore(false);
     onClose();
   };
+  // A retired slot of this username: its data is only restored when the admin ticks the box (audit M1).
+  const former = retired.find((r) => r.formerUsername === form.username.trim());
+  // After a validation error the first invalid field gets the focus (WCAG 3.3.1).
+  useEffect(() => {
+    if (Object.keys(fields).length > 0) formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [fields]);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true); setFields({}); setFormError(null);
     try {
-      const r = await api.post<InviteResponse>('/api/admin/users', form);
+      const r = await api.post<InviteResponse>('/api/admin/users', { ...form, ...(former && restore ? { restoreSlot: true } : {}) });
       setResult(r);
       onInvited();
     } catch (err) {
@@ -69,7 +79,7 @@ function InviteDialog({ open, onClose, onInvited }: { open: boolean; onClose: ()
           <div className="flex justify-end"><Button onClick={close}>{de.common.close}</Button></div>
         </div>
       ) : (
-        <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+        <form ref={formRef} onSubmit={submit} noValidate className="flex flex-col gap-4">
           <TextField label={t.form.displayName} autoComplete="off" value={form.displayName} required error={fieldError(fields, 'displayName')}
             onChange={(e) => {
               const displayName = e.target.value;
@@ -80,6 +90,9 @@ function InviteDialog({ open, onClose, onInvited }: { open: boolean; onClose: ()
           <TextField label={t.form.username} autoComplete="off" spellCheck={false} value={form.username} required hint={t.form.usernameHint}
             error={fieldError(fields, 'username')}
             onChange={(e) => { setUsernameTouched(true); setForm((f) => ({ ...f, username: e.target.value })); }} />
+          {former && (
+            <CheckboxField label={t.form.restoreSlot(former.slot)} hint={t.form.restoreSlotHint(former.slot)} checked={restore} onChange={setRestore} />
+          )}
           <RadioGroup legend={t.form.role} name="role" value={form.role} onChange={(role) => setForm((f) => ({ ...f, role }))}
             options={[{ value: 'reader', label: de.roles.reader, hint: de.roles.readerHint }, { value: 'writer', label: de.roles.writer, hint: de.roles.writerHint }]} />
           {formError && <Alert tone="error">{formError}</Alert>}
@@ -94,7 +107,7 @@ function InviteDialog({ open, onClose, onInvited }: { open: boolean; onClose: ()
 }
 
 // ------------------------------------------------------------------ page
-type Pending = { kind: 'remove' | 'disable'; user: UserRow } | null;
+type Pending = { kind: 'remove' | 'disable'; user: UserRow } | { kind: 'release'; slot: string; formerUsername: string } | null;
 
 export function UsersPage() {
   const api = useApi();
@@ -144,7 +157,6 @@ export function UsersPage() {
           {t.provisioningWarning}
         </Alert>
       )}
-      {d.lastProvisioning?.restartMetamcp && <Alert tone="info">{t.restartHint}</Alert>}
 
       {d.users.length === 0 ? (
         <Card>
@@ -155,7 +167,9 @@ export function UsersPage() {
           </div>
         </Card>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-line bg-surface">
+        <div className="flex flex-col gap-1">
+        <p className="text-xs text-muted sm:hidden">{t.tableScrollHint}</p>
+        <div role="region" aria-label={t.tableScroll} tabIndex={0} className="focus-ring overflow-x-auto rounded-lg border border-line bg-surface">
           <table className="w-full text-left text-sm">
             <caption className="sr-only">{t.table.caption}</caption>
             <thead className="border-b border-line bg-subtle text-xs uppercase tracking-wide text-fg">
@@ -203,18 +217,26 @@ export function UsersPage() {
             </tbody>
           </table>
         </div>
+        </div>
       )}
 
       {d.retired.length > 0 && (
         <Card title={t.retired.heading}>
           <p className="mb-2 text-sm text-muted">{t.retired.text}</p>
-          <ul className="list-inside list-disc text-sm text-fg">
-            {d.retired.map((r) => <li key={r.slot}>{t.retired.entry(r.slot, r.formerUsername)}</li>)}
+          <ul className="flex flex-col gap-1 text-sm text-fg">
+            {d.retired.map((r) => (
+              <li key={r.slot} className="flex flex-wrap items-center gap-2">
+                <span>{t.retired.entry(r.slot, r.formerUsername)}</span>
+                <Button variant="ghost" onClick={() => { setConfirmText(''); setPending({ kind: 'release', slot: r.slot, formerUsername: r.formerUsername }); }}>
+                  {t.retired.release}
+                </Button>
+              </li>
+            ))}
           </ul>
         </Card>
       )}
 
-      <InviteDialog open={inviteOpen} onClose={() => setInviteOpen(false)} onInvited={reload} />
+      <InviteDialog open={inviteOpen} onClose={() => setInviteOpen(false)} onInvited={reload} retired={d.retired} />
 
       <Dialog open={link !== null} title={t.invited.heading} onClose={() => setLink(null)}>
         <Alert tone="info">{t.invited.notMailed}</Alert>
@@ -222,27 +244,46 @@ export function UsersPage() {
         <div className="flex justify-end"><Button onClick={() => setLink(null)}>{de.common.close}</Button></div>
       </Dialog>
 
-      <Dialog open={pending?.kind === 'disable'} title={pending ? t.disableDialog.heading(pending.user.displayName) : ''} onClose={() => setPending(null)}>
+      <Dialog open={pending?.kind === 'disable'} title={pending?.kind === 'disable' ? t.disableDialog.heading(pending.user.displayName) : ''} onClose={() => setPending(null)}>
         <p className="text-sm text-fg">{t.disableDialog.text}</p>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setPending(null)}>{de.common.cancel}</Button>
           <Button variant="danger" onClick={() => {
-            const u = pending!.user; setPending(null);
+            if (pending?.kind !== 'disable') return;
+            const u = pending.user; setPending(null);
             void act(`disable-${u.username}`, () => api.post(`${path(u)}/disable`), t.done.disabled);
           }}>{t.disableDialog.confirm}</Button>
         </div>
       </Dialog>
 
-      <Dialog open={pending?.kind === 'remove'} title={pending ? t.removeDialog.heading(pending.user.displayName) : ''} onClose={() => setPending(null)}>
+      <Dialog open={pending?.kind === 'remove'} title={pending?.kind === 'remove' ? t.removeDialog.heading(pending.user.displayName) : ''} onClose={() => setPending(null)}>
         <p className="text-sm text-fg">{t.removeDialog.text}</p>
-        {pending && <TextField label={t.removeDialog.confirmLabel(pending.user.username)} value={confirmText} autoComplete="off" spellCheck={false}
+        {pending?.kind === 'remove' && <TextField label={t.removeDialog.confirmLabel(pending.user.username)} value={confirmText} autoComplete="off" spellCheck={false}
           onChange={(e) => setConfirmText(e.target.value)} />}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setPending(null)}>{de.common.cancel}</Button>
-          <Button variant="danger" disabled={!pending || confirmText !== pending.user.username} onClick={() => {
-            const u = pending!.user; setPending(null);
+          <Button variant="danger" disabled={pending?.kind !== 'remove' || confirmText !== pending.user.username} onClick={() => {
+            if (pending?.kind !== 'remove') return;
+            const u = pending.user; setPending(null);
             void act(`remove-${u.username}`, () => api.del(path(u), { confirm: confirmText, keepData: true }), t.done.removed);
           }}>{t.removeDialog.confirm}</Button>
+        </div>
+      </Dialog>
+      <Dialog open={pending?.kind === 'release'} title={pending?.kind === 'release' ? t.releaseDialog.heading(pending.slot) : ''} onClose={() => setPending(null)}>
+        {pending?.kind === 'release' && (
+          <>
+            <Alert tone="warning">{t.releaseDialog.text(pending.formerUsername)}</Alert>
+            <TextField label={t.releaseDialog.confirmLabel(pending.slot)} value={confirmText} autoComplete="off" spellCheck={false}
+              onChange={(e) => setConfirmText(e.target.value)} />
+          </>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setPending(null)}>{de.common.cancel}</Button>
+          <Button variant="danger" disabled={pending?.kind !== 'release' || confirmText !== pending.slot} onClick={() => {
+            if (pending?.kind !== 'release') return;
+            const slot = pending.slot; setPending(null);
+            void act(`release-${slot}`, () => api.post(`/api/admin/slots/${encodeURIComponent(slot)}/release`, { confirm: confirmText }), t.done.released);
+          }}>{t.releaseDialog.confirm}</Button>
         </div>
       </Dialog>
     </div>

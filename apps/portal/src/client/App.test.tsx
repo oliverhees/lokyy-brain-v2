@@ -33,6 +33,11 @@ describe('App shell', () => {
     expect(api.calls.some((c) => c.path.startsWith('/api/admin'))).toBe(false);
   });
 
+  it('shows the package to admins', async () => {
+    m = await mount(<App />, fakeApi({ 'GET /api/session': session({ package: 'team-10' }), 'GET /api/admin/users': { users: [], retired: [], freeSlots: 1, lastProvisioning: null } }));
+    expect(m.container.querySelector('header')?.textContent).toContain('Paket team-10');
+  });
+
   it('has a skip link to the main content', async () => {
     m = await mount(<App />, fakeApi({ 'GET /api/session': session({}), 'GET /api/admin/users': { users: [], retired: [], freeSlots: 1, lastProvisioning: null } }));
     const skip = m.container.querySelector('a[href="#main"]')!;

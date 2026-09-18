@@ -7,6 +7,8 @@ import { AuditLog } from './audit.ts';
 import { AuthentikClient } from './authentik.ts';
 import { loadConfig } from './config.ts';
 import { createMailer } from './mailer.ts';
+import { EurouterClient } from './eurouter.ts';
+import { checkSmtpHost } from './smtp-guard.ts';
 import { MetamcpProvisioner } from './metamcp.ts';
 import { PortalService } from './service.ts';
 import { StateStore } from './state.ts';
@@ -41,13 +43,18 @@ const service = new PortalService({
     db: pool, baseUrl: config.metamcp.url, publicBase: config.metamcp.publicBase, origin: config.metamcp.origin,
     env: config.env, log: (m) => log(`[provision] ${m}`),
   }),
+  eurouter: new EurouterClient(),
+  smtpHostCheck: (host) => checkSmtpHost(host, config.smtpAllowedHosts),
   vaultAdmin: new HttpVaultAdmin(config.vaultAdminUrl),
-  mailerFactory: createMailer,
+  mailerFactory: (smtp) => createMailer(smtp, { allowed: config.smtpAllowedHosts }),
   inviteValidity: config.inviteValidity,
   log,
 });
 
-const app = createApp({ service, audit, proxySecret: config.proxySecret, csrfSecret, publicOrigin: config.publicOrigin, staticDir: config.staticDir, log });
+const app = createApp({
+  service, audit, proxySecret: config.proxySecret, csrfSecret, publicOrigin: config.publicOrigin,
+  packageName: config.package, staticDir: config.staticDir, log,
+});
 const server = app.listen(config.port, '0.0.0.0', () => log(`portal listening on :${config.port} for ${config.domain} (${config.slots.length} slots)`));
 server.requestTimeout = 120_000;
 server.headersTimeout = 20_000;

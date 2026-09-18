@@ -50,7 +50,7 @@ export function TextField({ label, hint, error, optional, className, ...input }:
         aria-invalid={error ? true : undefined}
         aria-describedby={[hintId, errId].filter(Boolean).join(' ') || undefined}
         className={cx('focus-ring min-h-[40px] rounded-md border bg-input px-3 text-sm text-fg placeholder:text-muted',
-          error ? 'border-danger' : 'border-line')}
+          error ? 'border-danger' : 'border-control')}
       />
       {hint && <p id={hintId} className="text-xs text-muted">{hint}</p>}
       {error && <p id={errId} className="flex items-center gap-1 text-xs font-medium text-danger"><AlertCircle aria-hidden className="h-3.5 w-3.5" />{error}</p>}
@@ -61,6 +61,43 @@ export function TextField({ label, hint, error, optional, className, ...input }:
 /** Field error text for a server field code, or undefined. */
 export const fieldError = (fields: Record<string, string>, name: string): string | undefined =>
   fields[name] ? fieldMessage(fields[name]!) : undefined;
+
+// ------------------------------------------------------------------ Select
+export function SelectField({ label, hint, error, options, placeholder, value, onChange, disabled }:
+  { label: string; hint?: string | undefined; error?: string | undefined; options: { value: string; label: string }[]; placeholder: string;
+    value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  const id = useId();
+  const hintId = hint ? `${id}-hint` : undefined;
+  const errId = error ? `${id}-err` : undefined;
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className="text-sm font-medium text-fg">{label}</label>
+      <select id={id} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}
+        aria-invalid={error ? true : undefined} aria-describedby={[hintId, errId].filter(Boolean).join(' ') || undefined}
+        className={cx('focus-ring min-h-[40px] rounded-md border bg-input px-3 text-sm text-fg disabled:opacity-60', error ? 'border-danger' : 'border-control')}>
+        <option value="">{placeholder}</option>
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      {hint && <p id={hintId} className="text-xs text-muted">{hint}</p>}
+      {error && <p id={errId} className="flex items-center gap-1 text-xs font-medium text-danger"><AlertCircle aria-hidden className="h-3.5 w-3.5" />{error}</p>}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Checkbox
+export function CheckboxField({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
+  const id = useId();
+  return (
+    <div className="flex items-start gap-3">
+      <input id={id} type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} aria-describedby={hint ? `${id}-hint` : undefined}
+        className="focus-ring mt-0.5 h-4 w-4 accent-[var(--portal-accent)]" />
+      <div className="flex flex-col">
+        <label htmlFor={id} className="text-sm font-medium text-fg">{label}</label>
+        {hint && <p id={`${id}-hint`} className="text-xs text-muted">{hint}</p>}
+      </div>
+    </div>
+  );
+}
 
 // ------------------------------------------------------------------ Radio group
 export function RadioGroup<T extends string>({ legend, name, value, options, onChange }:
@@ -105,6 +142,7 @@ export function Alert({ tone = 'info', children, action }: { tone?: Tone; childr
 // ------------------------------------------------------------------ Copy
 export function CopyBlock({ label, value, multiline = false, id }: { label: string; value: string; multiline?: boolean; id?: string }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const name = label.replace(/[:\s]+$/, '');
   const auto = useId();
   const valueId = id ?? `${auto}-value`;
   useEffect(() => {
@@ -123,12 +161,14 @@ export function CopyBlock({ label, value, multiline = false, id }: { label: stri
           className={cx('focus-ring flex-1 overflow-x-auto rounded-md border border-line bg-input px-3 py-2 font-mono text-xs text-fg', multiline ? 'whitespace-pre' : 'whitespace-pre-wrap break-all')}>
           {value}
         </pre>
-        <Button variant="secondary" onClick={copy} aria-label={`${label}: ${de.common.copy}`} className="self-start">
+        <Button variant="secondary" onClick={copy} aria-label={`${name} ${de.common.copy.toLowerCase()}`} className="self-start">
           {state === 'copied' ? <Check aria-hidden className="h-4 w-4" /> : <Copy aria-hidden className="h-4 w-4" />}
           <span>{state === 'copied' ? de.common.copied : de.common.copy}</span>
         </Button>
       </div>
-      <p aria-live="polite" className="min-h-[1rem] text-xs text-muted">{state === 'failed' ? de.common.copyFailed : ''}</p>
+      <p aria-live="polite" className="min-h-[1rem] text-xs text-muted">
+        {state === 'failed' ? de.common.copyFailed : state === 'copied' ? de.common.copiedAnnounce(name) : ''}
+      </p>
     </div>
   );
 }

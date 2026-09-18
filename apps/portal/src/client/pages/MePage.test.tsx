@@ -28,7 +28,7 @@ describe('MePage', () => {
 
     await click(byText(m.container, 'Schlüssel anzeigen'));
     expect(api.calls.some((c) => c.path === '/api/me/key/reveal')).toBe(true);
-    expect(m.container.textContent).toContain('claude mcp add --transport http lokyy https://mcp.example.com/metamcp/anna/mcp --header "Authorization: Bearer sk_mt_secret1"');
+    expect(m.container.textContent).toContain('claude mcp add --scope user --transport http lokyy https://mcp.example.com/metamcp/anna/mcp --header "Authorization: Bearer sk_mt_secret1"');
 
     await click(byText(m.container, 'Verbergen'));
     expect(m.container.textContent).not.toContain('sk_mt_secret1');
@@ -44,6 +44,22 @@ describe('MePage', () => {
     expect(api.calls.some((c) => c.path === '/api/me/key/rotate')).toBe(true);
     expect(m.container.textContent).toContain('sk_mt_new');
     expect(m.container.textContent).toContain('Neuer Schlüssel erzeugt');
+  });
+
+  it('marks the first visit explicitly (POST /api/me/activate), not through GET', async () => {
+    const api = fakeApi({ 'GET /api/me': me, 'POST /api/me/activate': null });
+    m = await mount(<MePage />, api);
+    expect(api.calls.filter((c) => c.method === 'POST' && c.path === '/api/me/activate')).toHaveLength(1);
+  });
+
+  it('copying announces success in a live region; labels have no doubled colon', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => {} }, configurable: true });
+    m = await mount(<MePage />, fakeApi({ 'GET /api/me': me, 'POST /api/me/activate': null }));
+    const btn = [...m.container.querySelectorAll('button')].find((b) => b.getAttribute('aria-label')?.startsWith('MCP-Adresse'))!;
+    expect(btn.getAttribute('aria-label')).toBe('MCP-Adresse kopieren');
+    for (const b of m.container.querySelectorAll('button[aria-label]')) expect(b.getAttribute('aria-label')).not.toMatch(/::/);
+    await click(btn);
+    expect([...m.container.querySelectorAll('[aria-live="polite"]')].some((r) => r.textContent === 'MCP-Adresse in die Zwischenablage kopiert.')).toBe(true);
   });
 
   it('writers get the company vault link', async () => {
