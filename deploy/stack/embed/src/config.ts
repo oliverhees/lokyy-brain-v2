@@ -6,7 +6,28 @@ import { isAbsolute } from 'node:path';
 // Lowercase words joined by single dashes, at most 63 characters. Names starting with "sha256-" are
 // refused: EMBED_TOKEN_SHA256_X would be both vault "sha256-x"'s plain token and vault "x"'s hash.
 const VAULT_RE = /^(?!sha256-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
-const MIN_DISTINCT_TOKEN_CHARS = 16;
+
+/**
+ * Plain tokens must look randomly generated (LBV2-36; the previous "≥ 16 distinct characters" rule
+ * refused ~25 % of `openssl rand -hex 32` tokens, which only have 16 possible characters):
+ * - 32–512 printable ASCII characters without spaces;
+ * - hex-only tokens: at least 64 characters and 8 distinct ones (`openssl rand -hex 32`);
+ *   any other alphabet: at least 12 distinct characters (e.g. 32 random alphanumerics);
+ * - no single character makes up more than a third of the token, and the token is not a
+ *   repetition of a shorter string.
+ */
+export function isStrongPlainToken(t: string): boolean {
+  if (!/^[\x21-\x7e]{32,512}$/.test(t)) return false;
+  const counts = new Map<string, number>();
+  for (const c of t) counts.set(c, (counts.get(c) ?? 0) + 1);
+  const hex = /^[0-9a-fA-F]+$/.test(t);
+  if (hex ? t.length < 64 || counts.size < 8 : counts.size < 12) return false;
+  if (Math.max(...counts.values()) > t.length / 3) return false;
+  for (let p = 1; p <= t.length / 2; p++) {
+    if (t.length % p === 0 && t.slice(0, p).repeat(t.length / p) === t) return false;
+  }
+  return true;
+}
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
 const envSuffix = (vault: string) => vault.toUpperCase().replaceAll('-', '_');
@@ -43,8 +64,8 @@ export function parseTokenConfig(vaultsCsv: string, env: Record<string, string |
     if (hashed && plain) throw new Error(`both ${plainName} and ${hashName} are set; set only one`);
     let hash: string;
     if (plain) {
-      if (!/^[\x21-\x7e]{32,512}$/.test(plain) || new Set(plain).size < MIN_DISTINCT_TOKEN_CHARS) {
-        throw new Error(`${plainName} must be 32–512 printable characters without spaces and at least ${MIN_DISTINCT_TOKEN_CHARS} distinct characters (e.g. openssl rand -hex 32)`);
+      if (!isStrongPlainToken(plain)) {
+        throw new Error(`${plainName} must be a random token: 64+ hex characters (openssl rand -hex 32) or 32–512 random printable characters without spaces (e.g. 32+ random letters and digits)`);
       }
       hash = createHash('sha256').update(plain, 'utf8').digest('hex');
     } else {

@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomBytes, randomInt } from 'node:crypto';
 import { parseTokenConfig, parseSourceConfig, plainTokenVars, inNetworks, configureTransformersEnv } from '../src/config.ts';
 
 const H1 = '1'.repeat(64);
 const H2 = 'ab'.repeat(32);
-// Strong-enough plain tokens (≥ 16 distinct characters)
-const P1 = '0123456789abcdefghij'.repeat(2);
-const P2 = 'klmnopqrstuvwxyzABCD'.repeat(2);
+// Strong-enough plain tokens (random-looking, mixed alphabet, not periodic)
+const P1 = 'q7Rf2kLm9XzT4vBn8WcY1pHs6JdG3aEu';
+const P2 = 'M5tZr8QwK2nVb7XyL4cJp9HdF6gS3eUa';
 
 test('token hashes are read per vault from EMBED_TOKEN_SHA256_<VAULT>', () => {
   const m = parseTokenConfig('anna, ben,my-firma', {
@@ -113,10 +114,41 @@ test('any env-name collision between vaults is a startup error', () => {
   assert.throws(() => parseTokenConfig('v01,v01-', { EMBED_TOKEN_SHA256_V01: H1 }), /vault name|collid/);
 });
 
-test('trivial plain tokens (fewer than 16 distinct characters) are refused', () => {
-  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: 'a'.repeat(32) }), /EMBED_TOKEN_V01 must/);
-  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: 'abababababababababababababababab' }), /EMBED_TOKEN_V01 must/);
-  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: '0123456789abcde'.repeat(3) }), /EMBED_TOKEN_V01 must/);
-  const hex = '0123456789abcdef'.repeat(2) + 'f00dbabe';
-  assert.equal(parseTokenConfig('v01', { EMBED_TOKEN_V01: hex }).size, 1);
+test('trivial plain tokens are refused (repeated chars, periodic patterns, few distinct characters)', () => {
+  const refused = [
+    'a'.repeat(32),
+    'ab'.repeat(16),
+    '0123456789abcdef'.repeat(4),            // 64 hex chars, but periodic
+    '0123456789abcde'.repeat(3),             // non-hex length 45? all hex, too short for hex
+    'a'.repeat(30) + '0123456789bcdef'.repeat(2) + 'abcd', // 64 hex chars, one character dominates
+    'abcdefg1'.repeat(8),                    // periodic
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1234', // dominated
+    `${'0123456789abcdef'.repeat(2)}`,       // 32 hex chars: hex needs 64
+    'xyzXYZxyzXYZxyzXYZxyzXYZxyzXYZxy',      // few distinct, periodic
+  ];
+  for (const t of refused) {
+    assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: t }), /EMBED_TOKEN_V01 must/, t);
+  }
+});
+
+test('LBV2-36: 10 000 tokens from `openssl rand -hex 32` (64 hex chars) are all accepted', () => {
+  for (let i = 0; i < 10_000; i++) {
+    const t = randomBytes(32).toString('hex');
+    assert.equal(parseTokenConfig('v01', { EMBED_TOKEN_V01: t }).size, 1, t);
+  }
+});
+
+test('LBV2-36: 10 000 random 32-character alphanumeric tokens (e.g. Coolify generated passwords) are all accepted', () => {
+  const abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (let i = 0; i < 10_000; i++) {
+    let t = '';
+    for (let k = 0; k < 32; k++) t += abc[randomInt(abc.length)];
+    assert.equal(parseTokenConfig('v01', { EMBED_TOKEN_V01: t }).size, 1, t);
+  }
+});
+
+test('LBV2-36: the SHA-256 variant is unaffected by the plain-token rule', () => {
+  // A hash is 64 hex chars with arbitrary content; it is never checked for entropy
+  assert.equal(parseTokenConfig('v01', { EMBED_TOKEN_SHA256_V01: '0'.repeat(64) }).get('v01'), '0'.repeat(64));
+  assert.equal(parseTokenConfig('v01', { EMBED_TOKEN_SHA256_V01: H2.toUpperCase() }).get('v01'), H2);
 });
