@@ -13,13 +13,13 @@ const CONFIG = { provider: 'openai', model: 'gpt-4o', apiKey: '********', hasApi
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-function mockServer(): Array<{ url: string; method: string; body: Record<string, unknown> | null }> {
+function mockServer(config: Record<string, unknown> = CONFIG): Array<{ url: string; method: string; body: Record<string, unknown> | null }> {
   const calls: Array<{ url: string; method: string; body: Record<string, unknown> | null }> = [];
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
     calls.push({ url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null });
     if (url.endsWith('/api/health')) return json({ ok: true, features: {} });
-    if (url.endsWith('/api/config') && (init?.method ?? 'GET') === 'GET') return json(CONFIG);
+    if (url.endsWith('/api/config') && (init?.method ?? 'GET') === 'GET') return json(config);
     if (url.endsWith('/api/config') && init?.method === 'PUT') return json({ ok: true });
     if (url.endsWith('/api/config/eurouter/rules')) return json({ rules: [{ id: RULE, name: 'EU only', model: 'mistral/mistral-large' }] });
     if (url.endsWith('/api/config/test')) return json({ ok: true });
@@ -92,6 +92,32 @@ describe('SetupWizard EUrouter route (LBV2-30)', () => {
       modelInput.dispatchEvent(new Event('input', { bubbles: true }));
     });
     expect(button('Test & Save').disabled).toBe(true);
+  });
+
+  it('clears a model from another provider when switching to EUrouter and prefills the route default', async () => {
+    const calls = mockServer({ provider: 'openai', model: 'gpt-4o-mini', apiKey: '********', hasApiKey: true, baseUrl: '', autoSave: true, mergeSaves: false });
+    await act(async () => { root.render(<SetupWizard mode="settings" />); });
+    await flush();
+    await act(async () => { button('EUrouter').click(); });
+    await flush();
+    const modelInput = () => [...container.querySelectorAll('input')].find((i) => i.type === 'text')!;
+    expect(modelInput().value).toBe('');
+    expect(button('Test & Save').disabled).toBe(true);
+    // The masked OpenAI key is not valid for EUrouter: no route list until a key is entered.
+    expect(calls.some((c) => c.url.endsWith('/api/config/eurouter/rules'))).toBe(false);
+    const keyInput = [...container.querySelectorAll('input')].find((i) => i.type === 'password')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(keyInput, 'eur_new');
+      keyInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+    const select = container.querySelector('[data-testid="eurouter-route-select"]') as HTMLSelectElement;
+    await act(async () => {
+      select.value = RULE;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(modelInput().value).toBe('mistral/mistral-large');
+    expect(button('Test & Save').disabled).toBe(false);
   });
 
   it('does not show the route picker for other providers and clears the route there', async () => {

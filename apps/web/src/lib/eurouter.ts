@@ -10,9 +10,16 @@ export interface EurouterRule {
   model: string | null;
 }
 
+/** Model chip / status bar text: the model, else a configured route, else "unconfigured". */
+export function modelChipLabel(model: string, ruleId: string | undefined): string {
+  if (model) return model;
+  return ruleId ? 'EUrouter route' : 'unconfigured';
+}
+
 export function isEurouterUrl(url: string): boolean {
   try {
-    return new URL(url).hostname.toLowerCase() === 'api.eurouter.ai';
+    const u = new URL(url);
+    return u.protocol === 'https:' && u.hostname.toLowerCase() === 'api.eurouter.ai';
   } catch {
     return false;
   }

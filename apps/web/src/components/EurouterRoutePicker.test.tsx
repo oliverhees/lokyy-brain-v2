@@ -72,13 +72,19 @@ describe('EurouterRoutePicker', () => {
       select.value = RULE;
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    expect(onChange).toHaveBeenCalledWith(RULE);
+    expect(onChange).toHaveBeenCalledWith(RULE, RULES[0]);
   });
 
   it('explains which model the selected route uses', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ rules: RULES })));
     await render({ apiKey: 'eur_k', value: RULE });
     expect(q('eurouter-route-help')?.textContent).toContain('mistral/mistral-large');
+  });
+
+  it('says the key is invalid when the server reports it', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ error: 'Key invalid or not authorised' }, 400)));
+    await render({ apiKey: 'eur_wrong' });
+    expect(q('eurouter-routes-error')?.textContent).toContain('Key invalid or not authorised');
   });
 
   it('shows an empty state when the key has no routes', async () => {

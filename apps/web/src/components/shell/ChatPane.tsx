@@ -9,6 +9,7 @@ import { ChatEmptyState } from './ChatEmptyState';
 import { LiveEditIndicator } from './LiveEditIndicator';
 import { OpRun } from '../ops/OpRun';
 import type { OpName } from '../ops/ops-types';
+import { modelChipLabel } from '../../lib/eurouter';
 
 interface ChatPaneProps {
   chatTitle: string;
@@ -30,6 +31,7 @@ export function ChatPane({
   const focusMode = useShellState((s) => s.focusMode);
   const { messages } = useChat();
   const model = useSettings((s) => s.model);
+  const ruleId = useSettings((s) => s.ruleId);
   const [draft, setDraft] = useState('');
   const [activeOp, setActiveOp] = useState<{ op: OpName; text: string; runId: number } | null>(null);
   const sendFnRef = useRef<((text: string) => Promise<void>) | null>(null);
@@ -154,7 +156,7 @@ export function ChatPane({
         value={draft}
         onChange={setDraft}
         onSend={handleSend}
-        modelName={model}
+        modelName={modelChipLabel(model, ruleId)}
         onRunOp={runOp}
         onSlashCommand={() => setDraft('/')}
       />

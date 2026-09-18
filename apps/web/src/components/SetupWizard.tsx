@@ -215,7 +215,8 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
     if (id === 'ollama' && !localModelsEnabled) return;
     const provider = PROVIDERS.find((p) => p.id === id)!;
     setSelectedId(id);
-    setModel(provider.defaults.model || model);
+    // EUrouter needs one of its own model ids: never carry over another provider's model.
+    setModel(provider.defaults.model || (id === 'eurouter' && id !== selectedId ? '' : model));
     setBaseUrl(provider.defaults.baseUrl || (id === 'custom' ? baseUrl : ''));
     if (id !== selectedId) setRuleId('');
     if (!provider.needsApiKey) setApiKey('');
@@ -581,7 +582,8 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
                 </div>
               )}
               {usesEurouter && (
-                <EurouterRoutePicker provider={selected.configProvider} baseUrl={baseUrl} apiKey={apiKey} value={ruleId} onChange={setRuleId} />
+                <EurouterRoutePicker provider={selected.configProvider} baseUrl={baseUrl} apiKey={apiKey} value={ruleId}
+                  onChange={(id, rule) => { setRuleId(id); if (rule?.model) setModel(rule.model); }} />
               )}
               <div>
                 <div className="text-[10.5px] tracking-[1px] uppercase font-semibold mb-1.5" style={{ color: 'var(--text-mid)' }}>Model</div>

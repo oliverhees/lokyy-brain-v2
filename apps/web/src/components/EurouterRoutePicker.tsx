@@ -9,7 +9,8 @@ interface Props {
   apiKey: string;
   /** Selected rule id ('' = no route). */
   value: string;
-  onChange: (ruleId: string) => void;
+  /** The rule is passed along when it is in the loaded list (e.g. to prefill its default model). */
+  onChange: (ruleId: string, rule: EurouterRule | undefined) => void;
 }
 
 type LoadState =
@@ -88,7 +89,7 @@ export function EurouterRoutePicker({ provider, baseUrl, apiKey, value, onChange
           data-testid="eurouter-route-select"
           value={value}
           aria-describedby={helpId}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(e.target.value, state.rules.find((r) => r.id === e.target.value))}
           className="w-full rounded-[10px] px-3.5 py-3 text-[13px] outline-none glass-card transition-colors"
           style={{ color: 'var(--text-default)', background: 'var(--surface-1)' }}
         >

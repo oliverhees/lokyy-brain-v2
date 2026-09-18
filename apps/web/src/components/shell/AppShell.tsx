@@ -11,6 +11,7 @@ import { ChatPane } from './ChatPane';
 import { Canvas, type CanvasCallbacks } from './Canvas';
 import { StatusBar } from './StatusBar';
 import { apiGet } from '../../lib/api';
+import { modelChipLabel } from '../../lib/eurouter';
 import { OnboardingWizard } from '../onboarding/OnboardingWizard';
 
 const APP_VERSION = 'v0.4.2';
@@ -167,7 +168,7 @@ export function AppShell({ callbacks, chatTitle, onOpenSearch }: AppShellProps) 
         <StatusBar
           notesCount={counts.notes}
           wikiCount={counts.wiki}
-          modelName={settings.model || 'unconfigured'}
+          modelName={modelChipLabel(settings.model, settings.ruleId)}
           appVersion={APP_VERSION}
           lastSyncLabel={null}
           onModelClick={() => navigate({ kind: 'settings' })}
