@@ -26,6 +26,8 @@ export interface SlotUser {
   /** State of the MetaMCP account for this user (servers, endpoint, API key) */
   provisioning: ProvisioningStatus;
   invitedAt: string;
+  /** First portal visit (the user has set a password); null while invited */
+  activatedAt?: string | null;
   updatedAt: string;
 }
 
@@ -53,6 +55,14 @@ export interface SmtpSettings {
   updatedAt: string;
 }
 
+export interface ProvisioningRun {
+  at: string;
+  status: 'ok' | 'failed';
+  error?: string;
+  /** MetaMCP should be restarted to end sessions with outdated upstream credentials */
+  restartMetamcp: boolean;
+}
+
 export interface PortalState {
   version: 1;
   company: { name: string } | null;
@@ -61,14 +71,17 @@ export interface PortalState {
   smtp: SmtpSettings | null;
   users: SlotUser[];
   retired: RetiredSlot[];
+  lastProvisioning: ProvisioningRun | null;
 }
 
 export interface PortalSecrets {
   smtpPassword?: string;
+  /** HMAC key for CSRF tokens; generated on first start */
+  csrfSecret?: string;
 }
 
 export function emptyState(): PortalState {
-  return { version: 1, company: null, setupCompletedAt: null, llm: null, smtp: null, users: [], retired: [] };
+  return { version: 1, company: null, setupCompletedAt: null, llm: null, smtp: null, users: [], retired: [], lastProvisioning: null };
 }
 
 async function writeAtomic(file: string, content: string): Promise<void> {
