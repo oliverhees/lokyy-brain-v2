@@ -10,7 +10,13 @@
 # branch); otherwise it is skipped. users.json is written by this script either way.
 #
 # Usage: deploy/coolify/tests/smoke/smoke.sh [--down]
-#   --down  remove containers, networks and volumes of lokyy-pkg at the end
+#   --down  remove containers, networks and volumes of the project at the end
+# Environment (defaults in brackets; run several instances side by side with different values):
+#   SMOKE_PROJECT [lokyy-pkg]   compose project      SMOKE_PORT [18280]  host port of the stand-in proxy
+#   SMOKE_NET [10.233]          LOKYY_NET_PREFIX      SMOKE_COOLIFY_NET [10.235.250]  stand-in coolify /28
+#   SMOKE_WORKDIR [mktemp]      env file (coolify.env, all magic variables), logs, cookie jars, and
+#                               admin-totp (the admin's TOTP secret, base32, written on the first admin login)
+#   SMOKE_SKIP_PORTAL=1         build without starting the portal
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 coolify=$(cd "$here/../.." && pwd)
@@ -18,8 +24,10 @@ stack=$(cd "$coolify/../stack" && pwd)
 work=${SMOKE_WORKDIR:-$(mktemp -d)}
 env_file=$work/coolify.env
 DOMAIN=pkg.localhost
-PORT=18280
-PROJECT=lokyy-pkg
+PORT=${SMOKE_PORT:-18280}
+PROJECT=${SMOKE_PROJECT:-lokyy-pkg}
+NETP=${SMOKE_NET:-10.233}
+export SMOKE_PROJECT=$PROJECT SMOKE_PORT=$PORT SMOKE_COOLIFY_NET=${SMOKE_COOLIFY_NET:-10.235.250}
 
 pass=0 fail=0
 ok()  { echo "PASS $1"; pass=$((pass + 1)); }
@@ -32,7 +40,7 @@ magic_value() { case $1 in SERVICE_PASSWORD_64_*) openssl rand -base64 192 | tr 
 if [[ ! -f $env_file ]]; then
   (umask 077
    { grep -oE 'SERVICE_[A-Z0-9_]+' "$coolify/compose-m.yml" | sort -u | while read -r v; do printf '%s=%s\n' "$v" "$(magic_value "$v")"; done
-     printf 'BASE_DOMAIN=%s\nADMIN_EMAIL=ops@example.com\nLOKYY_NET_PREFIX=10.233\n' "$DOMAIN"; } >"$env_file")
+     printf 'BASE_DOMAIN=%s\nADMIN_EMAIL=ops@example.com\nLOKYY_NET_PREFIX=%s\n' "$DOMAIN" "$NETP"; } >"$env_file")
 fi
 envv() { sed -n "s/^$1=//p" "$env_file"; }
 
@@ -247,17 +255,17 @@ isolation_checks() { # isolation_checks <pkg> <last-slot>
   expect "anon → v02 with v02's real proxy secret" "$(code -H "X-Vault-Proxy-Secret: $(envv SERVICE_HEX_64_PROXYV02)" "$(U v02)/api/config")" "302"
 
   echo "== [$pkg] networks"
-  for target in "http://vault-v02:4321" "http://vault-$last:4321" "http://authentik-server:9000" "http://metamcp:12008" "http://metamcp-db:5432" "http://vault-connector:4322" "http://10.233.0.62:4322"; do
+  for target in "http://vault-v02:4321" "http://vault-$last:4321" "http://authentik-server:9000" "http://metamcp:12008" "http://metamcp-db:5432" "http://vault-connector:4322" "http://${NETP}.0.62:4322"; do
     expect "vault-v01 → $target" "$(from "$pkg" vault-v01 "$target")" "blocked"
   done
   expect "vault-$last → http://vault-v01:4321" "$(from "$pkg" "vault-$last" http://vault-v01:4321)" "blocked"
   local nets
   nets=$(docker inspect "$(dc "$pkg" ps -q vault-v01)" -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed '/^$/d' | sort | xargs)
   expect "vault-v01 networks" "$nets" "${PROJECT}_egress ${PROJECT}_embed-v01 ${PROJECT}_mcp-v01 ${PROJECT}_web-v01"
-  expect "vault-v01 → its embed service (10.233.3.46)" "$(from "$pkg" vault-v01 http://10.233.3.46:8080/healthz)" "OPEN"
-  expect "vault-v01 → embed via v02's network (10.233.4.46)" "$(from "$pkg" vault-v01 http://10.233.4.46:8080/healthz)" "blocked"
-  expect "vault-v01 → embed with v02's token" "$(dc "$pkg" exec -T vault-v01 node -e "fetch('http://10.233.3.46:8080/embed',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+process.argv[1]},body:JSON.stringify({texts:['x']}),signal:AbortSignal.timeout(20000)}).then(r=>console.log(r.status),()=>console.log('blocked'))" "$(envv SERVICE_PASSWORD_64_EMBV02)" 2>/dev/null)" "401"
-  expect "vault-v01 → embed with its own token" "$(dc "$pkg" exec -T vault-v01 sh -c 'node -e "fetch(\"http://10.233.3.46:8080/embed\",{method:\"POST\",headers:{\"content-type\":\"application/json\",authorization:\"Bearer \"+process.env.MINDBASE_EMBED_TOKEN},body:JSON.stringify({texts:[\"lokyy\"]}),signal:AbortSignal.timeout(60000)}).then(r=>console.log(r.status),()=>console.log(\"blocked\"))"' 2>/dev/null)" "200"
+  expect "vault-v01 → its embed service (${NETP}.3.46)" "$(from "$pkg" vault-v01 http://${NETP}.3.46:8080/healthz)" "OPEN"
+  expect "vault-v01 → embed via v02's network (${NETP}.4.46)" "$(from "$pkg" vault-v01 http://${NETP}.4.46:8080/healthz)" "blocked"
+  expect "vault-v01 → embed with v02's token" "$(dc "$pkg" exec -T vault-v01 node -e "fetch('http://${NETP}.3.46:8080/embed',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+process.argv[1]},body:JSON.stringify({texts:['x']}),signal:AbortSignal.timeout(20000)}).then(r=>console.log(r.status),()=>console.log('blocked'))" "$(envv SERVICE_PASSWORD_64_EMBV02)" 2>/dev/null)" "401"
+  expect "vault-v01 → embed with its own token" "$(dc "$pkg" exec -T vault-v01 sh -c 'node -e "fetch(\"http://${NETP}.3.46:8080/embed\",{method:\"POST\",headers:{\"content-type\":\"application/json\",authorization:\"Bearer \"+process.env.MINDBASE_EMBED_TOKEN},body:JSON.stringify({texts:[\"lokyy\"]}),signal:AbortSignal.timeout(60000)}).then(r=>console.log(r.status),()=>console.log(\"blocked\"))"' 2>/dev/null)" "200"
   expect "published host ports (only the stand-in proxy)" \
     "$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Ports}}' | grep -c -- '->' )" "1"
 
@@ -265,7 +273,7 @@ isolation_checks() { # isolation_checks <pkg> <last-slot>
     echo "== [$pkg] portal (app.) and its vault config entrypoint"
     expect "admin → portal /api/session" "$(access "$jars/admin" "$(U app)/api/session")" "DATA"
     expect "ulla (lokyy-users) → portal /api/session" "$(access "$jars/ulla" "$(U app)/api/session")" "DATA"
-    local P=10.233.0.93:8090
+    local P=${NETP}.0.93:8090
     expect "portal → GET /v01/api/config" "$(pfetch "$pkg" portal GET "http://$P/v01/api/config")" "200"
     expect "portal → GET /firma/api/config" "$(pfetch "$pkg" portal GET "http://$P/firma/api/config")" "200"
     expect "portal → DELETE /v01/api/config" "$(pfetch "$pkg" portal DELETE "http://$P/v01/api/config")" "404|405"
