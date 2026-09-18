@@ -14,7 +14,7 @@ const OPENAI = { provider: 'openai', model: 'gpt-4o-mini', apiKey: '********', h
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-function mockServer(config: Record<string, unknown> = CONFIG): Array<{ url: string; method: string; body: Record<string, unknown> | null }> {
+function mockServer(config: Record<string, unknown> = CONFIG, testBody: Record<string, unknown> = { ok: true }): Array<{ url: string; method: string; body: Record<string, unknown> | null }> {
   const calls: Array<{ url: string; method: string; body: Record<string, unknown> | null }> = [];
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
@@ -25,7 +25,7 @@ function mockServer(config: Record<string, unknown> = CONFIG): Array<{ url: stri
     if (url.endsWith('/api/config/eurouter/rules')) {
       return json({ rules: [{ id: RULE, name: 'EU only', model: 'glm-5.2' }, { id: '11111111-2222-4333-8444-555555555555', name: 'EU Compliance', model: null }] });
     }
-    if (url.endsWith('/api/config/test')) return json({ ok: true });
+    if (url.endsWith('/api/config/test')) return json(testBody);
     return json({ error: 'Not found' }, 404);
   }));
   return calls;
@@ -92,6 +92,38 @@ describe('SetupWizard EUrouter route only (LBV2-30)', () => {
     expect(test?.body).toMatchObject({ provider: 'openai', baseUrl: EU, model: '', ruleId: '11111111-2222-4333-8444-555555555555' });
     const put = calls.find((c) => c.method === 'PUT');
     expect(put?.body).toMatchObject({ baseUrl: EU, model: '', ruleId: '11111111-2222-4333-8444-555555555555', ruleName: 'EU Compliance' });
+  });
+
+  it('LBV2-32: a route without tool calls shows the warning and saves only on "Save anyway"', async () => {
+    const warning = "Connected, but the selected route's model doesn't support tool calls needed for ingest.";
+    const onComplete = vi.fn();
+    const calls = mockServer(CONFIG, { ok: true, warning });
+    await act(async () => { root.render(<SetupWizard mode="settings" onComplete={onComplete} />); });
+    await flush();
+    await act(async () => { button('EUrouter').click(); });
+    await flush();
+    await act(async () => { button('Test & Save').click(); });
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(warning);
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+    expect(onComplete).not.toHaveBeenCalled();
+    await act(async () => { button('Save anyway').click(); });
+    await flush();
+    expect(calls.find((c) => c.method === 'PUT')?.body).toMatchObject({ ruleId: RULE });
+    expect(onComplete).toHaveBeenCalled();
+  });
+
+  it('LBV2-32: onboarding shows the tool-call warning on the result step', async () => {
+    const warning = "Connected, but the selected route's model doesn't support tool calls needed for ingest.";
+    mockServer(CONFIG, { ok: true, warning });
+    await act(async () => { root.render(<SetupWizard mode="onboarding" />); });
+    await flush();
+    await act(async () => { button('EUrouter').click(); });
+    await flush();
+    await act(async () => { button('Test & Continue').click(); });
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(warning);
+    expect(container.textContent).not.toContain('ready to compile');
   });
 
   it('needs a route: Test & Save stays disabled without one', async () => {

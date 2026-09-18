@@ -92,7 +92,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
   const [autoSave, setAutoSave] = useState(settings.autoSave ?? true);
   const [mergeSaves, setMergeSaves] = useState(settings.mergeSaves ?? false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string; warning?: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   // --- Free·Local (Ollama) guided flow ---
@@ -235,7 +235,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
     setTesting(true);
     setTestResult(null);
     try {
-      const r = await apiPost<{ ok: boolean; error?: string }>('/config/test', {
+      const r = await apiPost<{ ok: boolean; error?: string; warning?: string }>('/config/test', {
         provider: selected.configProvider,
         model: effectiveModel,
         apiKey,
@@ -245,6 +245,8 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
       setTestResult(r);
       if (r.ok) {
         if (mode === 'settings') {
+          // Connected but unusable for ingest (LBV2-32): let the user read the warning first.
+          if (r.warning) return;
           // Save immediately and close — result step not needed in settings mode
           await saveAndFinish();
         } else {
@@ -619,6 +621,16 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
                 {testResult.error}
               </div>
             )}
+            {testResult?.ok && testResult.warning && mode === 'settings' && (
+              <div className="mt-4 flex flex-col items-center gap-2">
+                <div role="alert" className="text-[11px] px-3 py-2 rounded-md text-center" style={{ background: 'var(--error-bg)', color: 'var(--error)' }}>
+                  {testResult.warning}
+                </div>
+                <button onClick={saveAndFinish} disabled={saving}
+                  className="text-[11px] underline disabled:opacity-40"
+                  style={{ color: 'var(--text-low)' }}>{saving ? 'Saving…' : 'Save anyway'}</button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -649,8 +661,13 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
               Your second brain<br /><span className="accent-italic">is online.</span>
             </div>
             <div className="text-[13px] mb-8" style={{ color: 'var(--text-mid)' }}>
-              {selected.label} · {usesEurouter ? (ruleName || 'route') : model} · ready to compile.
+              {selected.label} · {usesEurouter ? (ruleName || 'route') : model}{testResult.warning ? '' : ' · ready to compile.'}
             </div>
+            {testResult.warning && (
+              <div role="alert" className="text-[12px] px-3 py-2 rounded-md mb-6 max-w-[420px]" style={{ background: 'var(--error-bg)', color: 'var(--error)' }}>
+                {testResult.warning}
+              </div>
+            )}
             <button
               onClick={saveAndFinish}
               disabled={saving}

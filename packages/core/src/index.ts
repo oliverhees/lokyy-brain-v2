@@ -66,6 +66,8 @@ export { createAdapter } from './adapters/registry';
 export type { LLMAdapter, AdapterConfig } from './adapters/types';
 export { EurouterHttpError, EUROUTER_HOST, EUROUTER_RULE_NOT_FOUND, EUROUTER_KEY_INVALID, EUROUTER_ROUTE_REQUIRED, EUROUTER_ROUTE_UNAVAILABLE, eurouterChatError, isEurouterBaseUrl, isEurouterRuleId, eurouterRulesUrl, listEurouterRules } from './adapters/eurouter';
 export type { EurouterRule } from './adapters/eurouter';
+export { probeToolCalling, TOOL_PROBE_TOOL, ROUTE_NO_TOOLS_WARNING } from './adapters/tool-probe';
+export type { ToolProbeResult } from './adapters/tool-probe';
 export { readLlmTimeoutMs, DEFAULT_LLM_TIMEOUT_MS, LLM_TIMEOUT_ERROR } from './adapters/timeout';
 export { SearchIndex } from './search/index';
 export type { SearchDoc, SearchResult } from './search/index';
