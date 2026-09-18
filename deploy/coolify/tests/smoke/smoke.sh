@@ -249,7 +249,11 @@ isolation_checks() { # isolation_checks <pkg> <last-slot>
   expect "vault-$last → http://vault-v01:4321" "$(from "$pkg" "vault-$last" http://vault-v01:4321)" "blocked"
   local nets
   nets=$(docker inspect "$(dc "$pkg" ps -q vault-v01)" -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed '/^$/d' | sort | xargs)
-  expect "vault-v01 networks" "$nets" "${PROJECT}_egress ${PROJECT}_mcp-v01 ${PROJECT}_web-v01"
+  expect "vault-v01 networks" "$nets" "${PROJECT}_egress ${PROJECT}_embed-v01 ${PROJECT}_mcp-v01 ${PROJECT}_web-v01"
+  expect "vault-v01 → its embed service (10.233.3.46)" "$(from "$pkg" vault-v01 http://10.233.3.46:8080/healthz)" "OPEN"
+  expect "vault-v01 → embed via v02's network (10.233.4.46)" "$(from "$pkg" vault-v01 http://10.233.4.46:8080/healthz)" "blocked"
+  expect "vault-v01 → embed with v02's token" "$(dc "$pkg" exec -T vault-v01 node -e "fetch('http://10.233.3.46:8080/embed',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+process.argv[1]},body:JSON.stringify({texts:['x']}),signal:AbortSignal.timeout(20000)}).then(r=>console.log(r.status),()=>console.log('blocked'))" "$(envv SERVICE_PASSWORD_64_EMBV02)" 2>/dev/null)" "401"
+  expect "vault-v01 → embed with its own token" "$(dc "$pkg" exec -T vault-v01 sh -c 'node -e "fetch(\"http://10.233.3.46:8080/embed\",{method:\"POST\",headers:{\"content-type\":\"application/json\",authorization:\"Bearer \"+process.env.MINDBASE_EMBED_TOKEN},body:JSON.stringify({texts:[\"lokyy\"]}),signal:AbortSignal.timeout(60000)}).then(r=>console.log(r.status),()=>console.log(\"blocked\"))"' 2>/dev/null)" "200"
   expect "published host ports (only the stand-in proxy)" \
     "$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Ports}}' | grep -c -- '->' )" "1"
 
