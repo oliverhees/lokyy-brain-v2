@@ -218,3 +218,12 @@ describe('EUrouter routing rules (LBV2-30)', () => {
     });
   });
 });
+
+describe('ops readiness with a route and no model (LBV2-30)', () => {
+  it('counts a route without a model as configured', async () => {
+    const { llmUnconfigured } = await import('../ops.js');
+    expect(llmUnconfigured({ ...BASE, model: '', ruleId: RULE })).toBe(false);
+    expect(llmUnconfigured({ ...BASE, model: '' })).toBe(true);
+    expect(llmUnconfigured({ ...BASE })).toBe(false);
+  });
+});

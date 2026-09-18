@@ -167,7 +167,7 @@ export function AppShell({ callbacks, chatTitle, onOpenSearch }: AppShellProps) 
         <StatusBar
           notesCount={counts.notes}
           wikiCount={counts.wiki}
-          modelName={settings.model || 'unconfigured'}
+          modelName={settings.model || (settings.ruleId ? 'EUrouter route' : 'unconfigured')}
           appVersion={APP_VERSION}
           lastSyncLabel={null}
           onModelClick={() => navigate({ kind: 'settings' })}

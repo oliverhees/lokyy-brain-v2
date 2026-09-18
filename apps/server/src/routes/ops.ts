@@ -4,6 +4,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import type { ServerContext } from '../context';
+import type { AtlasConfig } from '../config';
 import { projectRoot as makeProjectRoot, detectLayoutVersion } from '../context';
 import {
   runContributePlan, applyContributePlan, runBuild, runLint, runResearch,
@@ -27,12 +28,13 @@ function sse(ctx: ServerContext, res: Response): (e: OpEvent) => void {
   };
 }
 
-function unconfigured(ctx: ServerContext): boolean {
-  return !ctx.config.model || (!ctx.config.apiKey && !ctx.config.baseUrl && ctx.config.provider !== 'ollama');
+/** No model and no EUrouter route (a route may pick the model, LBV2-30), or no endpoint. */
+export function llmUnconfigured(config: AtlasConfig): boolean {
+  return (!config.model && !config.ruleId) || (!config.apiKey && !config.baseUrl && config.provider !== 'ollama');
 }
 
 async function opsCtx(ctx: ServerContext, req: Request): Promise<OpsCtx | { error: string }> {
-  if (unconfigured(ctx)) {
+  if (llmUnconfigured(ctx.config)) {
     return { error: 'Configure an LLM in Settings first (or pick the free local model).' };
   }
   const projectId = ctx.currentProjectId;
