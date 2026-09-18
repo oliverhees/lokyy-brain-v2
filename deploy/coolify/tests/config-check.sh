@@ -12,7 +12,7 @@ trap 'rm -rf "$tmp"' EXIT
 fail=0
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
 
-node --test "$dir/tests/generate.test.ts" >"$tmp/unit.log" 2>&1 && echo "ok   generator unit tests" || { cat "$tmp/unit.log"; echo "FAIL generator unit tests"; fail=1; }
+node --test "$dir"/tests/*.test.ts >"$tmp/unit.log" 2>&1 && echo "ok   unit tests (generator, entrypoints, watcher)" || { cat "$tmp/unit.log"; echo "FAIL generator unit tests"; fail=1; }
 node --test "$dir/../stack/tests/blueprint-check.test.ts" >"$tmp/bp.log" 2>&1 && echo "ok   blueprint checker tests (YAML parse, fixtures, shipped blueprints)" || { cat "$tmp/bp.log"; echo "FAIL blueprint checker tests"; fail=1; }
 check "blueprint-check passes every shipped blueprint" '"$dir/../stack/tests/blueprint-check.sh" "$dir"/authentik/blueprints/*.yaml "$dir"/../stack/authentik/blueprints/*.yaml >/dev/null 2>&1'
 check "generator --check reports no stale file" 'node "$dir/generate.ts" --check'
@@ -54,7 +54,7 @@ for pkg in s m; do
     [[ $(q "[.services | to_entries[] | select(.value.networks | has(\"web-$v\")) | .key] | sort | join(\",\")") == "lokyy-traefik,vault-$v" ]] || { echo "FAIL $pkg: web-$v members"; fail=1; }
     [[ $(q "[.services | to_entries[] | select(.value.networks | has(\"mcp-$v\")) | .key] | sort | join(\",\")") == "vault-connector,vault-$v" ]] || { echo "FAIL $pkg: mcp-$v members"; fail=1; }
     [[ $(q ".networks[\"web-$v\"].internal and .networks[\"mcp-$v\"].internal") == true ]] || { echo "FAIL $pkg: $v networks not internal"; fail=1; }
-    host="traefik.http.routers.lokyy-$v.rule"
+    host="traefik.http.routers.lokyy-local-$v.rule"
     [[ $(q ".services[\"lokyy-traefik\"].labels[\"$host\"]") == "Host(\`$v.beta.example.test\`)" ]] || { echo "FAIL $pkg: coolify-proxy router for $v"; fail=1; }
   done
   expected=$([[ $pkg == s ]] && echo 16 || echo 31)

@@ -15,7 +15,7 @@ const coolifyDir = join(here, '..');
 const pkgs = Object.keys(PACKAGES) as PackageName[];
 
 // Variables a Coolify operator may set; everything secret must be a Coolify magic variable (SERVICE_*).
-const OPERATOR_VARS = new Set(['BASE_DOMAIN', 'ADMIN_EMAIL', 'LOKYY_NET_PREFIX', 'LOKYY_TRUSTED_PROXY_CIDRS', 'VAULT_MEM_LIMIT', 'EMBED_MEM_LIMIT']);
+const OPERATOR_VARS = new Set(['BASE_DOMAIN', 'ADMIN_EMAIL', 'LOKYY_NET_PREFIX', 'LOKYY_TRUSTED_PROXY_CIDRS', 'VAULT_MEM_LIMIT', 'EMBED_MEM_LIMIT', 'COOLIFY_RESOURCE_UUID']);
 const SECRETISH = /(PASS|SECRET|TOKEN|KEY)/i;
 
 const varsIn = (s: string): string[] => [...s.matchAll(/\$\{([A-Z0-9_]+)/g)].map((m) => m[1]);
@@ -130,16 +130,16 @@ for (const pkg of pkgs) {
     assert.equal(c.services['mcp-gate'].environment?.GATE_USERS_FILE, '/etc/lokyy/users.json');
     assert.ok(c.services.portal.volumes?.includes('lokyy-state:/state'));
     const writers = svcs.filter((s) => (c.services[s].volumes ?? []).some((v) => v.startsWith('lokyy-state:') && !v.endsWith(':ro')));
-    assert.deepEqual(writers, ['portal']);
+    assert.deepEqual(writers.sort(), ['lokyy-init', 'portal']);
   });
 
   test(`${pkg}: coolify-proxy labels on lokyy-traefik: one TLS router per public host`, () => {
     const labels = c.services['lokyy-traefik'].labels ?? [];
     const hosts = ['auth', 'mcp', 'app', ...vaultNames(pkg)];
     for (const h of hosts) {
-      assert.ok(labels.includes(`traefik.http.routers.lokyy-${h}.rule=Host(\`${h}.\${BASE_DOMAIN}\`)`), `router for ${h}`);
-      assert.ok(labels.includes(`traefik.http.routers.lokyy-${h}.tls.certresolver=letsencrypt`));
-      assert.ok(labels.includes(`traefik.http.routers.lokyy-${h}.entrypoints=https`));
+      assert.ok(labels.includes(`traefik.http.routers.lokyy-\${COOLIFY_RESOURCE_UUID:-local}-${h}.rule=Host(\`${h}.\${BASE_DOMAIN}\`)`), `router for ${h}`);
+      assert.ok(labels.includes(`traefik.http.routers.lokyy-\${COOLIFY_RESOURCE_UUID:-local}-${h}.tls.certresolver=letsencrypt`));
+      assert.ok(labels.includes(`traefik.http.routers.lokyy-\${COOLIFY_RESOURCE_UUID:-local}-${h}.entrypoints=https`));
     }
     assert.ok(labels.includes('traefik.docker.network=coolify'));
     // only lokyy-traefik carries traefik.* labels: the inner routing lives in its file provider
@@ -167,7 +167,7 @@ for (const pkg of pkgs) {
       assert.ok(d.includes(`middlewares: ["vault-${v}-fwd", "authentik", "vault-identity", "vault-${v}-secret"]`), v);
       assert.ok(d.includes(`X-Forwarded-Host: "${v}.{{ $d }}"`), v);
       assert.ok(d.includes(`X-Vault-Proxy-Secret: "{{ env \`PROXY_SECRET_${v.toUpperCase()}\` }}"`), v);
-      assert.ok(d.includes(`url: "http://vault-${v}:4321"`), v);
+      assert.ok(d.includes(`url: "http://{{ $n }}.${2 + (v === 'firma' ? 0 : Number(v.slice(1)))}.14:4321"`), v);
     }
     assert.ok(d.includes('        maxResponseBodySize: 1048576\n'), 'forwardAuth response body limit');
     // env referenced by the template is provided to the container
@@ -303,4 +303,95 @@ test('blueprint: every invited user (lokyy-users) and operators reach the portal
 test('authentik image bakes the portal blueprint (invitation / set-password flow)', () => {
   const df = readFileSync(join(coolifyDir, 'authentik/Dockerfile'), 'utf8');
   assert.match(df, /COPY [^\n]*apps\/portal\/authentik\/lokyy-portal\.yam\S* \/blueprints\/custom\//);
+});
+
+// ---------------------------------------------------------------- audit round 1 (LBV2-27)
+const P = '${LOKYY_NET_PREFIX:-10.231}';
+const addr = (c: Compose, svc: string, net: string) => (c.services[svc].networks as Record<string, { ipv4_address?: string }>)[net]?.ipv4_address;
+
+test('HIGH-1: lokyy-traefik (on the shared coolify network) reaches every upstream by fixed IP, never by name', () => {
+  for (const pkg of pkgs) {
+    const c = buildCompose(pkg);
+    const d = renderTraefikDynamic(pkg);
+    const urls = [...d.matchAll(/(?:url|address): "([^"]+)"/g)].map((m) => m[1]);
+    assert.ok(urls.length > vaultNames(pkg).length);
+    for (const u of urls) assert.match(u, /^http:\/\/\{\{ \$n \}\}\.\d+\.\d+:\d+(\/|$)/, `upstream by name: ${u}`);
+    assert.ok(d.includes('{{ $n := env `NET_PREFIX` }}'));
+    assert.equal(c.services['lokyy-traefik'].environment?.NET_PREFIX, P);
+    // every IP used in dynamic.yml is a fixed address of the intended service
+    const want: Record<string, string> = {
+      'authentik-server:edge': `${P}.0.10`, 'metamcp:edge': `${P}.0.11`, 'mcp-gate:edge': `${P}.0.12`, 'portal:portal': `${P}.0.94`,
+    };
+    for (const v of vaultNames(pkg)) want[`vault-${v}:web-${v}`] = subnet4(v, 14);
+    for (const [k, ip] of Object.entries(want)) {
+      const [svc, net] = k.split(':');
+      assert.equal(addr(c, svc, net), ip, k);
+      assert.ok(urls.some((u) => u.startsWith(`http://${ip.replace(P, '{{ $n }}')}:`)), `${k} used in dynamic.yml`);
+    }
+    // fixed addresses lie outside the dynamic ip_range of their network
+    for (const n of ['edge', ...vaultNames(pkg).map((v) => `web-${v}`)]) assert.match(String(c.networks[n].ipam?.config[0].ip_range), /\/29$/, n);
+  }
+});
+function subnet4(v: string, host: number): string {
+  const k = v === 'firma' ? 0 : Number(v.slice(1));
+  return `${P}.${2 + k}.${host}`;
+}
+
+test('MED-1: X-Forwarded-* trusted only from the coolify network (detected at start), auth router pinned', () => {
+  for (const pkg of pkgs) {
+    const c = buildCompose(pkg);
+    const t = c.services['lokyy-traefik'];
+    assert.ok(!(t.command ?? []).some((a) => a.includes('trustedIPs')), 'set by the entrypoint from the coolify interface');
+    assert.equal(t.environment?.LOKYY_TRUSTED_PROXY_CIDRS, '${LOKYY_TRUSTED_PROXY_CIDRS:-}');
+    const d = renderTraefikDynamic(pkg);
+    assert.ok(d.includes('    authentik:\n      rule: "Host(`auth.{{ $d }}`)"\n      entryPoints: ["web"]\n      middlewares: ["auth-fwd"]\n'));
+    assert.ok(d.includes('    auth-fwd:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-Host: "auth.{{ $d }}"'));
+  }
+});
+
+test('MED-2: coolify-proxy router, middleware and service names are unique per Coolify resource', () => {
+  for (const pkg of pkgs) {
+    const labels = buildCompose(pkg).services['lokyy-traefik'].labels ?? [];
+    for (const l of labels.filter((x) => /^traefik\.http\.(routers|middlewares|services)\./.test(x))) {
+      assert.match(l, /^traefik\.http\.(routers|middlewares|services)\.lokyy-\$\{COOLIFY_RESOURCE_UUID:-local\}-[a-z0-9-]+\./, l);
+    }
+  }
+});
+
+test('LOW-1: BASE_DOMAIN and ADMIN_EMAIL validated before any service uses them; volume ownership prepared', () => {
+  for (const pkg of pkgs) {
+    const c = buildCompose(pkg);
+    const init = c.services['lokyy-init'];
+    assert.deepEqual(init.entrypoint, ['/lokyy/init-check.sh']);
+    assert.equal(init.restart, 'no');
+    assert.deepEqual(init.cap_drop, ['ALL']);
+    assert.deepEqual(init.cap_add, ['CHOWN', 'FOWNER']);
+    assert.equal(init.network_mode, 'none');
+    assert.deepEqual(init.volumes, ['lokyy-state:/state', 'lokyy-provision:/provision']);
+    const users = ['BASE_DOMAIN', 'ADMIN_EMAIL'];
+    for (const [name, svc] of Object.entries(c.services)) {
+      if (name === 'lokyy-init') continue;
+      const uses = allStrings(svc).some((x) => users.some((u) => x.includes(`\${${u}`)));
+      const mountsState = (svc.volumes ?? []).some((v) => /^lokyy-(state|provision):/.test(v));
+      if (uses || mountsState) assert.deepEqual(svc.depends_on?.['lokyy-init'], { condition: 'service_completed_successfully' }, name);
+    }
+  }
+});
+
+test('watcher design: metamcp runs MetaMCP + provisioning watcher; portal reads results read-only', () => {
+  for (const pkg of pkgs) {
+    const c = buildCompose(pkg);
+    const m = c.services.metamcp;
+    assert.deepEqual(m.build, { context: '../..', dockerfile: 'deploy/coolify/metamcp/Dockerfile' });
+    assert.equal(m.init, true, 'tini reaps the MetaMCP processes the supervisor restarts');
+    assert.deepEqual(m.volumes, ['lokyy-state:/etc/lokyy:ro', 'lokyy-provision:/var/lib/lokyy-provision']);
+    assert.equal(m.environment?.LOKYY_PUBLIC_BASE, 'https://mcp.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}');
+    const p = c.services.portal;
+    assert.ok(p.volumes?.includes('lokyy-provision:/provision:ro'));
+    assert.equal(p.environment?.LOKYY_PROVISION_DIR, '/provision');
+    assert.ok(!('METAMCP_DATABASE_URL' in (p.environment ?? {})));
+    assert.ok(!netKeys(c, 'portal').includes('metamcp-internal'));
+    const writers = Object.keys(c.services).filter((s) => (c.services[s].volumes ?? []).some((v) => v.startsWith('lokyy-provision:') && !v.endsWith(':ro')));
+    assert.deepEqual(writers.sort(), ['lokyy-init', 'metamcp']);
+  }
 });

@@ -18,15 +18,16 @@ services:
     command:
       - "--providers.file.filename=/etc/lokyy/dynamic.yml"
       - "--entrypoints.web.address=:80"
-      - "--entrypoints.web.forwardedHeaders.trustedIPs=${LOKYY_TRUSTED_PROXY_CIDRS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
       - "--entrypoints.web.http.aliasheadersstrategy=delete"
       - "--entrypoints.portal-admin.address=${LOKYY_NET_PREFIX:-10.231}.0.93:8090"
       - "--api.dashboard=false"
       - "--log.level=INFO"
     environment:
       BASE_DOMAIN: "${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
+      NET_PREFIX: "${LOKYY_NET_PREFIX:-10.231}"
       PROXY_SECRET_PORTAL: "${SERVICE_HEX_64_PROXYPORTAL}"
       PORTAL_IP: "${LOKYY_NET_PREFIX:-10.231}.0.94"
+      LOKYY_TRUSTED_PROXY_CIDRS: "${LOKYY_TRUSTED_PROXY_CIDRS:-}"
       PROXY_SECRET_V01: "${SERVICE_HEX_64_PROXYV01}"
       PROXY_SECRET_V02: "${SERVICE_HEX_64_PROXYV02}"
       PROXY_SECRET_V03: "${SERVICE_HEX_64_PROXYV03}"
@@ -46,108 +47,108 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify"
-      - "traefik.http.routers.lokyy-auth.rule=Host(`auth.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-auth.entrypoints=https"
-      - "traefik.http.routers.lokyy-auth.tls=true"
-      - "traefik.http.routers.lokyy-auth.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-auth.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-mcp.rule=Host(`mcp.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-mcp.entrypoints=https"
-      - "traefik.http.routers.lokyy-mcp.tls=true"
-      - "traefik.http.routers.lokyy-mcp.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-mcp.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-app.rule=Host(`app.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-app.entrypoints=https"
-      - "traefik.http.routers.lokyy-app.tls=true"
-      - "traefik.http.routers.lokyy-app.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-app.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v01.rule=Host(`v01.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v01.entrypoints=https"
-      - "traefik.http.routers.lokyy-v01.tls=true"
-      - "traefik.http.routers.lokyy-v01.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v01.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v02.rule=Host(`v02.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v02.entrypoints=https"
-      - "traefik.http.routers.lokyy-v02.tls=true"
-      - "traefik.http.routers.lokyy-v02.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v02.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v03.rule=Host(`v03.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v03.entrypoints=https"
-      - "traefik.http.routers.lokyy-v03.tls=true"
-      - "traefik.http.routers.lokyy-v03.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v03.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v04.rule=Host(`v04.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v04.entrypoints=https"
-      - "traefik.http.routers.lokyy-v04.tls=true"
-      - "traefik.http.routers.lokyy-v04.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v04.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v05.rule=Host(`v05.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v05.entrypoints=https"
-      - "traefik.http.routers.lokyy-v05.tls=true"
-      - "traefik.http.routers.lokyy-v05.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v05.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v06.rule=Host(`v06.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v06.entrypoints=https"
-      - "traefik.http.routers.lokyy-v06.tls=true"
-      - "traefik.http.routers.lokyy-v06.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v06.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v07.rule=Host(`v07.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v07.entrypoints=https"
-      - "traefik.http.routers.lokyy-v07.tls=true"
-      - "traefik.http.routers.lokyy-v07.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v07.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v08.rule=Host(`v08.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v08.entrypoints=https"
-      - "traefik.http.routers.lokyy-v08.tls=true"
-      - "traefik.http.routers.lokyy-v08.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v08.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v09.rule=Host(`v09.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v09.entrypoints=https"
-      - "traefik.http.routers.lokyy-v09.tls=true"
-      - "traefik.http.routers.lokyy-v09.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v09.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v10.rule=Host(`v10.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v10.entrypoints=https"
-      - "traefik.http.routers.lokyy-v10.tls=true"
-      - "traefik.http.routers.lokyy-v10.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v10.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v11.rule=Host(`v11.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v11.entrypoints=https"
-      - "traefik.http.routers.lokyy-v11.tls=true"
-      - "traefik.http.routers.lokyy-v11.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v11.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v12.rule=Host(`v12.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v12.entrypoints=https"
-      - "traefik.http.routers.lokyy-v12.tls=true"
-      - "traefik.http.routers.lokyy-v12.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v12.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v13.rule=Host(`v13.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v13.entrypoints=https"
-      - "traefik.http.routers.lokyy-v13.tls=true"
-      - "traefik.http.routers.lokyy-v13.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v13.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v14.rule=Host(`v14.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v14.entrypoints=https"
-      - "traefik.http.routers.lokyy-v14.tls=true"
-      - "traefik.http.routers.lokyy-v14.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v14.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-v15.rule=Host(`v15.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-v15.entrypoints=https"
-      - "traefik.http.routers.lokyy-v15.tls=true"
-      - "traefik.http.routers.lokyy-v15.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-v15.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-firma.rule=Host(`firma.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-firma.entrypoints=https"
-      - "traefik.http.routers.lokyy-firma.tls=true"
-      - "traefik.http.routers.lokyy-firma.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.lokyy-firma.service=lokyy-inner"
-      - "traefik.http.routers.lokyy-http.rule=Host(`auth.${BASE_DOMAIN}`) || Host(`mcp.${BASE_DOMAIN}`) || Host(`app.${BASE_DOMAIN}`) || Host(`v01.${BASE_DOMAIN}`) || Host(`v02.${BASE_DOMAIN}`) || Host(`v03.${BASE_DOMAIN}`) || Host(`v04.${BASE_DOMAIN}`) || Host(`v05.${BASE_DOMAIN}`) || Host(`v06.${BASE_DOMAIN}`) || Host(`v07.${BASE_DOMAIN}`) || Host(`v08.${BASE_DOMAIN}`) || Host(`v09.${BASE_DOMAIN}`) || Host(`v10.${BASE_DOMAIN}`) || Host(`v11.${BASE_DOMAIN}`) || Host(`v12.${BASE_DOMAIN}`) || Host(`v13.${BASE_DOMAIN}`) || Host(`v14.${BASE_DOMAIN}`) || Host(`v15.${BASE_DOMAIN}`) || Host(`firma.${BASE_DOMAIN}`)"
-      - "traefik.http.routers.lokyy-http.entrypoints=http"
-      - "traefik.http.routers.lokyy-http.middlewares=lokyy-to-https"
-      - "traefik.http.routers.lokyy-http.service=lokyy-inner"
-      - "traefik.http.middlewares.lokyy-to-https.redirectscheme.scheme=https"
-      - "traefik.http.middlewares.lokyy-to-https.redirectscheme.permanent=true"
-      - "traefik.http.services.lokyy-inner.loadbalancer.server.port=80"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-auth.rule=Host(`auth.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-auth.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-auth.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-auth.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-auth.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-mcp.rule=Host(`mcp.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-mcp.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-mcp.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-mcp.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-app.rule=Host(`app.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-app.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-app.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-app.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-app.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v01.rule=Host(`v01.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v01.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v01.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v01.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v01.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v02.rule=Host(`v02.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v02.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v02.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v02.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v02.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v03.rule=Host(`v03.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v03.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v03.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v03.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v03.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v04.rule=Host(`v04.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v04.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v04.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v04.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v04.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v05.rule=Host(`v05.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v05.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v05.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v05.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v05.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v06.rule=Host(`v06.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v06.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v06.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v06.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v06.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v07.rule=Host(`v07.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v07.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v07.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v07.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v07.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v08.rule=Host(`v08.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v08.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v08.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v08.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v08.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v09.rule=Host(`v09.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v09.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v09.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v09.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v09.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v10.rule=Host(`v10.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v10.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v10.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v10.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v10.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v11.rule=Host(`v11.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v11.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v11.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v11.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v11.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v12.rule=Host(`v12.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v12.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v12.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v12.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v12.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v13.rule=Host(`v13.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v13.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v13.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v13.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v13.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v14.rule=Host(`v14.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v14.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v14.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v14.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v14.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v15.rule=Host(`v15.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v15.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v15.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v15.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-v15.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-firma.rule=Host(`firma.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-firma.entrypoints=https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-firma.tls=true"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-firma.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-firma.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-http.rule=Host(`auth.${BASE_DOMAIN}`) || Host(`mcp.${BASE_DOMAIN}`) || Host(`app.${BASE_DOMAIN}`) || Host(`v01.${BASE_DOMAIN}`) || Host(`v02.${BASE_DOMAIN}`) || Host(`v03.${BASE_DOMAIN}`) || Host(`v04.${BASE_DOMAIN}`) || Host(`v05.${BASE_DOMAIN}`) || Host(`v06.${BASE_DOMAIN}`) || Host(`v07.${BASE_DOMAIN}`) || Host(`v08.${BASE_DOMAIN}`) || Host(`v09.${BASE_DOMAIN}`) || Host(`v10.${BASE_DOMAIN}`) || Host(`v11.${BASE_DOMAIN}`) || Host(`v12.${BASE_DOMAIN}`) || Host(`v13.${BASE_DOMAIN}`) || Host(`v14.${BASE_DOMAIN}`) || Host(`v15.${BASE_DOMAIN}`) || Host(`firma.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-http.entrypoints=http"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-http.middlewares=lokyy-${COOLIFY_RESOURCE_UUID:-local}-to-https"
+      - "traefik.http.routers.lokyy-${COOLIFY_RESOURCE_UUID:-local}-http.service=lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner"
+      - "traefik.http.middlewares.lokyy-${COOLIFY_RESOURCE_UUID:-local}-to-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.lokyy-${COOLIFY_RESOURCE_UUID:-local}-to-https.redirectscheme.permanent=true"
+      - "traefik.http.services.lokyy-${COOLIFY_RESOURCE_UUID:-local}-inner.loadbalancer.server.port=80"
     networks:
       coolify: {}
       edge: {}
@@ -169,6 +170,9 @@ services:
       web-v14: {}
       web-v15: {}
       web-firma: {}
+    depends_on:
+      lokyy-init:
+        condition: "service_completed_successfully"
   authentik-db:
     image: "postgres:16-alpine"
     restart: "unless-stopped"
@@ -200,6 +204,8 @@ services:
     depends_on:
       authentik-db:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     environment:
       AUTHENTIK_POSTGRESQL__HOST: "authentik-db"
       AUTHENTIK_POSTGRESQL__NAME: "authentik"
@@ -215,8 +221,9 @@ services:
       BASE_DOMAIN: "${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     shm_size: "512mb"
     networks:
-      - "edge"
-      - "authentik-internal"
+      edge:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.10"
+      authentik-internal: {}
   authentik-worker:
     build:
       context: "../.."
@@ -230,6 +237,8 @@ services:
     depends_on:
       authentik-db:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     environment:
       AUTHENTIK_POSTGRESQL__HOST: "authentik-db"
       AUTHENTIK_POSTGRESQL__NAME: "authentik"
@@ -267,12 +276,17 @@ services:
       AUTHENTIK_API_TOKEN: "${SERVICE_HEX_64_AUTHENTIKAPITOKEN}"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYPORTAL}"
       VAULT_ADMIN_URL: "http://${LOKYY_NET_PREFIX:-10.231}.0.93:8090"
+      LOKYY_PROVISION_DIR: "/provision"
     volumes:
       - "lokyy-state:/state"
+      - "lokyy-provision:/provision:ro"
     networks:
       edge: {}
       portal:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.94"
+    depends_on:
+      lokyy-init:
+        condition: "service_completed_successfully"
   model-prefetch:
     build:
       context: "../.."
@@ -303,7 +317,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV01}"
       VAULT_ADMIN_GROUPS: "vault-v01,lokyy-admins"
     networks:
-      web-v01: {}
+      web-v01:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.3.14"
       mcp-v01:
         aliases:
           - "upstream.vault-v01"
@@ -334,7 +349,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV02}"
       VAULT_ADMIN_GROUPS: "vault-v02,lokyy-admins"
     networks:
-      web-v02: {}
+      web-v02:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.4.14"
       mcp-v02:
         aliases:
           - "upstream.vault-v02"
@@ -365,7 +381,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV03}"
       VAULT_ADMIN_GROUPS: "vault-v03,lokyy-admins"
     networks:
-      web-v03: {}
+      web-v03:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.5.14"
       mcp-v03:
         aliases:
           - "upstream.vault-v03"
@@ -396,7 +413,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV04}"
       VAULT_ADMIN_GROUPS: "vault-v04,lokyy-admins"
     networks:
-      web-v04: {}
+      web-v04:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.6.14"
       mcp-v04:
         aliases:
           - "upstream.vault-v04"
@@ -427,7 +445,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV05}"
       VAULT_ADMIN_GROUPS: "vault-v05,lokyy-admins"
     networks:
-      web-v05: {}
+      web-v05:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.7.14"
       mcp-v05:
         aliases:
           - "upstream.vault-v05"
@@ -458,7 +477,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV06}"
       VAULT_ADMIN_GROUPS: "vault-v06,lokyy-admins"
     networks:
-      web-v06: {}
+      web-v06:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.8.14"
       mcp-v06:
         aliases:
           - "upstream.vault-v06"
@@ -489,7 +509,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV07}"
       VAULT_ADMIN_GROUPS: "vault-v07,lokyy-admins"
     networks:
-      web-v07: {}
+      web-v07:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.9.14"
       mcp-v07:
         aliases:
           - "upstream.vault-v07"
@@ -520,7 +541,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV08}"
       VAULT_ADMIN_GROUPS: "vault-v08,lokyy-admins"
     networks:
-      web-v08: {}
+      web-v08:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.10.14"
       mcp-v08:
         aliases:
           - "upstream.vault-v08"
@@ -551,7 +573,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV09}"
       VAULT_ADMIN_GROUPS: "vault-v09,lokyy-admins"
     networks:
-      web-v09: {}
+      web-v09:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.11.14"
       mcp-v09:
         aliases:
           - "upstream.vault-v09"
@@ -582,7 +605,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV10}"
       VAULT_ADMIN_GROUPS: "vault-v10,lokyy-admins"
     networks:
-      web-v10: {}
+      web-v10:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.12.14"
       mcp-v10:
         aliases:
           - "upstream.vault-v10"
@@ -613,7 +637,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV11}"
       VAULT_ADMIN_GROUPS: "vault-v11,lokyy-admins"
     networks:
-      web-v11: {}
+      web-v11:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.13.14"
       mcp-v11:
         aliases:
           - "upstream.vault-v11"
@@ -644,7 +669,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV12}"
       VAULT_ADMIN_GROUPS: "vault-v12,lokyy-admins"
     networks:
-      web-v12: {}
+      web-v12:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.14.14"
       mcp-v12:
         aliases:
           - "upstream.vault-v12"
@@ -675,7 +701,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV13}"
       VAULT_ADMIN_GROUPS: "vault-v13,lokyy-admins"
     networks:
-      web-v13: {}
+      web-v13:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.15.14"
       mcp-v13:
         aliases:
           - "upstream.vault-v13"
@@ -706,7 +733,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV14}"
       VAULT_ADMIN_GROUPS: "vault-v14,lokyy-admins"
     networks:
-      web-v14: {}
+      web-v14:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.16.14"
       mcp-v14:
         aliases:
           - "upstream.vault-v14"
@@ -737,7 +765,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV15}"
       VAULT_ADMIN_GROUPS: "vault-v15,lokyy-admins"
     networks:
-      web-v15: {}
+      web-v15:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.17.14"
       mcp-v15:
         aliases:
           - "upstream.vault-v15"
@@ -769,7 +798,8 @@ services:
       VAULT_ADMIN_GROUPS: "lokyy-admins"
       MCP_HTTP_READONLY_TOKEN: "${SERVICE_HEX_64_MCPREADONLYFIRMA}"
     networks:
-      web-firma: {}
+      web-firma:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.2.14"
       mcp-firma:
         aliases:
           - "upstream.vault-firma"
@@ -801,12 +831,17 @@ services:
     networks:
       - "metamcp-internal"
   metamcp:
-    image: "ghcr.io/metatool-ai/metamcp:2.4.22"
+    build:
+      context: "../.."
+      dockerfile: "deploy/coolify/metamcp/Dockerfile"
     restart: "unless-stopped"
     mem_limit: "1536m"
+    init: true
     depends_on:
       metamcp-db:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     environment:
       DATABASE_URL: "postgresql://metamcp:${SERVICE_HEX_64_METAMCPDB}@metamcp-db:5432/metamcp"
       POSTGRES_HOST: "metamcp-db"
@@ -835,10 +870,17 @@ services:
       MCP_TOKEN_V15: "${SERVICE_HEX_64_MCPV15}"
       MCP_TOKEN_FIRMA: "${SERVICE_HEX_64_MCPFIRMA}"
       MCP_READONLY_TOKEN_FIRMA: "${SERVICE_HEX_64_MCPREADONLYFIRMA}"
+      LOKYY_PUBLIC_BASE: "https://mcp.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
+      LOKYY_USERS_FILE: "/etc/lokyy/users.json"
+      LOKYY_PROVISION_DIR: "/var/lib/lokyy-provision"
+    volumes:
+      - "lokyy-state:/etc/lokyy:ro"
+      - "lokyy-provision:/var/lib/lokyy-provision"
     networks:
-      - "edge"
-      - "metamcp-internal"
-      - "mcp-upstream"
+      edge:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.11"
+      metamcp-internal: {}
+      mcp-upstream: {}
   mcp-gate:
     build:
       context: "../../deploy/stack/mcp-gate"
@@ -858,8 +900,11 @@ services:
     depends_on:
       metamcp:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     networks:
-      - "edge"
+      edge:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.12"
   vault-connector:
     build:
       context: "../../deploy/stack/mcp-gate"
@@ -918,6 +963,8 @@ services:
     depends_on:
       metamcp:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     environment:
       PGHOST: "metamcp-db"
       PGUSER: "metamcp"
@@ -927,6 +974,28 @@ services:
       METAMCP_ADMIN_PASS: "${SERVICE_PASSWORD_METAMCPADMIN}"
     networks:
       - "metamcp-internal"
+  lokyy-init:
+    build:
+      context: "../.."
+      dockerfile: "deploy/coolify/metamcp-init/Dockerfile"
+    restart: "no"
+    entrypoint:
+      - "/lokyy/init-check.sh"
+    user: "0"
+    cap_drop:
+      - "ALL"
+    cap_add:
+      - "CHOWN"
+      - "FOWNER"
+    security_opt:
+      - "no-new-privileges:true"
+    network_mode: "none"
+    environment:
+      BASE_DOMAIN: "${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
+      ADMIN_EMAIL: "${ADMIN_EMAIL:?set ADMIN_EMAIL in Coolify}"
+    volumes:
+      - "lokyy-state:/state"
+      - "lokyy-provision:/provision"
 networks:
   coolify:
     external: true
@@ -934,6 +1003,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.0.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.0.0/29"
   authentik-internal:
     internal: true
     ipam:
@@ -972,6 +1042,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.3.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.3.0/29"
   mcp-v01:
     internal: true
     ipam:
@@ -982,6 +1053,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.4.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.4.0/29"
   mcp-v02:
     internal: true
     ipam:
@@ -992,6 +1064,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.5.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.5.0/29"
   mcp-v03:
     internal: true
     ipam:
@@ -1002,6 +1075,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.6.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.6.0/29"
   mcp-v04:
     internal: true
     ipam:
@@ -1012,6 +1086,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.7.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.7.0/29"
   mcp-v05:
     internal: true
     ipam:
@@ -1022,6 +1097,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.8.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.8.0/29"
   mcp-v06:
     internal: true
     ipam:
@@ -1032,6 +1108,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.9.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.9.0/29"
   mcp-v07:
     internal: true
     ipam:
@@ -1042,6 +1119,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.10.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.10.0/29"
   mcp-v08:
     internal: true
     ipam:
@@ -1052,6 +1130,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.11.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.11.0/29"
   mcp-v09:
     internal: true
     ipam:
@@ -1062,6 +1141,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.12.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.12.0/29"
   mcp-v10:
     internal: true
     ipam:
@@ -1072,6 +1152,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.13.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.13.0/29"
   mcp-v11:
     internal: true
     ipam:
@@ -1082,6 +1163,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.14.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.14.0/29"
   mcp-v12:
     internal: true
     ipam:
@@ -1092,6 +1174,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.15.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.15.0/29"
   mcp-v13:
     internal: true
     ipam:
@@ -1102,6 +1185,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.16.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.16.0/29"
   mcp-v14:
     internal: true
     ipam:
@@ -1112,6 +1196,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.17.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.17.0/29"
   mcp-v15:
     internal: true
     ipam:
@@ -1122,6 +1207,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.2.0/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.2.0/29"
   mcp-firma:
     internal: true
     ipam:
@@ -1132,6 +1218,7 @@ volumes:
   metamcp-db: {}
   models: {}
   lokyy-state: {}
+  lokyy-provision: {}
   vault-v01: {}
   vault-v01-home: {}
   vault-v02: {}

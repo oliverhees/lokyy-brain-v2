@@ -38,6 +38,10 @@ export interface Service {
   tmpfs?: string[];
   sysctls?: Record<string, string>;
   pids_limit?: number;
+  init?: boolean;
+  cap_add?: string[];
+  network_mode?: string;
+  user?: string;
   depends_on?: Record<string, { condition: string }>;
   environment?: Record<string, string>;
   volumes?: string[];
@@ -70,6 +74,11 @@ const EMBED_PORT = 8080;
 // listens only on Traefik's address there, and only the portal's address may use it.
 const TRAEFIK_PORTAL_IP = `${NET}.0.93`;
 const PORTAL_IP = `${NET}.0.94`;
+// HIGH-1: lokyy-traefik sits on the shared "coolify" network, where any other Coolify app could register a
+// container or alias named like one of ours and win Docker's DNS answer. So every upstream of the inner
+// Traefik is a fixed address outside the dynamic ip_range (.0/29) of its network, never a name.
+const EDGE_IP = { 'authentik-server': `${NET}.0.10`, metamcp: `${NET}.0.11`, 'mcp-gate': `${NET}.0.12` } as const;
+const VAULT_HOST = 14;
 
 export const slotNames = (pkg: PackageName): string[] =>
   Array.from({ length: PACKAGES[pkg].slots }, (_, i) => `v${String(i + 1).padStart(2, '0')}`);
@@ -109,6 +118,13 @@ function subnet(name: string): string {
   return `${NET}.${2 + k}.${{ web: 0, mcp: 16, embed: 32 }[m[1] as 'web' | 'mcp' | 'embed']}/28`;
 }
 const network = (name: string, extra: Network = {}): Network => ({ ...extra, ipam: { config: [{ subnet: subnet(name) }] } });
+/** Network whose lower half (.0/29) is the dynamic range; fixed addresses live in the upper half. */
+const splitNetwork = (name: string, extra: Network = {}): Network => {
+  const sub = subnet(name);
+  return { ...extra, ipam: { config: [{ subnet: sub, ip_range: sub.replace(/\/28$/, '/29') }] } };
+};
+/** Fixed address of vault <v> on its web-<v> network (and the dynamic.yml template form). */
+const vaultIp = (v: string, net = NET) => `${net}.${2 + (v === 'firma' ? 0 : Number(v.slice(1)))}.${VAULT_HOST}`;
 
 function vault(v: string, opts: GenerateOptions): Service {
   const env: Record<string, string> = {
@@ -135,7 +151,7 @@ function vault(v: string, opts: GenerateOptions): Service {
     build: { context: REPO, dockerfile: 'deploy/Dockerfile' },
     restart: 'unless-stopped',
     environment: env,
-    networks: { [`web-${v}`]: {}, [`mcp-${v}`]: { aliases: [`upstream.vault-${v}`] }, egress: {} },
+    networks: { [`web-${v}`]: { ipv4_address: vaultIp(v) }, [`mcp-${v}`]: { aliases: [`upstream.vault-${v}`] }, egress: {} },
   };
   if (opts.embed) {
     // LBV2-26: embeddings from the shared service over the vault's own embed-<v> network, own token;
@@ -166,27 +182,33 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
 
   // coolify-proxy labels: one TLS router (own HTTP-01 certificate) per public host, one HTTP->HTTPS
   // redirect router for all of them. Only this container carries traefik.* labels.
+  // MED-2: router/middleware/service names are global in coolify-proxy: unique per Coolify resource
+  const id = (n: string) => `lokyy-\${COOLIFY_RESOURCE_UUID:-local}-${n}`;
   const labels = ['traefik.enable=true', 'traefik.docker.network=coolify'];
   for (const h of hosts) {
-    const r = `lokyy-${h}`;
+    const r = id(h);
     labels.push(
       `traefik.http.routers.${r}.rule=Host(\`${h}.\${BASE_DOMAIN}\`)`,
       `traefik.http.routers.${r}.entrypoints=https`,
       `traefik.http.routers.${r}.tls=true`,
       `traefik.http.routers.${r}.tls.certresolver=letsencrypt`,
-      `traefik.http.routers.${r}.service=lokyy-inner`,
+      `traefik.http.routers.${r}.service=${id('inner')}`,
     );
   }
   labels.push(
-    `traefik.http.routers.lokyy-http.rule=${hosts.map((h) => `Host(\`${h}.\${BASE_DOMAIN}\`)`).join(' || ')}`,
-    'traefik.http.routers.lokyy-http.entrypoints=http',
-    'traefik.http.routers.lokyy-http.middlewares=lokyy-to-https',
-    'traefik.http.routers.lokyy-http.service=lokyy-inner',
-    'traefik.http.middlewares.lokyy-to-https.redirectscheme.scheme=https',
-    'traefik.http.middlewares.lokyy-to-https.redirectscheme.permanent=true',
-    'traefik.http.services.lokyy-inner.loadbalancer.server.port=80',
+    `traefik.http.routers.${id('http')}.rule=${hosts.map((h) => `Host(\`${h}.\${BASE_DOMAIN}\`)`).join(' || ')}`,
+    `traefik.http.routers.${id('http')}.entrypoints=http`,
+    `traefik.http.routers.${id('http')}.middlewares=${id('to-https')}`,
+    `traefik.http.routers.${id('http')}.service=${id('inner')}`,
+    `traefik.http.middlewares.${id('to-https')}.redirectscheme.scheme=https`,
+    `traefik.http.middlewares.${id('to-https')}.redirectscheme.permanent=true`,
+    `traefik.http.services.${id('inner')}.loadbalancer.server.port=80`,
   );
-  const traefikEnv: Record<string, string> = { BASE_DOMAIN: DOMAIN, PROXY_SECRET_PORTAL: secret.portalProxy, PORTAL_IP };
+  const traefikEnv: Record<string, string> = {
+    BASE_DOMAIN: DOMAIN, NET_PREFIX: NET, PROXY_SECRET_PORTAL: secret.portalProxy, PORTAL_IP,
+    // MED-1: empty = trust X-Forwarded-* only from the subnet of the coolify network (entrypoint.sh)
+    LOKYY_TRUSTED_PROXY_CIDRS: '${LOKYY_TRUSTED_PROXY_CIDRS:-}',
+  };
   for (const v of vaults) traefikEnv[`PROXY_SECRET_${v.toUpperCase()}`] = secret.proxy(v);
   services['lokyy-traefik'] = {
     build: { context: REPO, dockerfile: 'deploy/coolify/traefik/Dockerfile', args: { LOKYY_PACKAGE: pkg } },
@@ -198,9 +220,8 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     command: [
       '--providers.file.filename=/etc/lokyy/dynamic.yml',
       '--entrypoints.web.address=:80',
-      // X-Forwarded-For from coolify-proxy (rate-limit bucket per client, Authentik audit IP). Host and
-      // Proto are pinned per router in dynamic.yml, so a co-located container can only forge the client IP.
-      '--entrypoints.web.forwardedHeaders.trustedIPs=${LOKYY_TRUSTED_PROXY_CIDRS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}',
+      // forwardedHeaders.trustedIPs is appended by entrypoint.sh: the coolify network's subnet (coolify-proxy
+      // and other Coolify apps), never our own networks; Host and Proto are pinned per router anyway.
       // X_authentik_username / X.Authentik.Username must not alias a managed header in WSGI-style backends
       '--entrypoints.web.http.aliasheadersstrategy=delete',
       // Vault config API for the portal (LBV2-28): only on Traefik's address in the portal network, so no
@@ -253,7 +274,10 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     shm_size: '512mb',
     networks,
   });
-  services['authentik-server'] = authentik('server', ['edge', 'authentik-internal']);
+  services['authentik-server'] = {
+    ...authentik('server', []),
+    networks: { edge: { ipv4_address: EDGE_IP['authentik-server'] }, 'authentik-internal': {} },
+  };
   services['authentik-worker'] = authentik('worker', ['authentik-internal']);
   // The blueprint is baked into the image: a changed package recreates the worker, whose startup discovery
   // applies the changed file (M: ~6 min until the new slots route). Never add a second applier (e.g.
@@ -280,8 +304,9 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
       AUTHENTIK_API_TOKEN: secret.authentikApiToken,
       VAULT_PROXY_SECRET: secret.portalProxy,
       VAULT_ADMIN_URL: `http://${TRAEFIK_PORTAL_IP}:8090`,
+      LOKYY_PROVISION_DIR: '/provision',
     },
-    volumes: ['lokyy-state:/state'],
+    volumes: ['lokyy-state:/state', 'lokyy-provision:/provision:ro'],
     networks: { edge: {}, portal: { ipv4_address: PORTAL_IP } },
   };
 
@@ -348,14 +373,23 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
   // Vault tokens for provisioning (metamcp/provision.mjs reads MCP_TOKEN_<VAULT>); MetaMCP stores them anyway.
   for (const v of vaults) metamcpEnv[`MCP_TOKEN_${v.toUpperCase()}`] = secret.mcpToken(v);
   metamcpEnv.MCP_READONLY_TOKEN_FIRMA = secret.mcpReadonlyFirma;
+  // Provisioning watcher (LBV2-28 contract): reads users.json (lokyy-state, ro), provisions with
+  // provision.mjs, writes metamcp-clients.json to lokyy-provision (read by the portal only)
+  metamcpEnv.LOKYY_PUBLIC_BASE = `https://mcp.${DOMAIN}`;
+  metamcpEnv.LOKYY_USERS_FILE = '/etc/lokyy/users.json';
+  metamcpEnv.LOKYY_PROVISION_DIR = '/var/lib/lokyy-provision';
   services.metamcp = {
-    image: 'ghcr.io/metatool-ai/metamcp:2.4.22',
+    build: { context: REPO, dockerfile: 'deploy/coolify/metamcp/Dockerfile' },
     restart: 'unless-stopped',
     mem_limit: '1536m',
+    // Supervisor restarts MetaMCP (a process group) to end sessions; tini reaps what is left
+    init: true,
     depends_on: { 'metamcp-db': { condition: 'service_healthy' } },
     environment: metamcpEnv,
-    // No egress, no vault network: vaults are reached only through vault-connector
-    networks: ['edge', 'metamcp-internal', 'mcp-upstream'],
+    volumes: ['lokyy-state:/etc/lokyy:ro', 'lokyy-provision:/var/lib/lokyy-provision'],
+    // No vault network: vaults are reached only through vault-connector. edge is not internal (MetaMCP
+    // itself needs no internet; the edge network has it for Authentik and the portal)
+    networks: { edge: { ipv4_address: EDGE_IP.metamcp }, 'metamcp-internal': {}, 'mcp-upstream': {} },
   };
   const gateBase: Service = {
     build: { context: `${REPO}/deploy/stack/mcp-gate` },
@@ -371,7 +405,7 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     environment: { MODE: 'gate', GATE_UPSTREAM: 'http://metamcp:12008', GATE_USERS_FILE: '/etc/lokyy/users.json' },
     volumes: ['lokyy-state:/etc/lokyy:ro'],
     depends_on: { metamcp: { condition: 'service_healthy' } },
-    networks: ['edge'],
+    networks: { edge: { ipv4_address: EDGE_IP['mcp-gate'] } },
   };
   // One-way path MetaMCP -> vaults; listens only on its fixed mcp-upstream address, routes by Host.
   const connectorNets: Record<string, { aliases?: string[]; ipv4_address?: string }> = {
@@ -398,7 +432,7 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
   // ------------------------------------------------------------------ Networks
   const networks: Record<string, Network> = {
     coolify: { external: true },
-    edge: network('edge'),
+    edge: splitNetwork('edge'),
     'authentik-internal': network('authentik-internal', { internal: true }),
     'metamcp-internal': network('metamcp-internal', { internal: true }),
     'mcp-upstream': { internal: true, ipam: { config: [{ subnet: subnet('mcp-upstream'), ip_range: `${NET}.0.48/29` }] } },
@@ -407,13 +441,33 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     egress: network('egress', { driver: 'bridge', driver_opts: { 'com.docker.network.bridge.enable_icc': 'false' } }),
   };
   for (const v of vaults) {
-    networks[`web-${v}`] = network(`web-${v}`, { internal: true });
+    networks[`web-${v}`] = splitNetwork(`web-${v}`, { internal: true });
     networks[`mcp-${v}`] = network(`mcp-${v}`, { internal: true });
     if (opts.embed) networks[`embed-${v}`] = network(`embed-${v}`, { internal: true });
   }
 
-  const volumes: Record<string, Record<string, never>> = { 'authentik-db': {}, 'metamcp-db': {}, models: {}, 'lokyy-state': {} };
+  const volumes: Record<string, Record<string, never>> = { 'authentik-db': {}, 'metamcp-db': {}, models: {}, 'lokyy-state': {}, 'lokyy-provision': {} };
   for (const v of vaults) { volumes[`vault-${v}`] = {}; volumes[`vault-${v}-home`] = {}; }
+
+  // LOW-1: one-shot check of the operator input before anything uses it (Traefik rules, blueprint, SQL in
+  // metamcp-init), and ownership of the shared state volumes (portal uid 1000 writes users.json, the
+  // MetaMCP watcher uid 1001 writes metamcp-clients.json) before any container mounts them.
+  services['lokyy-init'] = {
+    build: { context: REPO, dockerfile: 'deploy/coolify/metamcp-init/Dockerfile' },
+    restart: 'no',
+    entrypoint: ['/lokyy/init-check.sh'],
+    user: '0',
+    cap_drop: ['ALL'],
+    cap_add: ['CHOWN', 'FOWNER'],
+    security_opt: ['no-new-privileges:true'],
+    network_mode: 'none',
+    environment: { BASE_DOMAIN: DOMAIN, ADMIN_EMAIL: EMAIL },
+    volumes: ['lokyy-state:/state', 'lokyy-provision:/provision'],
+  };
+  const usesInput = (svc: Service) => JSON.stringify(svc).match(/\$\{(BASE_DOMAIN|ADMIN_EMAIL)|"lokyy-(state|provision):/);
+  for (const [name, svc] of Object.entries(services)) {
+    if (name !== 'lokyy-init' && usesInput(svc)) svc.depends_on = { ...svc.depends_on, 'lokyy-init': { condition: 'service_completed_successfully' } };
+  }
   return { services, networks, volumes };
 }
 
@@ -469,9 +523,9 @@ export function renderTraefikDynamic(pkg: PackageName): string {
     '      service: "authentik"',
   ];
   L.push(HEADER(pkg, 'inner Traefik routes (lokyy-traefik file provider).').trimEnd());
-  L.push('{{ $d := env `BASE_DOMAIN` }}');
+  L.push('{{ $d := env `BASE_DOMAIN` }}{{ $n := env `NET_PREFIX` }}');
   L.push('http:', '  routers:');
-  L.push('    authentik:', '      rule: "Host(`auth.{{ $d }}`)"', '      entryPoints: ["web"]', '      service: "authentik"');
+  L.push('    authentik:', '      rule: "Host(`auth.{{ $d }}`)"', '      entryPoints: ["web"]', '      middlewares: ["auth-fwd"]', '      service: "authentik"');
   for (const v of vaults) {
     const r = guarded(`vault-${v}`, v, `vault-${v}`, ['"vault-identity"', `"vault-${v}-secret"`]);
     L.push(...r);
@@ -512,7 +566,7 @@ export function renderTraefikDynamic(pkg: PackageName): string {
   L.push(
     '    authentik:',
     '      forwardAuth:',
-    '        address: "http://authentik-server:9000/outpost.goauthentik.io/auth/traefik"',
+    '        address: "http://{{ $n }}.0.10:9000/outpost.goauthentik.io/auth/traefik"',
     '        trustForwardHeader: true',
     '        maxResponseBodySize: 1048576',
     // authResponseHeaders are deleted from the client request and replaced by Authentik's values
@@ -543,6 +597,7 @@ export function renderTraefikDynamic(pkg: PackageName): string {
       '          X-Mindbase-User: ""',
     );
   }
+  L.push(...pin('auth', 'auth'));
   L.push(...pin('portal', 'app'));
   L.push('    portal-secret:', '      headers:', '        customRequestHeaders:',
     '          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_PORTAL` }}"');
@@ -567,11 +622,12 @@ export function renderTraefikDynamic(pkg: PackageName): string {
   );
   L.push('  services:');
   const svc = (name: string, url: string) => [`    ${name}:`, '      loadBalancer:', '        servers:', `          - url: "${url}"`];
-  L.push(...svc('authentik', 'http://authentik-server:9000'));
-  for (const v of vaults) L.push(...svc(`vault-${v}`, `http://vault-${v}:4321`));
-  L.push(...svc('portal', 'http://portal:3000'));
-  L.push(...svc('metamcp', 'http://metamcp:12008'));
-  L.push(...svc('mcp-gate', 'http://mcp-gate:8080'));
+  // Fixed addresses, never names (HIGH-1); they match EDGE_IP / vaultIp / PORTAL_IP in the compose file
+  L.push(...svc('authentik', 'http://{{ $n }}.0.10:9000'));
+  for (const v of vaults) L.push(...svc(`vault-${v}`, `http://${vaultIp(v, '{{ $n }}')}:4321`));
+  L.push(...svc('portal', 'http://{{ $n }}.0.94:3000'));
+  L.push(...svc('metamcp', 'http://{{ $n }}.0.11:12008'));
+  L.push(...svc('mcp-gate', 'http://{{ $n }}.0.12:8080'));
   return L.join('\n') + '\n';
 }
 
