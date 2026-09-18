@@ -1,0 +1,15 @@
+# LBV2-29 fixture for tests/blueprint-check.sh: must be REJECTED (both entries drop "authentik Admins").
+version: 1
+entries:
+  - { model: authentik_core.group, id: group-admins, identifiers: { name: lokyy-admins }, attrs: { name: lokyy-admins } }
+  - model: authentik_core.user
+    identifiers: { username: akadmin }
+    state: present
+    attrs:
+      groups: [!KeyOf group-admins]
+  - { model: authentik_core.user, identifiers: { username: "akadmin" }, attrs: { groups: [!KeyOf group-admins] } }
+  - model: authentik_core.user
+    identifiers: { username: akadmin }
+    attrs:
+      # "authentik Admins" only in a comment must not satisfy the check
+      groups: [!KeyOf group-admins]
