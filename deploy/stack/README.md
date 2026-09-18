@@ -208,7 +208,7 @@ llm/configure-eurouter.sh             # all vaults; or: llm/configure-eurouter.s
 tests/eurouter-keys.sh                # checks key selection (dry run)
 ```
 
-It merges `provider: openai`, `baseUrl: https://api.eurouter.ai/api/v1`, model and key into `/data/mindbase.config.json` of each vault (mode 600) and restarts vaults whose file changed. If an existing config file is not valid JSON the vault is reported and left untouched. Keys are passed by variable name, never printed. `https://www.eurouter.ai/api/v1` is the website and answers 404.
+It merges `provider: openai`, `baseUrl: https://api.eurouter.ai/api/v1`, model and key into `/data/mindbase.config.json` of each vault (mode 600) and restarts vaults whose file changed. If an existing config file is not valid JSON the vault is reported and left untouched. Keys are passed by variable name, never printed. `https://www.eurouter.ai/api/v1` is the website and answers 404. An existing `ruleId` (EUrouter route, LBV2-30) is kept; set it in the vault's Settings → Provider → EUrouter → Route (see `docs/self-hosting-mcp-http.md#eurouter-routes-routing-rules`).
 
 Risks:
 - The OpenAI adapter uses `/v1/responses` instead of chat completions whenever a message carries a document block (PDF chat). EUrouter answers `400` (not `404`) on `/api/v1/responses`, so the route exists, but PDF chat through EUrouter is untested without a real key.
