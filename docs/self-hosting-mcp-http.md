@@ -67,6 +67,44 @@ docker run ... -v lokyy-models:/models ...
 
 One volume can be shared by several vault containers; the files are read-only after the download. Without outbound access to `huggingface.co` the download fails; the indexer logs the failure per page and keyword search keeps working.
 
+With the model in-process, every vault holds it in memory (measured 2.62 GiB peak per vault). For several vaults on one server use the [shared embedding service](#shared-embedding-service) instead: the vault then does not need `/models` at all.
+
+### Shared embedding service
+
+`deploy/stack/embed` (LBV2-26) loads BGE-M3 once for all vaults of a server. Build it with `docker build -f deploy/Dockerfile --target embed .`; `deploy/stack/compose.yml` shows the complete wiring.
+
+**Vault side.** Set both variables on the vault container (web server and MCP process read them):
+
+| Variable | Effect |
+|---|---|
+| `MINDBASE_EMBED_URL` | Base URL of the service, e.g. `http://embed:8080`. Plain `http(s)` URL without credentials, query or fragment. |
+| `MINDBASE_EMBED_TOKEN` | This vault's own token (`openssl rand -hex 32`). Never share a token between vaults. |
+| `MINDBASE_EMBED_TIMEOUT_MS` | Optional, per attempt, default `45000`. |
+| `MINDBASE_EMBED_RETRIES` | Optional, extra attempts on `429`/`502`/`503`/`504`, timeouts and network errors, default `2` (exponential backoff from 500 ms; `Retry-After` is honoured up to 10 s). |
+
+With both set, the vault never loads the model: page indexing and hybrid search in the web server, and `semantic_search` in the MCP server (no LLM configuration needed; page vectors already cached by the web server are reused), go to `POST <url>/embed`. Setting only one of the two is a configuration error: embedding calls fail instead of silently loading the model in-process. Service errors are logged without text content; hybrid search falls back to keyword results, `semantic_search` to keyword search. Without both variables the in-process behaviour is unchanged. The service URL comes from the operator, not from the vault configuration, so `VAULT_LLM_ALLOWED_HOSTS` does not apply to it; requests never follow redirects.
+
+Vectors are interchangeable with in-process ones (same model files, mean pooling, normalisation, 8000-character cut; `deploy/stack/tests/embed.sh` compares them), so an existing embedding cache stays valid when you switch.
+
+**Service side** (`EMBED_*` environment of the `embed` container):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `EMBED_VAULTS` | required | Comma-separated vault names (`^[a-z][a-z0-9-]*$`). |
+| `EMBED_TOKEN_SHA256_<VAULT>` | required | SHA-256 hex digest of that vault's token (upper case, `-` → `_`). The service only ever sees hashes; missing, malformed or duplicate hashes stop it at startup. `deploy/stack/embed-tokens.sh` derives them from `EMBED_TOKEN_<VAULT>`. |
+| `EMBED_SOURCE_<VAULT>` | unset | Comma-separated IPv4 networks. When set, that vault's token is accepted only from these addresses (its own network), so a token that leaks to another vault is useless there. Set it for every vault. |
+| `EMBED_MAX_TEXTS` / `EMBED_MAX_CHARS` / `EMBED_MAX_BODY_BYTES` | `32` / `8000` / `1048576` | Per request; larger requests get `400` or `413` before any inference. |
+| `EMBED_RATE_PER_SEC` / `EMBED_BURST` | `20` / `200` | Texts per second per vault (token bucket); over the limit `429` with `Retry-After`. |
+| `EMBED_MAX_PENDING_PER_VAULT` / `EMBED_MAX_QUEUE` | `4` / `64` | Queued plus running requests per vault (`429`) and in total (`503`). |
+| `EMBED_QUEUE_TIMEOUT_MS` | `30000` | A request that has not started within this time gets `503`. |
+| `EMBED_MODELS_DIR` / `EMBED_PORT` | `/models` / `8080` | Read-only model cache (filled and verified by `model-prefetch`) and listen port. |
+
+Texts are embedded one at a time, round-robin across vaults, so one vault's indexing run cannot starve another vault's search. A client that disconnects cancels its remaining texts. Error bodies are static (`{"error":"unauthorized"}`, …); log lines carry vault name, text count, status and duration, never text or token material. `GET /healthz` answers `200` once the model is loaded.
+
+**Network model.** Give each vault its own internal network that contains only that vault and the service (`embed-<vault>` in `deploy/stack`), and do not attach the service to any other network: it needs no outbound access, and a vault reaches only the service's address on its own network. The service has no proxy or forwarding code (anything but `POST /embed` and `GET /healthz` is `404`/`405`). Run it with a read-only root filesystem, `cap_drop: [ALL]`, `no-new-privileges` and a memory limit.
+
+**Residual risk.** The service is a shared component on every vault's embed network. A compromised vault can send it arbitrary input (bounded by the limits above) and try to exploit the HTTP server, tokenizer or ONNX runtime. If that succeeded, the attacker would control a process with a network path to every vault's embed network, i.e. to every other vault's ports; those still require the proxy secret (web) or bearer token (MCP), but the lateral step is possible. The service holds no vault data, no plain tokens and no credentials, and has no outbound network. Mitigations in place: the limits and fair queue, token plus source-network binding, static errors, no forwarding, hardened container. Further hardening, not done yet: a seccomp profile, dropping the ONNX runtime's unused execution providers, egress/ingress firewall rules on the host so the service can only answer (not open) connections towards vaults, and one service per vault group if a server mixes trust domains.
+
 ## Configuration
 
 ### MCP HTTP transport (`apps/mcp/src/http.ts`)

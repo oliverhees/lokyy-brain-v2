@@ -1,6 +1,6 @@
 # Local prototype stack (LBV2-2)
 
-A local reference setup for one company server: Traefik, Authentik, three vaults (`anna`, `ben` and the company vault `firma`) and MetaMCP. It exists to verify the security model end to end before building the Coolify template. It is not a production deployment: plain HTTP on `127.0.0.1:18080`, demo users, generated secrets.
+A local reference setup for one company server: Traefik, Authentik, three vaults (`anna`, `ben` and the company vault `firma`), MetaMCP and the shared embedding service `embed`. It exists to verify the security model end to end before building the Coolify template. It is not a production deployment: plain HTTP on `127.0.0.1:18080`, demo users, generated secrets.
 
 For the vault container itself (environment variables, access profiles, visibility rules), see [`docs/self-hosting-mcp-http.md`](../../docs/self-hosting-mcp-http.md).
 
@@ -10,14 +10,16 @@ For the vault container itself (environment variables, access profiles, visibili
 cd deploy/stack
 cp .env.example .env && chmod 600 .env
 for k in $(grep -oE '^[A-Z_]+' .env.example); do sed -i "s|^$k=.*|$k=$(openssl rand -hex 32)|" .env; done
+./embed-tokens.sh                # EMBED_TOKEN_SHA256_<VAULT> for the embed service (LBV2-26)
 docker compose up -d --build     # first build takes a few minutes
 tests/wait-ready.sh              # healthy services, blueprint applied, routes protected, signup closed
 tests/isolation.sh               # also waits on its own (WAIT_TIMEOUT, default 300 s)
 metamcp/provision.sh             # MetaMCP users, endpoints, API keys → secrets/metamcp-clients.json
 tests/metamcp-attacks.sh         # MCP endpoint attack tests (rotates anna's key, re-creates ben)
+tests/embed.sh                   # embed service: vectors = in-process vectors, vault memory while indexing/searching
 ```
 
-`STACK_NAME` (optional, in `.env`) changes the compose project name, e.g. to start a fresh stack while another stack's volumes still exist. Only one stack can run at a time (port 18080, fixed subnets).
+`STACK_NAME` (optional, in `.env`) changes the compose project name, e.g. to start a fresh stack while another stack's volumes still exist. To run a second stack next to a running one, also set `STACK_HTTP_PORT` (e.g. `18180`; used by Traefik, the Authentik blueprint, MetaMCP and all test scripts), `STACK_NET` (the `/16` prefix of all subnets, e.g. `10.232`) and `IMAGE_TAG` (so its builds do not replace the other stack's `:dev` images). The URLs below then use that port.
 
 | URL | What |
 |---|---|
@@ -43,6 +45,7 @@ docker compose exec authentik-worker ak apply_blueprint custom/lokyy-vaults.yaml
 | Web server only reachable through the proxy | Traefik injects `X-Vault-Proxy-Secret` (per vault, overwriting any client value) after forward-auth; the vault answers `403` without it (`VAULT_PROXY_SECRET`) |
 | Vaults cannot reach each other | No published ports. Per-vault internal networks: `web-<vault>` (Traefik only) and `mcp-<vault>` (`vault-connector` only, vault alias `upstream.vault-<vault>`). Shared `egress` network with inter-container traffic disabled |
 | MetaMCP ↔ vaults (one way) | MetaMCP shares no network with any vault. It reaches the vaults through `vault-connector` on `mcp-upstream`, which listens only on that network and routes by Host (`mcp.vault-<vault>:4322`) to `upstream.vault-<vault>` on `mcp-<vault>`. Vaults can open no connection to MetaMCP or the connector |
+| Embeddings (LBV2-26) | One `embed` service loads BGE-M3 for all vaults. It sits only on the internal networks `embed-<vault>` (exactly one vault each, no egress), so a vault reaches only the service's address on its own network. Each vault has its own `EMBED_TOKEN_<VAULT>` (`MINDBASE_EMBED_TOKEN`); the service holds only SHA-256 hashes and accepts a token only from that vault's network (`EMBED_SOURCE_<VAULT>`). It answers only `POST /embed` and `GET /healthz` (no forwarding), limits texts, characters, body size, rate and queue per vault, and runs read-only, without capabilities, as non-root with a memory limit. Vaults do not mount `/models`. Details and residual risk: [`docs/self-hosting-mcp-http.md`](../../docs/self-hosting-mcp-http.md#shared-embedding-service) |
 | MCP access | Per-vault `MCP_HTTP_TOKEN`, known only to MetaMCP; `MCP_HTTP_ALLOWED_HOSTS=mcp.vault-<vault>:4322` |
 | Identity for the vault web server | Traefik forward-auth `authResponseHeaders` delete any client `X-authentik-username` / `X-authentik-groups` and set Authentik's values; the `vault-identity` middleware strips `X-Mindbase-User`. The vault trusts these headers only behind the proxy secret (LBV2-9) |
 | Vault administration (config writes) | `VAULT_ADMIN_GROUPS=vault-<vault>-admin,lokyy-admins` on every vault; the vault (LBV2-9) answers `403` to config changes from anyone else, based on the proxy-set `X-authentik-groups` (Authentik format: groups separated by `\|`). `GET /api/config` returns secrets masked. Tested end to end in `tests/isolation.sh` section 3c |
@@ -54,9 +57,9 @@ docker compose exec authentik-worker ak apply_blueprint custom/lokyy-vaults.yaml
 
 Middleware order on each vault router is `authentik@docker,vault-identity@docker,vault-<vault>-secret@docker`: forward-auth runs first, so Authentik never receives the proxy secret.
 
-All vaults mount the shared named volume `models` at `/models` **read-only** (embedding model cache of the slim image, LBV2-6). The one-shot service `model-prefetch` (same image, own egress network) fills it before any vault starts; vaults depend on it completing, so the first start needs internet access to Hugging Face and fails loudly without it. A vault cannot change the model files the others load. `model-prefetch` pins the Hugging Face revision and checks every file against `models/manifest.json` (SHA-256) on each start; a missing or changed file stops the vaults from starting (a changed file is never silently re-downloaded). Vaults load `transformers.js` with `allowRemoteModels = false` (`NODE_OPTIONS=--import=/lokyy/offline.mjs`), so embeddings come only from the verified cache and a model that is not there fails instead of being downloaded. Tesseract language data is cached per vault in the named volume `vault-<vault>-home` (`MINDBASE_MODEL_CACHE=/home/vault`), so it survives restarts and is not shared.
+The embedding model lives in the named volume `models`, mounted **read-only** only by `embed` (LBV2-26; before that every vault mounted it and loaded the model itself). The one-shot service `model-prefetch` (vault image, own egress network) fills it before `embed` starts; `embed` depends on it completing and the vaults depend on `embed` being healthy, so the first start needs internet access to Hugging Face and fails loudly without it. Nothing but `model-prefetch` can change the model files. `model-prefetch` pins the Hugging Face revision and checks every file against `models/manifest.json` (SHA-256) on each start; a missing or changed file stops `embed` and therefore the vaults from starting (a changed file is never silently re-downloaded). `embed` loads `transformers.js` with `allowRemoteModels = false` and the cache pointed at `/models` (plus `NODE_OPTIONS=--import=/lokyy/offline.mjs` as a second layer), so embeddings come only from the verified cache and a model that is not there fails instead of being downloaded. The vaults keep the same offline settings as a second layer, although they no longer load the model. Tesseract language data is cached per vault in the named volume `vault-<vault>-home` (`MINDBASE_MODEL_CACHE=/home/vault`), so it survives restarts and is not shared.
 
-Networks use explicit `10.231.x.0/28` subnets because the default Docker address pools can be exhausted on developer machines.
+Networks use explicit `10.231.x.0/28` subnets (`STACK_NET`) because the default Docker address pools can be exhausted on developer machines; `10.231.0`–`10.231.14` are taken.
 
 ## MetaMCP provisioning (LBV2-4)
 
@@ -109,18 +112,20 @@ Example: `dora` gets her own vault and reads the company vault (`vault-firma-rea
 1. **Secrets in `.env`.** Add one line per secret, each generated with `openssl rand -hex 32`:
 
    ```bash
-   for k in MCP_TOKEN_DORA PROXY_SECRET_DORA DEMO_PASS_DORA; do echo "$k=$(openssl rand -hex 32)" >> .env; done
+   for k in MCP_TOKEN_DORA PROXY_SECRET_DORA EMBED_TOKEN_DORA DEMO_PASS_DORA; do echo "$k=$(openssl rand -hex 32)" >> .env; done
+   ./embed-tokens.sh
    ```
 
-   `MCP_TOKEN_<VAULT>` must be the vault name in upper case with `-` → `_` (provisioning looks it up by that name). Add the names without values to `.env.example` too. `rotate-secrets.sh` picks up every `MCP_TOKEN_*` / `PROXY_SECRET_*` automatically.
+   `MCP_TOKEN_<VAULT>` must be the vault name in upper case with `-` → `_` (provisioning looks it up by that name). Add the names without values to `.env.example` too. `rotate-secrets.sh` picks up every `MCP_TOKEN_*` / `PROXY_SECRET_*` / `EMBED_TOKEN_*` automatically.
 
-2. **Vault service in `compose.yml`.** Copy the `vault-ben` block to `vault-dora` and replace every `ben` / `BEN`: `MCP_HTTP_TOKEN: ${MCP_TOKEN_DORA:?set in .env}`, `MCP_HTTP_ALLOWED_HOSTS: mcp.vault-dora:4322`, `VAULT_PROXY_SECRET: ${PROXY_SECRET_DORA:?set in .env}`, `VAULT_ADMIN_GROUPS: vault-dora-admin,lokyy-admins`, volumes `vault-dora:/data`, `models:/models:ro`, `vault-dora-home:/home/vault`, and all Traefik labels (`traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-dora`, routers `vault-dora` and `vault-dora-outpost` on ``Host(`dora.vault.localhost`)``, middlewares `authentik@docker,vault-identity@docker,vault-dora-secret@docker`, and the `vault-dora-secret` middleware setting `X-Vault-Proxy-Secret=${PROXY_SECRET_DORA}`). Networks: `web-dora: {}`, `mcp-dora: { aliases: [upstream.vault-dora] }`, `egress: {}`. The vault services set no `mem_limit` today; if you add one, add it to every vault (see "Memory per vault").
+2. **Vault service in `compose.yml`.** Copy the `vault-ben` block to `vault-dora` and replace every `ben` / `BEN`: `MCP_HTTP_TOKEN: ${MCP_TOKEN_DORA:?set in .env}`, `MCP_HTTP_ALLOWED_HOSTS: mcp.vault-dora:4322`, `VAULT_PROXY_SECRET: ${PROXY_SECRET_DORA:?set in .env}`, `MINDBASE_EMBED_TOKEN: ${EMBED_TOKEN_DORA:?set in .env}`, `VAULT_ADMIN_GROUPS: vault-dora-admin,lokyy-admins`, volumes `vault-dora:/data`, `vault-dora-home:/home/vault`, `./models/offline.mjs:/lokyy/offline.mjs:ro`, and all Traefik labels (`traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-dora`, routers `vault-dora` and `vault-dora-outpost` on ``Host(`dora.vault.localhost`)``, middlewares `authentik@docker,vault-identity@docker,vault-dora-secret@docker`, and the `vault-dora-secret` middleware setting `X-Vault-Proxy-Secret=${PROXY_SECRET_DORA}`). Networks: `web-dora: {}`, `mcp-dora: { aliases: [upstream.vault-dora] }`, `embed-dora: {}`, `egress: {}`. The memory limit comes from the shared `x-vault` block (`VAULT_MEM_LIMIT`).
 
    Then, in the same file:
    - `authentik-server` → `environment`: add `DEMO_PASS_DORA: ${DEMO_PASS_DORA:?set in .env}` next to `DEMO_PASS_CARL`. The blueprint's `!Env DEMO_PASS_DORA` reads it from the Authentik container, not from `.env`; without this line dora's password is empty. `authentik-worker` (which applies the blueprint) reuses that block via `environment: *authentik-env`, so it needs no separate entry.
    - `traefik` → `networks`: add `web-dora`.
    - `vault-connector` → `CONNECTOR_VAULTS: anna,ben,firma,dora`, alias `mcp.vault-dora` on `mcp-upstream`, and `mcp-dora: {}`.
-   - top-level `networks`: `web-dora` and `mcp-dora`, both `internal: true`, each with the next free `/28` subnet (`10.231.0`–`10.231.11` are taken, so `10.231.12.0/28` and `10.231.13.0/28`).
+   - `embed` → `EMBED_VAULTS: anna,ben,firma,dora`, `EMBED_TOKEN_SHA256_DORA: ${EMBED_TOKEN_SHA256_DORA:?run ./embed-tokens.sh}`, `EMBED_SOURCE_DORA: ${STACK_NET:-10.231}.17.0/28` (the `embed-dora` subnet), and `embed-dora` in its `networks`.
+   - top-level `networks`: `web-dora`, `mcp-dora` and `embed-dora`, all `internal: true`, each with the next free `/28` subnet (`10.231.0`–`10.231.14` are taken, so `${STACK_NET:-10.231}.15.0/28`, `.16.0/28` and `.17.0/28`).
    - top-level `volumes`: `vault-dora:` and `vault-dora-home:`.
 
 3. **Authentik (blueprint `authentik/blueprints/lokyy-vaults.yaml`).** Add, following the entries for `ben`:
@@ -213,20 +218,23 @@ It merges `provider: openai`, `baseUrl: https://api.eurouter.ai/api/v1`, model a
 Risks:
 - The OpenAI adapter uses `/v1/responses` instead of chat completions whenever a message carries a document block (PDF chat). EUrouter answers `400` (not `404`) on `/api/v1/responses`, so the route exists, but PDF chat through EUrouter is untested without a real key.
 - `GET /api/config` returns the whole config including `apiKey` to every user who can open the vault web UI.
-- Embeddings do not use EUrouter: BGE-M3 runs locally in the vault (`@xenova/transformers`, ~570 MB download from Hugging Face on first use, cached in the shared `models` volume).
+- Embeddings do not use EUrouter: BGE-M3 runs in the stack's own `embed` service (`@xenova/transformers`, ~570 MB model fetched once by `model-prefetch`).
 
-### Memory per vault (measured 2026-09-16, `docker stats`, 5 s sampling)
+### Memory (LBV2-26, measured 2026-09-18, `docker stats`, 1 s sampling)
 
-| State | vault-anna | vault-ben | vault-firma |
-|---|---|---|---|
-| Idle after fresh start (12 samples) | 234 MiB | 239–240 MiB | 244–246 MiB |
-| anna restarted with 200 generated pages (36 samples, 3 min) | 195 MiB → **8.98 GiB peak**, 4.42 GiB afterwards | unchanged | unchanged |
+With the shared `embed` service the vaults no longer hold the model:
 
-The embedding model does not work in the image: `@xenova/transformers` tries to write its cache to `/app/node_modules/.../@xenova/transformers/.cache`, which the non-root `vault` user cannot create (`EACCES`, 40 errors). Pages were not embedded (`indexed=0`), but the downloaded model files were held in memory and not released. Fix (separate item): set a writable cache dir (e.g. `env.cacheDir` / `TRANSFORMERS_CACHE` on a volume) and a memory limit per vault, then measure indexing again.
+| State | vault-anna | embed |
+|---|---|---|
+| Idle after start, model loaded | 190–200 MiB | 2.09 GiB |
+| Indexing 200 generated pages (≈2,500 chars each) through the service, then 20 hybrid searches via Traefik (`tests/embed.sh`) | **226 MiB peak** | 2.17 GiB peak |
+| One request with 16 texts of 8,000 chars (the maximum length; ~3.3 s per text on 16 cores) | – | **2.38 GiB peak** |
+
+Limits: `VAULT_MEM_LIMIT` default `1g` (vaults also run OCR and PDF extraction), `EMBED_MEM_LIMIT` default `3584m` (≈1.1 GiB above the measured worst case). Before LBV2-26 every vault loaded BGE-M3 itself (2.62 GiB peak per vault after the LBV2-24 cache fix; 8.98 GiB peak without it on 2026-09-16), so 30 vaults needed 30 model copies; now they share one. Throughput is the new limit: the service embeds one text at a time (all cores per text), round-robin across vaults, so a vault indexing a large import slows other vaults' first-time indexing but not their search beyond one text's latency.
 
 ## Attack tests
 
-`tests/isolation.sh` (121 checks) logs in through the real Authentik flow (`tests/login.sh`) and verifies:
+`tests/isolation.sh` (161 checks) logs in through the real Authentik flow (`tests/login.sh`) and verifies:
 
 1. Anonymous requests are redirected to the login.
 2. Browser isolation: each user reaches only their own vault; readers are denied the company vault web UI; only admins reach MetaMCP.
@@ -237,6 +245,9 @@ The embedding model does not work in the image: `@xenova/transformers` tries to 
 6. Lateral movement from a vault (e.g. SSRF): other vaults, Authentik and databases unreachable by name; MetaMCP reachable but authenticated, and a signup attempt creates no account; internet (EUrouter) reachable.
 7. Network topology, independent of DNS: each `web-<vault>` / `mcp-<vault>` network has exactly the expected two members, each vault joins exactly its three networks, egress has inter-container traffic disabled, and every other vault is unreachable on every one of its IPs and ports.
 8. Only Traefik publishes a port, bound to `127.0.0.1`.
+9. Shared embedding service (section 5d, LBV2-26): each vault embeds with its own token; another vault's token (bound to that vault's network), no token and a wrong token get `401`; oversized requests `400`; `embed` is no proxy (absolute-form URL, `CONNECT`, foreign `Host` reach no vault) and its addresses on other vaults' embed networks are unreachable; `embed` has no internet and no route to public IPs, its networks are internal, it runs read-only, non-root, without capabilities and with a memory limit, holds only token hashes, and its logs contain neither text nor tokens; hybrid search in a vault goes through the service; vaults do not mount `/models`.
+
+`tests/embed.sh` (9 checks): service vectors are identical to the former in-process vectors (4 texts incl. umlauts, emoji and one over 8,000 chars: cosine 1.0000000, max |Δ| 0), and vault-anna stays below 400 MiB (`VAULT_RSS_LIMIT_MIB`) while 200 pages are indexed through the service and 20 hybrid searches run; `embed` stays below its limit and is not OOM-killed. It writes and afterwards deletes 200 test pages in vault-anna.
 
 `tests/metamcp-attacks.sh` (98 checks, all through Traefik with the provisioned keys):
 
@@ -251,6 +262,7 @@ The embedding model does not work in the image: `@xenova/transformers` tries to 
 ## Known limitations
 
 - MetaMCP 2.4.22 does not bind MCP sessions to the endpoint or API key that created them (finding M2, High): with a leaked session id another user could take over the session. Mitigated by `mcp-gate` (session binding) and by removing every network path from vaults to MetaMCP; a client that reaches MetaMCP directly (only `mcp-gate`, Traefik, `metamcp-init` and `vault-connector` can) bypasses the binding. Gate bindings live in memory: restarting `mcp-gate` forces all clients to re-initialize their session.
+- `embed` is on every `embed-<vault>` network. It has no forwarding code and holds no vault data or plain tokens, but a vault that compromises it (HTTP server, tokenizer, ONNX runtime) gets a process that can open connections to every other vault's ports (still protected by proxy secret and MCP token). See the residual-risk paragraph in `docs/self-hosting-mcp-http.md#shared-embedding-service`.
 - `vault-connector` is on every `mcp-<vault>` network. It only listens on its `mcp-upstream` address and forwards by Host header, but it is a shared component: a compromise of it reaches all vaults' MCP ports (still token-protected).
 - MetaMCP ends sessions only after `SESSION_LIFETIME` (set to 8 h by `metamcp-init`). When provisioning changes a user's credentials, server set or role, or removes a user, it rotates that user's key and restarts MetaMCP, which ends every open session (all clients reconnect).
 - Per-vault proxy secrets are Traefik labels, so anyone with Docker API access (e.g. `docker inspect`, the Docker socket Traefik mounts) can read them. Docker access is host-admin level anyway; rotate with `./rotate-secrets.sh` after any exposure.
