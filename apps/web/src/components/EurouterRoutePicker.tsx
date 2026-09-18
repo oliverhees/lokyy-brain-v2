@@ -26,8 +26,8 @@ const hintClass = 'text-[11px] mt-1 leading-[1.45]';
 
 /**
  * EUrouter "Route" picker (LBV2-30): lists the routing rules the key can use.
- * Shows the rule name, stores the rule id. EUrouter routes by rule, so the
- * route matters more than the model id.
+ * Shows the rule name, stores the rule id. EUrouter is configured by route
+ * only; the rule brings its models.
  */
 export function EurouterRoutePicker({ provider, baseUrl, apiKey, value, onChange }: Props) {
   const selectId = useId();
@@ -75,7 +75,7 @@ export function EurouterRoutePicker({ provider, baseUrl, apiKey, value, onChange
   } else if (state.rules.length === 0 && !value) {
     body = (
       <div data-testid="eurouter-routes-empty" className={hintClass} style={{ color: 'var(--text-mid)' }}>
-        No routes found for this key. Create a routing rule in your EUrouter dashboard, or continue with a model only.
+        No routes found for this key. Create a routing rule in your EUrouter dashboard, then reload this page.
       </div>
     );
   } else {
@@ -93,14 +93,13 @@ export function EurouterRoutePicker({ provider, baseUrl, apiKey, value, onChange
           className="w-full rounded-[10px] px-3.5 py-3 text-[13px] outline-none glass-card transition-colors"
           style={{ color: 'var(--text-default)', background: 'var(--surface-1)' }}
         >
-          <option value="">No route (model only)</option>
+          <option value="">Choose a route…</option>
           {missing && <option value={value}>Saved route (not available for this key)</option>}
           {state.rules.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
         <div id={helpId} data-testid="eurouter-route-help" className={hintClass} style={{ color: 'var(--text-mid)' }}>
-          {selected
-            ? <>The route filters and prioritizes providers for the model below.{selected.model && <> Its default model is <code>{selected.model}</code>.</>}</>
-            : 'Without a route, EUrouter picks providers for the model below.'}
+          The route picks the model and providers.
+          {selected?.model && <> This route starts with <code>{selected.model}</code>.</>}
         </div>
       </>
     );

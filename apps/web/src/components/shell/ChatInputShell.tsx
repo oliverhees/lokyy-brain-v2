@@ -6,6 +6,7 @@ import { apiGet, apiPut } from '../../lib/api';
 import { modelSwitchPayload } from '../../lib/config-form';
 import { useSettings } from '../../store/settings';
 import { showToast } from '../../store/toast';
+import { isEurouterUrl } from '../../lib/eurouter';
 
 interface ChatInputShellProps {
   value: string;
@@ -43,6 +44,8 @@ export function ChatInputShell({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [localModels, setLocalModels] = useState<string[] | null>(null);
   const provider = useSettings((s) => s.provider);
+  // EUrouter route (LBV2-30): the route picks the model; change it in Settings, not here.
+  const routed = useSettings((s) => !!s.ruleId && isEurouterUrl(s.baseUrl));
 
   useEffect(() => {
     if (!modelMenuOpen) return;
@@ -175,6 +178,16 @@ export function ChatInputShell({
           <IBtn onClick={onAttach} title="Attach file"><Paperclip size={13} strokeWidth={1.8} /></IBtn>
           <IBtn onClick={onMention} title="Reference a note"><AtSign size={13} strokeWidth={1.8} /></IBtn>
           <IBtn onClick={onSlashCommand} title="Slash commands"><Slash size={13} strokeWidth={1.8} /></IBtn>
+          {routed ? (
+            <span
+              className="ml-1 px-2 py-0.5 rounded text-[11px]"
+              style={{ background: 'var(--bg-2)', color: 'var(--text-mid)', fontFamily: '-apple-system, ui-monospace, monospace' }}
+              title="EUrouter route — change it in Settings → Provider"
+              data-testid="chat-route-label"
+            >
+              {modelName}
+            </span>
+          ) : (
           <span className="relative ml-1" data-model-menu>
             <button
               onClick={() => (onModelClick ? onModelClick() : setModelMenuOpen((v) => !v))}
@@ -233,6 +246,7 @@ export function ChatInputShell({
               </div>
             )}
           </span>
+          )}
           <button
             onClick={onSend}
             disabled={disabled || !value.trim()}

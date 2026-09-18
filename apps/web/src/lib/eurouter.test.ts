@@ -11,9 +11,11 @@ describe('isEurouterUrl (LBV2-30)', () => {
 });
 
 describe('modelChipLabel (LBV2-30)', () => {
-  it('shows the model, else the route, else unconfigured', () => {
-    expect(modelChipLabel('gpt-4o', 'r')).toBe('gpt-4o');
-    expect(modelChipLabel('', 'r')).toBe('EUrouter route');
-    expect(modelChipLabel('', undefined)).toBe('unconfigured');
+  it('shows the route name for a route, else the model, else unconfigured', () => {
+    expect(modelChipLabel('', 'r', 'EU Compliance')).toBe('EU Compliance');
+    expect(modelChipLabel('gpt-4o', 'r', 'EU Compliance')).toBe('EU Compliance');
+    expect(modelChipLabel('', 'r', undefined)).toBe('EUrouter route');
+    expect(modelChipLabel('gpt-4o', undefined, undefined)).toBe('gpt-4o');
+    expect(modelChipLabel('', undefined, undefined)).toBe('unconfigured');
   });
 });

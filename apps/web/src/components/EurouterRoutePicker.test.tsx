@@ -66,7 +66,7 @@ describe('EurouterRoutePicker', () => {
     const label = container.querySelector(`label[for="${select.id}"]`);
     expect(label?.textContent).toMatch(/Route/);
     expect([...select.options].map((o) => [o.value, o.textContent])).toEqual([
-      ['', 'No route (model only)'], [RULE, 'EU only'], ['11111111-2222-4333-8444-555555555555', 'Cheap'],
+      ['', 'Choose a route…'], [RULE, 'EU only'], ['11111111-2222-4333-8444-555555555555', 'Cheap'],
     ]);
     await act(async () => {
       select.value = RULE;
@@ -75,10 +75,11 @@ describe('EurouterRoutePicker', () => {
     expect(onChange).toHaveBeenCalledWith(RULE, RULES[0]);
   });
 
-  it('explains which model the selected route uses', async () => {
+  it('explains that the route brings its models', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ rules: RULES })));
     await render({ apiKey: 'eur_k', value: RULE });
     expect(q('eurouter-route-help')?.textContent).toContain('mistral/mistral-large');
+    expect(q('eurouter-route-help')?.textContent).toMatch(/route picks the model/i);
   });
 
   it('says the key is invalid when the server reports it', async () => {

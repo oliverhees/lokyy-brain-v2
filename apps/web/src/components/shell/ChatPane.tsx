@@ -32,6 +32,7 @@ export function ChatPane({
   const { messages } = useChat();
   const model = useSettings((s) => s.model);
   const ruleId = useSettings((s) => s.ruleId);
+  const ruleName = useSettings((s) => s.ruleName);
   const [draft, setDraft] = useState('');
   const [activeOp, setActiveOp] = useState<{ op: OpName; text: string; runId: number } | null>(null);
   const sendFnRef = useRef<((text: string) => Promise<void>) | null>(null);
@@ -156,7 +157,7 @@ export function ChatPane({
         value={draft}
         onChange={setDraft}
         onSend={handleSend}
-        modelName={modelChipLabel(model, ruleId)}
+        modelName={modelChipLabel(model, ruleId, ruleName)}
         onRunOp={runOp}
         onSlashCommand={() => setDraft('/')}
       />

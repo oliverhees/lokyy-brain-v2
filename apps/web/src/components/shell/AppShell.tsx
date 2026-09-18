@@ -168,7 +168,7 @@ export function AppShell({ callbacks, chatTitle, onOpenSearch }: AppShellProps) 
         <StatusBar
           notesCount={counts.notes}
           wikiCount={counts.wiki}
-          modelName={modelChipLabel(settings.model, settings.ruleId)}
+          modelName={modelChipLabel(settings.model, settings.ruleId, settings.ruleName)}
           appVersion={APP_VERSION}
           lastSyncLabel={null}
           onModelClick={() => navigate({ kind: 'settings' })}

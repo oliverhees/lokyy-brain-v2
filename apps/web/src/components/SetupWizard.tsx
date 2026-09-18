@@ -86,8 +86,9 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
   const [apiKey, setApiKey] = useState(settings.apiKey ?? '');
   const [baseUrl, setBaseUrl] = useState(settings.baseUrl ?? '');
   const [model, setModel] = useState(settings.model ?? '');
-  // EUrouter routing rule id (LBV2-30); '' = route by model only.
+  // EUrouter is configured by route only (LBV2-30): rule id + its display name, no model.
   const [ruleId, setRuleId] = useState(settings.ruleId ?? '');
+  const [ruleName, setRuleName] = useState(settings.ruleName ?? '');
   const [autoSave, setAutoSave] = useState(settings.autoSave ?? true);
   const [mergeSaves, setMergeSaves] = useState(settings.mergeSaves ?? false);
   const [testing, setTesting] = useState(false);
@@ -200,14 +201,17 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
     setBaseUrl(settings.baseUrl);
     setModel(settings.model);
     setRuleId(settings.ruleId ?? '');
+    setRuleName(settings.ruleName ?? '');
     setAutoSave(settings.autoSave);
     setMergeSaves(settings.mergeSaves);
   }, [settings.loaded]);
 
   const selected = PROVIDERS.find((p) => p.id === selectedId)!;
-  // EUrouter: the route (rule id) filters and prioritizes providers; the model is still required.
+  // EUrouter: the route (rule id) brings its models, so there is no model to pick.
   const usesEurouter = selected.configProvider === 'openai' && isEurouterUrl(baseUrl);
   const effectiveRuleId = usesEurouter ? ruleId : '';
+  const effectiveModel = usesEurouter ? '' : model;
+  const canTest = usesEurouter ? !!ruleId : !!model;
 
   const stepIndex = step === 'provider' ? 0 : step === 'configure' ? 1 : 2;
 
@@ -215,10 +219,9 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
     if (id === 'ollama' && !localModelsEnabled) return;
     const provider = PROVIDERS.find((p) => p.id === id)!;
     setSelectedId(id);
-    // EUrouter needs one of its own model ids: never carry over another provider's model.
-    setModel(provider.defaults.model || (id === 'eurouter' && id !== selectedId ? '' : model));
+    setModel(provider.defaults.model || (id === 'eurouter' ? '' : model));
     setBaseUrl(provider.defaults.baseUrl || (id === 'custom' ? baseUrl : ''));
-    if (id !== selectedId) setRuleId('');
+    if (id !== selectedId) { setRuleId(''); setRuleName(''); }
     if (!provider.needsApiKey) setApiKey('');
     // A masked stored key is only valid for the stored provider: ask for a real key on change.
     else if (id !== selectedId) setApiKey((k) => keyAfterDestinationChange(k));
@@ -234,7 +237,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
     try {
       const r = await apiPost<{ ok: boolean; error?: string }>('/config/test', {
         provider: selected.configProvider,
-        model,
+        model: effectiveModel,
         apiKey,
         baseUrl,
         ruleId: effectiveRuleId,
@@ -260,10 +263,11 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
     try {
       const config = {
         provider: selected.configProvider,
-        model,
+        model: effectiveModel,
         apiKey,
         baseUrl,
         ruleId: effectiveRuleId,
+        ruleName: effectiveRuleId ? ruleName : '',
         autoSave,
         mergeSaves,
       };
@@ -280,10 +284,11 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
     try {
       const config = {
         provider: selected.configProvider,
-        model,
+        model: effectiveModel,
         apiKey,
         baseUrl,
         ruleId: effectiveRuleId,
+        ruleName: effectiveRuleId ? ruleName : '',
         autoSave: true,
         mergeSaves: false,
       };
@@ -583,25 +588,25 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
               )}
               {usesEurouter && (
                 <EurouterRoutePicker provider={selected.configProvider} baseUrl={baseUrl} apiKey={apiKey} value={ruleId}
-                  onChange={(id, rule) => { setRuleId(id); if (rule?.model) setModel(rule.model); }} />
+                  onChange={(id, rule) => { setRuleId(id); setRuleName(rule?.name ?? ''); }} />
               )}
-              <div>
+              {!usesEurouter && <div>
                 <div className="text-[10.5px] tracking-[1px] uppercase font-semibold mb-1.5" style={{ color: 'var(--text-mid)' }}>Model</div>
                 <input
                   type="text"
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
-                  placeholder={usesEurouter ? 'e.g. qwen3.6-27b' : selected.defaults.model || 'model-name'}
+                  placeholder={selected.defaults.model || 'model-name'}
                   className="w-full rounded-[10px] px-3.5 py-3 text-[13px] font-mono outline-none glass-card transition-colors"
                   style={{ color: 'var(--text-default)' }}
                 />
-              </div>
+              </div>}
             </div>
 
             <div className="flex justify-center">
               <button
                 onClick={testConnection}
-                disabled={testing || saving || !model}
+                disabled={testing || saving || !canTest}
                 className="px-5 py-3 rounded-full text-[13px] font-semibold disabled:opacity-40"
                 style={{ background: 'rgba(255,255,255,0.95)', color: 'var(--text-inverse)' }}
               >
@@ -644,7 +649,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
               Your second brain<br /><span className="accent-italic">is online.</span>
             </div>
             <div className="text-[13px] mb-8" style={{ color: 'var(--text-mid)' }}>
-              {selected.label} · {model} · ready to compile.
+              {selected.label} · {usesEurouter ? (ruleName || 'route') : model} · ready to compile.
             </div>
             <button
               onClick={saveAndFinish}

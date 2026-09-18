@@ -10,10 +10,10 @@ export interface EurouterRule {
   model: string | null;
 }
 
-/** Model chip / status bar text: the model, else a configured route, else "unconfigured". */
-export function modelChipLabel(model: string, ruleId: string | undefined): string {
-  if (model) return model;
-  return ruleId ? 'EUrouter route' : 'unconfigured';
+/** Model chip / status bar text: the route name for an EUrouter route, else the model, else "unconfigured". */
+export function modelChipLabel(model: string, ruleId: string | undefined, ruleName: string | undefined): string {
+  if (ruleId) return ruleName || 'EUrouter route';
+  return model || 'unconfigured';
 }
 
 export function isEurouterUrl(url: string): boolean {
