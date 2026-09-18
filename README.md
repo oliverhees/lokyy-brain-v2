@@ -1,4 +1,4 @@
-# MindBase — Karpathy's LLM Wiki, as a product
+# Lokyy Brain — Karpathy's LLM Wiki, as a product
 
 [![npm](https://img.shields.io/npm/v/mindbase-mcp?label=mindbase-mcp)](https://www.npmjs.com/package/mindbase-mcp)
 [![npm downloads](https://img.shields.io/npm/dw/mindbase-mcp)](https://www.npmjs.com/package/mindbase-mcp)
@@ -16,23 +16,23 @@ npx mindbase-app
 One command: starts the local server, opens the web app, and walks you through picking a **free local model** that fits your RAM. No API key, nothing leaves your machine. (Node 20+)
 
 <p align="center">
-  <img alt="Demo: /contribute in the MindBase web UI — the AI shows takeaways and a checkbox plan, and writes to the LLM wiki only after approval" src="docs/assets/contribute.gif" width="880">
+  <img alt="Demo: /contribute in the Lokyy Brain web UI — the AI shows takeaways and a checkbox plan, and writes to the LLM wiki only after approval" src="docs/assets/contribute.gif" width="880">
 </p>
 
-MindBase implements Andrej Karpathy's [LLM-Wiki pattern](https://x.com/karpathy/status/1911080091498963196): you feed it sources (papers, articles, thoughts); the LLM reads, cross-references, flags contradictions, and writes structured wiki pages. Later, when you ask a question, the wiki already has the synthesized answer — no vector-search re-derivation at query time.
+Lokyy Brain implements Andrej Karpathy's [LLM-Wiki pattern](https://x.com/karpathy/status/1911080091498963196): you feed it sources (papers, articles, thoughts); the LLM reads, cross-references, flags contradictions, and writes structured wiki pages. Later, when you ask a question, the wiki already has the synthesized answer — no vector-search re-derivation at query time.
 
 **Status:** Early access, actively developed. What's new: [CHANGELOG](CHANGELOG.md) · [Releases](https://github.com/frankchu91/mindbase-llm-wiki/releases)
 
 ---
 
-## Why MindBase
+## Why Lokyy Brain
 
 You read a lot. Papers, articles, tweets, docs. You want to remember them, connect them, form opinions from them. Today you have two bad options:
 
 - **Notion / Obsidian / Roam:** Passive containers. You do all the organizing. AI features are bolted-on generation, not maintenance.
 - **NotebookLM / Perplexity Pages / ChatGPT search:** RAG-based. Nothing accumulates. Every question re-derives the answer from raw sources.
 
-**MindBase is the third option:** the LLM actively maintains a persistent, structured wiki as you feed it sources. Knowledge compounds. Your `context.md` gets sharper every time you contribute. The AI *remembers you across sessions* because your beliefs are written down in markdown files — not stored in a chat history that gets summarized away.
+**Lokyy Brain is the third option:** the LLM actively maintains a persistent, structured wiki as you feed it sources. Knowledge compounds. Your `context.md` gets sharper every time you contribute. The AI *remembers you across sessions* because your beliefs are written down in markdown files — not stored in a chat history that gets summarized away.
 
 Think of it as **a personal Wikipedia that an AI intern writes for you**, kept up to date, cross-referenced, and honest about what it doesn't know.
 
@@ -43,7 +43,7 @@ Three physical layers on disk (Karpathy's model):
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
-    <img alt="MindBase: you feed sources, the LLM gardens them into a wiki that compounds — plain markdown on your disk" src="docs/assets/hero-light.svg" width="920">
+    <img alt="Lokyy Brain: you feed sources, the LLM gardens them into a wiki that compounds — plain markdown on your disk" src="docs/assets/hero-light.svg" width="920">
   </picture>
 </p>
 
@@ -148,7 +148,7 @@ Point it at `npx -y mindbase-mcp` as a stdio server. See your client's MCP docs 
 Since 0.3 the browser app stands on its own — write notes in a full WYSIWYG editor (`Cmd+N`), quick-capture from anywhere (`Cmd+I`), and run the AI operations with approval cards: `/contribute`, `/build`, `/lint`, `/research`. Live demos on the **[website](https://frankchu91.github.io/mindbase-llm-wiki/)**.
 
 <p align="center">
-  <img alt="MindBase web UI — category tree on the left, the LLM-maintained context.md in the center, chat starters on the right" src="docs/assets/webui.png" width="920">
+  <img alt="Lokyy Brain web UI — category tree on the left, the LLM-maintained context.md in the center, chat starters on the right" src="docs/assets/webui.png" width="920">
 </p>
 
 **Free local models:** the setup wizard detects your hardware and installs what fits — `llama3.2:3b` (8GB), `qwen3:14b` (24GB+), or Meta's **Muse Glimmer 30B** (32GB+ Apple Silicon, Ollama ≥ 0.32.7). Measured guidance: qwen3:14b for interactive work (~30s), Glimmer for background lint/build — slower, but its findings quote the exact conflicting sentences. The model switcher on the chat composer flips between them in two clicks.
@@ -187,7 +187,7 @@ Everything is plain markdown under `~/mindbase-data/` (override: `MINDBASE_DATA_
 └── state/builder/snapshots/  # context.md snapshots for rollback
 ```
 
-No proprietary database — what you see on disk is what MindBase knows. `git init` it, back it up with anything, delete a project with `rm -rf`.
+No proprietary database — what you see on disk is what Lokyy Brain knows. `git init` it, back it up with anything, delete a project with `rm -rf`.
 
 ## Architecture at a glance
 

@@ -1,4 +1,4 @@
-# MindBase Guide — daily workflows, projects, troubleshooting
+# Lokyy Brain Guide — daily workflows, projects, troubleshooting
 
 > Install and quickstart live in the [README](../README.md). This guide
 > covers what you'll do every day once you're set up.
@@ -41,7 +41,7 @@ what's the status of my mindbase?
 You should see:
 
 ```
-MindBase — Project: my-research
+Lokyy Brain — Project: my-research
 Location: ~/mindbase-data/projects/my-research
 
 README     28 lines
@@ -82,7 +82,7 @@ query retrieves a weighted average of values based on similarity to keys.
 
 ### 2. Ingest a substantive source (paper, article, PDF)
 
-For a real source, MindBase walks through Karpathy's 8-step ingest.
+For a real source, Lokyy Brain walks through Karpathy's 8-step ingest.
 
 **Claude Code (flagship — with sub-agent):**
 ```
@@ -157,7 +157,7 @@ The LLM will orchestrate the equivalent MCP tool calls. Slightly less structured
 
 ### 5. Health check (lint)
 
-Ask MindBase to audit itself.
+Ask Lokyy Brain to audit itself.
 
 **Claude Code:**
 ```
