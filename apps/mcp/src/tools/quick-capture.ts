@@ -12,7 +12,7 @@ const inputSchema = z.object({
 
 export const definition = {
   name: 'quick_capture',
-  description: 'Save content to the inbox for later batch processing (NOT a direct wiki note). Use this for "save this for later, I will categorize it myself in the MindBase UI". To create a wiki note directly, use create_note instead.',
+  description: 'Save content to the inbox for later batch processing (NOT a direct wiki note). Use this for "save this for later, I will categorize it myself in the Lokyy Brain UI". To create a wiki note directly, use create_note instead.',
   inputSchema: {
     type: 'object',
     properties: {

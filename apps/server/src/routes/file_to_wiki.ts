@@ -71,7 +71,7 @@ export function fileToWikiRoutes(ctx: ServerContext): Router {
       if (await ctx.store.exists('wiki/INDEX.md')) {
         indexBody = await ctx.store.readText('wiki/INDEX.md');
       } else {
-        indexBody = '# MindBase Wiki Index\n\n';
+        indexBody = '# Lokyy Brain Wiki Index\n\n';
       }
       if (!indexBody.includes(`${slug}.md`)) {
         indexBody = `${indexBody.trimEnd()}\n- [${title}](${mdPath}) — ${title}\n`;

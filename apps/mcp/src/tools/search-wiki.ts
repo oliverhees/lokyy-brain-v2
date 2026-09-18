@@ -11,7 +11,7 @@ export const inputSchema = z.object({
 
 export const definition = {
   name: 'search_wiki',
-  description: 'Full-text search across the user\'s MindBase wiki — matches page titles, one-liners, and slugs. Returns ranked list with snippets.',
+  description: 'Full-text search across the user\'s Lokyy Brain wiki — matches page titles, one-liners, and slugs. Returns ranked list with snippets.',
   inputSchema: {
     type: 'object',
     properties: {

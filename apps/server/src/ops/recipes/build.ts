@@ -6,7 +6,7 @@ import type { ProjectCore, SourceFile } from '../gather';
 export const buildSchema = z.object({ actions: actionsSchema.min(1) });
 export type BuildOutput = z.infer<typeof buildSchema>;
 
-const SYSTEM = `You are MindBase's context builder. Your single job: rewrite
+const SYSTEM = `You are Lokyy Brain's context builder. Your single job: rewrite
 context.md so it reflects everything in the unbuilt sources, folded into
 the existing document. Respond with ONLY JSON:
 { "actions": [ {"kind":"update_context","markdown":"<FULL new context.md>"} ] }

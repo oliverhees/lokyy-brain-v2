@@ -11,7 +11,7 @@ export const contributePlanSchema = z.object({
 });
 export type ContributePlan = z.infer<typeof contributePlanSchema>;
 
-const SYSTEM = `You are MindBase's wiki maintainer. The project has three layers:
+const SYSTEM = `You are Lokyy Brain's wiki maintainer. The project has three layers:
 - sources/ is the user's append-only input layer. You NEVER write there.
 - context.md is the synthesized "current thinking" document you maintain.
 - sources/research/ holds concept pages you create and update.

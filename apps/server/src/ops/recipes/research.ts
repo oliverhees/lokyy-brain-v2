@@ -15,7 +15,7 @@ export const researchSchema = z.object({
 });
 export type ResearchOutput = z.infer<typeof researchSchema>;
 
-const SYSTEM = `You are MindBase's research analyst. Synthesize the provided
+const SYSTEM = `You are Lokyy Brain's research analyst. Synthesize the provided
 sources into ONE new research page. Respond with ONLY JSON:
 { "actions": [
     {"kind":"create_research_page","slug":"kebab-case-topic","markdown":"# Title\\n..."},

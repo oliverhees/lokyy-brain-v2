@@ -59,7 +59,7 @@ export function OnboardingWizard() {
         <div className="flex items-center gap-2 mb-2">
           <Sparkles size={16} strokeWidth={1.8} style={{ color: 'var(--accent)' }} />
           <span className="text-[11px] uppercase tracking-wider" style={{ color: 'var(--text-mid)' }}>
-            Welcome to MindBase
+            Welcome to Lokyy Brain
           </span>
         </div>
 
@@ -69,7 +69,7 @@ export function OnboardingWizard() {
               What are you researching?
             </h1>
             <p className="text-[13px] mb-5" style={{ color: 'var(--text-mid)' }}>
-              MindBase organizes everything under a project. Give yours a name.
+              Lokyy Brain organizes everything under a project. Give yours a name.
             </p>
             <input
               autoFocus

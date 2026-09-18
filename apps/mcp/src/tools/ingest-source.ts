@@ -28,7 +28,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
   const parsed = inputSchema.safeParse(rawInput);
   if (!parsed.success) return errorResult(`Invalid input: ${parsed.error.issues[0]?.message ?? 'parse error'}`);
   const { text, title, source_url } = parsed.data;
-  if (!ctx.config) return errorResult('LLM not configured', 'Open MindBase Settings to configure your LLM.');
+  if (!ctx.config) return errorResult('LLM not configured', 'Open Lokyy Brain Settings to configure your LLM.');
 
   try {
     const raw = await ingestPaste(ctx.store, { text, title, source_url });

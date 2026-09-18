@@ -55,6 +55,7 @@ proc.stdout.on('data', (chunk) => {
   }
 });
 
+setTimeout(() => send({ jsonrpc: '2.0', id: 4, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'full-smoke', version: '0' } } }), 100);
 setTimeout(() => send({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }), 200);
 setTimeout(() => send({ jsonrpc: '2.0', id: 2, method: 'resources/list', params: {} }), 600);
 setTimeout(() => send({ jsonrpc: '2.0', id: 3, method: 'prompts/list', params: {} }), 1000);
@@ -65,6 +66,23 @@ setTimeout(() => {
   let exitCode = 0;
 
   // --- Assertions ---
+  // Product name (LBV2-35): server name and LLM instructions say "Lokyy Brain".
+  const initRes = results[4];
+  const serverName = initRes?.result?.serverInfo?.name;
+  const instructions = initRes?.result?.instructions ?? '';
+  if (serverName !== 'lokyy-brain') {
+    console.error(`FAIL: expected serverInfo.name "lokyy-brain", got "${serverName}"`);
+    exitCode = 1;
+  } else {
+    console.log('OK: serverInfo.name is "lokyy-brain"');
+  }
+  if (!instructions.includes('Lokyy Brain') || /MindBase/.test(instructions)) {
+    console.error('FAIL: server instructions must name "Lokyy Brain" and not the old product name');
+    exitCode = 1;
+  } else {
+    console.log('OK: server instructions name "Lokyy Brain"');
+  }
+
   const toolsRes = results[1];
   if (!toolsRes || !toolsRes.result) {
     console.error('FAIL: tools/list returned no result');

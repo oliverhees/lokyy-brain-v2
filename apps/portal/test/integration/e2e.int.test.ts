@@ -134,12 +134,12 @@ describe.runIf(enabled)('E2E: invite → accept → vault login → MCP tools/li
     const own = await annaB.visit(`${site(slot)}/`, { username: user, password: annaPass });
     expect(own.status).toBe(200);
     expect(own.url.startsWith(site(slot))).toBe(true);
-    expect(own.body).toContain('<title>MindBase');
+    expect(own.body).toContain('<title>Lokyy Brain');
     // Denied: Authentik answers its "access denied" page on the authorize URL; the vault is never reached.
     for (const host of [slot === 'v01' ? 'v02' : 'v01', 'firma']) {
       const denied = await annaB.visit(`${site(host)}/`, { username: user, password: annaPass });
       expect(denied.url.startsWith(site('auth'))).toBe(true);
-      expect(denied.body).not.toContain('<title>MindBase');
+      expect(denied.body).not.toContain('<title>Lokyy Brain');
     }
   });
 

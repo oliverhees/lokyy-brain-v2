@@ -220,7 +220,7 @@ export function LeftRail({
         borderRight: '0.5px solid var(--hairline)',
       }}
     >
-      {/* Header: MindBase logo + wordmark */}
+      {/* Header: Lokyy Brain logo + wordmark */}
       <div className="flex items-center gap-2 px-4 pt-3.5 pb-3">
         <div
           className="w-[22px] h-[22px] rounded-md flex items-center justify-center flex-shrink-0"
@@ -235,7 +235,7 @@ export function LeftRail({
           </svg>
         </div>
         <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-title)', letterSpacing: '-0.02em' }}>
-          MindBase
+          Lokyy Brain
         </div>
       </div>
 

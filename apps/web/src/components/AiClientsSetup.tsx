@@ -25,7 +25,7 @@ export function AiClientsSetup() {
         Connect to AI clients
       </div>
       <div className="text-[11px] mb-2.5" style={{ color: 'var(--text-low)' }}>
-        Use MindBase from Claude Desktop, Cursor, Windsurf, Cline, or Claude Code.
+        Use Lokyy Brain from Claude Desktop, Cursor, Windsurf, Cline, or Claude Code.
       </div>
 
       <pre

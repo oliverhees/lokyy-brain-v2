@@ -28,7 +28,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
   const parsed = inputSchema.safeParse(rawInput);
   if (!parsed.success) return errorResult(`Invalid input: ${parsed.error.issues[0]?.message ?? 'parse error'}`);
   const { content, suggested_title, source_chat_id } = parsed.data;
-  if (!ctx.config) return errorResult('LLM not configured', 'Open MindBase Settings to configure your LLM.');
+  if (!ctx.config) return errorResult('LLM not configured', 'Open Lokyy Brain Settings to configure your LLM.');
 
   try {
     let title = suggested_title?.trim() ?? '';
@@ -74,7 +74,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
     // Update INDEX.md
     let indexBody = '';
     try { indexBody = await ctx.store.readText('wiki/INDEX.md'); }
-    catch { indexBody = '# MindBase Wiki Index\n\n'; }
+    catch { indexBody = '# Lokyy Brain Wiki Index\n\n'; }
     if (!indexBody.includes(`${slug}.md`)) {
       indexBody = `${indexBody.trimEnd()}\n- [${title}](${mdPath}) — ${title}\n`;
       await ctx.store.writeText('wiki/INDEX.md', indexBody);

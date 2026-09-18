@@ -44,7 +44,7 @@ interface MoveCandidate {
 async function main(): Promise<void> {
   const dryRun = process.argv.includes('--dry-run');
 
-  console.log(`MindBase concept migration — data root: ${DATA_ROOT}`);
+  console.log(`Lokyy Brain concept migration — data root: ${DATA_ROOT}`);
   console.log(`Dry run: ${dryRun ? 'YES (no files moved)' : 'no (will move files)'}\n`);
 
   try {

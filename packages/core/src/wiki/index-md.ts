@@ -14,7 +14,7 @@
  *
  * Format we write:
  *
- *   # MindBase Wiki Index
+ *   # Lokyy Brain Wiki Index
  *
  *   _Auto-maintained by the wiki engine. Edit at your own risk — changes
  *   may be overwritten on next ingest._
@@ -98,7 +98,7 @@ export async function rebuildIndex(store: Store): Promise<{ totalPages: number; 
     .sort((a, b) => a.title.localeCompare(b.title));
 
   const lines: string[] = [
-    '# MindBase Wiki Index',
+    '# Lokyy Brain Wiki Index',
     '',
     '_Auto-maintained by the wiki engine. Edit at your own risk — changes may be overwritten on next ingest._',
     '',

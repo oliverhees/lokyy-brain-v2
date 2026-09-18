@@ -48,7 +48,7 @@ const PROVIDERS: ProviderOption[] = [
     defaults: { model: '', baseUrl: EUROUTER_BASE_URL },
   },
   {
-    id: 'ollama', label: 'Free — runs on your computer', description: 'No account, no API key. MindBase picks the best local model for your hardware.',
+    id: 'ollama', label: 'Free — runs on your computer', description: 'No account, no API key. Lokyy Brain picks the best local model for your hardware.',
     configProvider: 'ollama', needsApiKey: false, needsBaseUrl: true,
     defaults: { model: '', baseUrl: 'http://localhost:11434' },
   },
@@ -337,7 +337,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
               {mode === 'onboarding' ? <>Choose how you<br /><span className="accent-italic">think.</span></> : 'Choose your provider'}
             </div>
             <div className="text-[13px] leading-[1.55] mb-8" style={{ color: 'var(--text-mid)' }}>
-              {mode === 'onboarding' ? <>MindBase needs an LLM to compile your knowledge.<br />Pick the one you already pay for.</> : 'You can change this any time.'}
+              {mode === 'onboarding' ? <>Lokyy Brain needs an LLM to compile your knowledge.<br />Pick the one you already pay for.</> : 'You can change this any time.'}
             </div>
             <div className="grid grid-cols-2 gap-2.5 mb-4">
               {PROVIDERS.map((p) => {
@@ -426,7 +426,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
             {st?.state === 'not-installed' && (
               <div className="text-left mt-5" data-testid="local-state-not-installed">
                 <div className="text-[13px] mb-3" style={{ color: 'var(--text-mid)' }}>
-                  MindBase runs models through <b>Ollama</b> (free, open source). Install it, and this screen will continue automatically:
+                  Lokyy Brain runs models through <b>Ollama</b> (free, open source). Install it, and this screen will continue automatically:
                 </div>
                 {cmdBox('brew install ollama && brew services start ollama')}
                 <div className="text-[12px]" style={{ color: 'var(--text-low)' }}>
@@ -674,7 +674,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
               className="px-6 py-3 rounded-full text-[13px] font-semibold disabled:opacity-40"
               style={{ background: 'rgba(255,255,255,0.95)', color: 'var(--text-inverse)' }}
             >
-              {saving ? 'Saving…' : 'Open MindBase →'}
+              {saving ? 'Saving…' : 'Open Lokyy Brain →'}
             </button>
             <div className="mt-9 text-[10.5px] max-w-[380px] leading-[1.6]" style={{ color: 'var(--text-low)' }}>
               Tip: type <code className="px-1.5 py-0.5 rounded" style={{ background: 'var(--surface-2)', color: 'var(--text-mid)' }}>/ingest</code> in chat to add a source.

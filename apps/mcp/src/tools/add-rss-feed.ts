@@ -14,7 +14,7 @@ const inputSchema = z.object({
 export const definition = {
   name: 'add_rss_feed',
   description:
-    'Subscribe MindBase to a new RSS feed. New entries are auto-fetched every 60 minutes and compiled into wiki pages. Use this when the user says things like "subscribe me to <url>", "follow this blog", "add this to my feeds", or shares a feed URL.',
+    'Subscribe Lokyy Brain to a new RSS feed. New entries are auto-fetched every 60 minutes and compiled into wiki pages. Use this when the user says things like "subscribe me to <url>", "follow this blog", "add this to my feeds", or shares a feed URL.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -86,7 +86,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
         project: feed.project,
         added_at: feed.added_at,
       },
-      message: `Subscribed to "${feed.name}". New entries will appear in your MindBase inbox within 60 minutes.`,
+      message: `Subscribed to "${feed.name}". New entries will appear in your Lokyy Brain inbox within 60 minutes.`,
     });
   } catch (e) {
     const msg = (e as Error).message;

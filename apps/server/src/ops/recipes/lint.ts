@@ -37,7 +37,7 @@ export const lintSchema = z.object({
 });
 export type LintOutput = z.infer<typeof lintSchema>;
 
-const SYSTEM = `You are MindBase's wiki health checker. You READ the project
+const SYSTEM = `You are Lokyy Brain's wiki health checker. You READ the project
 and report problems — you never propose edits. Respond with ONLY JSON:
 { "findings": [ { "kind": "...", "pages": ["path-or-slug", ...], "detail": "...",
                   "evidence": [ { "page": "path-or-slug", "quote": "verbatim text" } ] }, ... ] }

@@ -112,7 +112,7 @@ export function compileRoutes(ctx: ServerContext): Router {
         try {
           logBody = await ctx.store.readText(logPath);
         } catch {
-          logBody = '# MindBase Wiki Log\n\n';
+          logBody = '# Lokyy Brain Wiki Log\n\n';
         }
         logBody = `${logBody.trimEnd()}\n\n${logEntry}`;
         await ctx.store.writeText(logPath, logBody);

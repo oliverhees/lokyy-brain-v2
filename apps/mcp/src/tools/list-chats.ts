@@ -18,7 +18,7 @@ const inputSchema = z.object({
 
 export const definition = {
   name: 'list_chats',
-  description: 'List recent chat sessions saved in MindBase, newest first.',
+  description: 'List recent chat sessions saved in Lokyy Brain, newest first.',
   inputSchema: {
     type: 'object',
     properties: {

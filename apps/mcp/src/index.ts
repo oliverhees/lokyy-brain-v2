@@ -34,10 +34,10 @@ export interface RunOptions {
   dataDir?: string;
 }
 
-const SERVER_INSTRUCTIONS = `You have access to the user's MindBase — their personal knowledge base of curated notes, research, and saved AI conversations. They have invested real time building it. Treat it as their long-term memory and as the authoritative source for their own opinions, prior research, and accumulated knowledge.
+const SERVER_INSTRUCTIONS = `You have access to the user's Lokyy Brain — their personal knowledge base of curated notes, research, and saved AI conversations. They have invested real time building it. Treat it as their long-term memory and as the authoritative source for their own opinions, prior research, and accumulated knowledge.
 
 WHEN TO PROACTIVELY READ FROM MINDBASE
-Always reach for MindBase first (don't rely solely on training data) when the user:
+Always reach for Lokyy Brain first (don't rely solely on training data) when the user:
 - Asks about their own views, decisions, or past reasoning ("what did I think about X", "what's my take on", "remind me why I chose")
 - Asks about something they've likely researched: products, people, companies, technical concepts they've mentioned before
 - Says "what have I been working on", "what's new", "summarize my week"
@@ -52,7 +52,7 @@ Default playbook for these:
 5. \`list_recent\` — for "what's new" / "this week" questions
 
 WHEN TO SKIP MINDBASE
-Don't burn tool calls when the user clearly wants generic help: writing standalone code, math, debugging an error message, explaining a public concept they haven't researched. Use judgment — if MindBase plausibly has relevant signal, check; otherwise just answer.
+Don't burn tool calls when the user clearly wants generic help: writing standalone code, math, debugging an error message, explaining a public concept they haven't researched. Use judgment — if Lokyy Brain plausibly has relevant signal, check; otherwise just answer.
 
 WHEN TO PROACTIVELY WRITE TO MINDBASE
 After producing substantial research, analysis, or synthesis in a conversation, offer to save it via \`save_chat_excerpt\`. Especially when:
@@ -60,7 +60,7 @@ After producing substantial research, analysis, or synthesis in a conversation, 
 - The user shared a useful insight worth keeping
 - The conversation produced a list, comparison, or framework worth referencing later
 
-Don't auto-save without offering. Phrase it as a question: "Want me to save this to your MindBase?"
+Don't auto-save without offering. Phrase it as a question: "Want me to save this to your Lokyy Brain?"
 
 Smaller writes:
 - \`quick_capture\` — for "save this for later" without LLM compile
@@ -77,14 +77,14 @@ When the user asks for an audit, cleanup, or "what should I improve":
 - \`run_wiki_health\` — runs the full pipeline (graph build + insights + auto cross-link + L2 lint)
 - \`find_orphans\`, \`suggest_links\`, \`get_graph_insights\` — for narrower checks
 
-Treat MindBase as a living thing the user cares about. Be useful but precise; this is their second brain, not a scratchpad.`;
+Treat Lokyy Brain as a living thing the user cares about. Be useful but precise; this is their second brain, not a scratchpad.`;
 
 
 /** Instructions for read-only sessions: only allowlisted tools are named (LBV2-12). */
-const READER_INSTRUCTIONS = `You have read-only access to a MindBase — a curated knowledge base of wiki pages. Use it as the authoritative source for the knowledge it contains. This session cannot create, edit, or delete anything.
+const READER_INSTRUCTIONS = `You have read-only access to a Lokyy Brain — a curated knowledge base of wiki pages. Use it as the authoritative source for the knowledge it contains. This session cannot create, edit, or delete anything.
 
 WHEN TO READ FROM MINDBASE
-Reach for MindBase first when the user asks about topics, decisions, research, or notes it is likely to contain, or refers to "the wiki", "the notes", or "the knowledge base".
+Reach for Lokyy Brain first when the user asks about topics, decisions, research, or notes it is likely to contain, or refers to "the wiki", "the notes", or "the knowledge base".
 
 Default playbook:
 1. \`search_wiki\` — fast keyword search; use first when you have specific terms
@@ -102,10 +102,10 @@ Don't burn tool calls when the user clearly wants generic help that the knowledg
 ACCESS NOTES
 Some pages are restricted and are not visible to this session; do not speculate about their existence. If the user wants to save or change something, tell them this connection is read-only.`;
 
-/** Build a fully registered MindBase MCP server bound to an already-loaded context. */
+/** Build a fully registered Lokyy Brain MCP server bound to an already-loaded context. */
 export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>, profile: AccessProfile = 'full'): Server {
   const server = new Server(
-    { name: 'mindbase-mcp', version: '0.1.3' },
+    { name: 'lokyy-brain', version: '0.1.3' },
     {
       capabilities: {
         tools: {},

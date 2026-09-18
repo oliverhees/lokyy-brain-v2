@@ -501,7 +501,7 @@ function UsernameField() {
   return (
     <div style={{ marginBottom: 16, padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
       <label style={{ display: 'block', marginBottom: 4, color: 'var(--text-mid)', fontSize: 12, fontWeight: 600 }}>
-        MindBase username
+        Lokyy Brain username
       </label>
       <div style={{ color: 'var(--text-low)', fontSize: 11, marginBottom: 8 }}>
         Used as the contributor directory: sources/contributors/&lt;user&gt;/

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // apps/mcp/src/http.ts
-// Serves the MindBase MCP server over Streamable HTTP for self-hosted deployments,
+// Serves the Lokyy Brain MCP server over Streamable HTTP for self-hosted deployments,
 // so an aggregator (e.g. MetaMCP) can reach a vault over an internal network
 // without mounting the vault's data directory itself.
 //
