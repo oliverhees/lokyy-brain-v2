@@ -158,7 +158,7 @@ export function RssFeedsSettings() {
           RSS Subscriptions
         </h3>
         <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-low)' }}>
-          MindBase auto-fetches new entries every 60 minutes and compiles them into wiki pages.
+          Lokyy Brain auto-fetches new entries every 60 minutes and compiles them into wiki pages.
         </p>
       </div>
 

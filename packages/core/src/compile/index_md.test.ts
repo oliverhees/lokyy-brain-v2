@@ -11,7 +11,7 @@ describe('INDEX.md helpers', () => {
 
   it('readIndex returns empty placeholder when file does not exist', async () => {
     const body = await readIndex(store);
-    expect(body).toContain('MindBase Wiki Index');
+    expect(body).toContain('Lokyy Brain Wiki Index');
   });
 
   it('readIndex returns existing file content', async () => {

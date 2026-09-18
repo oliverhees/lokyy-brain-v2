@@ -393,7 +393,7 @@ export class ToolExecutor {
       body = await this.store.readText(idx);
       if (body.includes(p)) return { ok: true }; // idempotent
     } else {
-      body = '# MindBase Wiki Index\n\n';
+      body = '# Lokyy Brain Wiki Index\n\n';
     }
     body = `${body.trimEnd()}\n${line}\n`;
     await this.store.writeText(idx, body);

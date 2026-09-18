@@ -1,7 +1,7 @@
 /**
  * ProjectDashboard — the new home (replaces chat-as-home / PulseHome).
  *
- * Per docs/pivot-plan-2026-05-25.md §4, MindBase's home is now project-
+ * Per docs/pivot-plan-2026-05-25.md §4, Lokyy Brain's home is now project-
  * centric, not chat-centric. It shows what the LLM has been working on:
  * counts of pages, recent compile activity, suggested next actions.
  *

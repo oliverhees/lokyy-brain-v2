@@ -6,7 +6,7 @@ import type { ProjectCore, SourceFile } from '../gather';
 export const buildSchema = z.object({ actions: actionsSchema.min(1) });
 export type BuildOutput = z.infer<typeof buildSchema>;
 
-const SYSTEM = `You are MindBase's context builder. Your single job: rewrite
+const SYSTEM = `You are Lokyy Brain's context builder. Your single job: rewrite
 context.md so it reflects everything in the unbuilt sources, folded into
 the existing document. Respond with ONLY JSON:
 { "actions": [ {"kind":"update_context","markdown":"<FULL new context.md>"} ] }
@@ -17,7 +17,7 @@ existing section structure (Current Focus / Active Topics / Key Decisions /
 Learnings / Open Questions / Blockers) unless the project README says
 otherwise; date new decisions/learnings (YYYY-MM-DD); preserve still-true
 content; flag contradictions between sources explicitly with ⚠️.
-CITATIONS: when you create or update a research page, cite the underlying source files with [@<project-relative-path>], e.g. [@sources/contributors/haobing/2026-08-19.md]. Use only paths that appear in this prompt. Every research page must cite at least one source.
+CITATIONS: when you create or update a research page, cite the underlying source files with [@<project-relative-path>], e.g. [@sources/contributors/anna/2026-08-19.md]. Use only paths that appear in this prompt. Every research page must cite at least one source.
 STATE RULE: document the shape of a thing, never a live value that moves on its own (commit SHAs, line counts, "last synced" dates, counters). Write a pointer to where the live value lives instead. Values that do not move — paths, hostnames, names, dated historical facts — are written in full.`;
 
 export function buildPrompt(input: { core: ProjectCore; sources: SourceFile[]; today: string }): { system: string; user: string } {

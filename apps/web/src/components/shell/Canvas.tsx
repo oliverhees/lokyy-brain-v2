@@ -53,7 +53,7 @@ export function Canvas({ callbacks }: CanvasProps) {
   const route = useCanvasRoute((s) => s.route);
   const replace = useCanvasRoute((s) => s.replace);
   // Read the cached human title for note routes so the breadcrumb shows
-  // "Notes › Mindbase development journey" instead of "Notes › untitled-…-1234".
+  // "Notes › Lokyy Brain development journey" instead of "Notes › untitled-…-1234".
   const cachedTitle = useNoteTitleCache((s) =>
     route.kind === 'note' ? s.titles[route.slug] : undefined,
   );
@@ -92,7 +92,7 @@ export function Canvas({ callbacks }: CanvasProps) {
 function renderSurface(route: CanvasRoute, cb: CanvasCallbacks): React.ReactNode {
   switch (route.kind) {
     case 'home':
-      // Wiki-as-main-surface (Option A): the home of MindBase is INDEX.md
+      // Wiki-as-main-surface (Option A): the home of Lokyy Brain is INDEX.md
       // rendered as a real markdown page with navigable wikilinks, plus a
       // compact stats bar above. The old ProjectDashboard moves under the
       // 'dashboard' route, accessible via a dock item.

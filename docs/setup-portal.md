@@ -182,6 +182,9 @@ as `authentik_forbidden` ("change this account in Authentik directly").
   (`claude mcp add --scope user --transport http …`) and Claude Desktop (`mcp-remote` bridge, key in an env
   variable). The key is read from MetaMCP on demand and never stored by the portal. `GET /api/me` has no side
   effects; the UI marks the first visit with `POST /api/me/activate`.
+  The vault web UI (Settings → Connect to AI clients) points users here. To show a direct link, build the
+  vault image with `--build-arg VITE_LOKYY_PORTAL_URL=https://app.<domain>`; without it the UI names
+  "Mein Zugang" without a link.
 - **LLM (EUrouter):** key + route only, no model. The portal lists the key's enabled routes (`GET
   /routing-rules`, which also checks the key live: "Der Schlüssel ist ungültig oder nicht berechtigt"), the admin
   picks one, the portal checks that the route belongs to the key and sends `{provider: "openai", baseUrl, apiKey,

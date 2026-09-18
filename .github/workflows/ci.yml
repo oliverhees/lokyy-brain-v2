@@ -22,6 +22,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Brand guard (no old product name in user-visible surfaces)
+        run: node scripts/check-brand.mjs
+
       - name: Build core
         run: pnpm --filter @mindbase/core build
 

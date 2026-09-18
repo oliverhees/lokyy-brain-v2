@@ -70,7 +70,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
   const parsed = inputSchema.safeParse(rawInput);
   if (!parsed.success) return errorResult(`Invalid input: ${parsed.error.issues[0]?.message ?? 'parse error'}`);
   const { question, context_pages, max_pages } = parsed.data;
-  if (!ctx.config) return errorResult('LLM not configured', 'Open MindBase Settings to configure your LLM.');
+  if (!ctx.config) return errorResult('LLM not configured', 'Open Lokyy Brain Settings to configure your LLM.');
 
   try {
     const graph = ctx.wikiIndex.buildGraph();

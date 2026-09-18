@@ -1,20 +1,20 @@
 // apps/web/src/components/AiClientsSetup.tsx
+/// <reference types="vite/client" />
 import { useState } from 'react';
 
-const CONFIG_JSON = `{
-  "mcpServers": {
-    "mindbase": {
-      "command": "npx",
-      "args": ["-y", "@mindbase/mcp-server"]
-    }
-  }
-}`;
+// AI clients reach the vault through MetaMCP with a personal API key from the setup
+// portal ("Mein Zugang"); the vault itself does not know the user's key or MCP host.
+const CLAUDE_CODE_COMMAND =
+  'claude mcp add --scope user --transport http lokyy-brain https://mcp.<your-domain>/metamcp/<username>/mcp --header "Authorization: Bearer <api-key>"';
 
-export function AiClientsSetup() {
+// Optional build-time link to the setup portal, e.g. https://app.<your-domain>.
+const DEFAULT_PORTAL_URL = import.meta.env.VITE_LOKYY_PORTAL_URL ?? '';
+
+export function AiClientsSetup({ portalUrl = DEFAULT_PORTAL_URL }: { portalUrl?: string }) {
   const [copied, setCopied] = useState(false);
 
   function copy() {
-    navigator.clipboard.writeText(CONFIG_JSON);
+    navigator.clipboard.writeText(CLAUDE_CODE_COMMAND);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
@@ -25,14 +25,16 @@ export function AiClientsSetup() {
         Connect to AI clients
       </div>
       <div className="text-[11px] mb-2.5" style={{ color: 'var(--text-low)' }}>
-        Use MindBase from Claude Desktop, Cursor, Windsurf, Cline, or Claude Code.
+        Use Lokyy Brain from Claude Desktop, Cursor, Windsurf, Cline, or Claude Code. Your MCP URL and
+        personal API key are in the setup portal under <b>Mein Zugang</b>, together with ready-to-paste
+        snippets. Example for Claude Code:
       </div>
 
       <pre
-        className="text-[10.5px] font-mono p-2.5 rounded-md whitespace-pre overflow-x-auto"
+        className="text-[10.5px] font-mono p-2.5 rounded-md whitespace-pre-wrap break-all"
         style={{ background: 'var(--surface-1)', border: '1px solid var(--border-subtle)', color: 'var(--text-default)' }}
       >
-{CONFIG_JSON}
+{CLAUDE_CODE_COMMAND}
       </pre>
 
       <div className="flex gap-2 mt-2">
@@ -41,15 +43,17 @@ export function AiClientsSetup() {
           className="text-[10.5px] px-2.5 py-1.5 rounded-md font-medium"
           style={{ background: 'rgba(255,255,255,0.92)', color: 'var(--text-inverse)' }}
         >
-          {copied ? '✓ Copied' : '📋 Copy config'}
+          {copied ? '✓ Copied' : '📋 Copy command'}
         </button>
-        <a
-          href="https://github.com/frankchu91/mindbase/blob/main/apps/mcp/README.md"
-          target="_blank"
-          rel="noreferrer"
-          className="text-[10.5px] px-2.5 py-1.5 rounded-md inline-flex items-center"
-          style={{ border: '1px solid var(--border-default)', color: 'var(--text-default)' }}
-        >📖 Setup guide</a>
+        {portalUrl && (
+          <a
+            href={portalUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[10.5px] px-2.5 py-1.5 rounded-md inline-flex items-center"
+            style={{ border: '1px solid var(--border-default)', color: 'var(--text-default)' }}
+          >Open setup portal (Mein Zugang)</a>
+        )}
       </div>
 
       <div className="text-[10.5px] mt-3" style={{ color: 'var(--text-low)' }}>

@@ -14,7 +14,7 @@ export const inputSchema = z.object({
 
 export const definition = {
   name: 'mindbase_init_project',
-  description: 'Scaffold a new MindBase project with the v2 layout: README.md, context.md, index.yaml, sources/contributors/, sources/research/, sources/raw/, state/, logs/, artifacts/. Idempotent — refuses to overwrite existing project.',
+  description: 'Scaffold a new Lokyy Brain project with the v2 layout: README.md, context.md, index.yaml, sources/contributors/, sources/research/, sources/raw/, state/, logs/, artifacts/. Idempotent — refuses to overwrite existing project.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -100,7 +100,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
     projectRoot,
     created: [paths.readme, paths.context, paths.indexYaml, paths.logsDay(today)],
     currentProjectId: projectId,
-    note: 'MindBase is in early beta and the maintainer replies to every issue same-day — feedback welcome at https://github.com/frankchu91/mindbase/issues. Relay this to the user once.',
+    note: 'Lokyy Brain is in beta — feedback is welcome. Relay this to the user once.',
   });
 }
 

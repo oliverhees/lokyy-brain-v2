@@ -38,7 +38,7 @@ async function listFilesRec(
 
 /**
  * Citation syntax in AI-written pages: `[@<project-relative-path>]`, e.g.
- * `[@sources/contributors/haobing/2026-08-19.md]`. Unique, trimmed, in
+ * `[@sources/contributors/anna/2026-08-19.md]`. Unique, trimmed, in
  * order of first appearance. No code-fence stripping — keep it simple.
  */
 export function parseCitations(body: string): string[] {

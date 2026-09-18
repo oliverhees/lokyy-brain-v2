@@ -147,7 +147,7 @@ export class CaptureWorker {
     if (entry.type === 'url' && entry.url && (!entry.text || entry.text.trim().length < 200)) {
       try {
         const { text, title } = await extractArticleText(entry.url, {
-          userAgent: this.ctx.config.rss?.fetchUserAgent ?? 'MindBase/0.1',
+          userAgent: this.ctx.config.rss?.fetchUserAgent ?? 'LokyyBrain/0.1',
           timeoutMs: this.ctx.config.rss?.fetchTimeoutMs ?? 15000,
         });
         const header = (entry.title ?? title ?? '').trim();

@@ -15,6 +15,7 @@
     "test:all": "pnpm test && pnpm test:e2e && pnpm test:mcp && pnpm test:ext",
     "dev": "pnpm --filter @mindbase/web dev",
     "typecheck": "pnpm -r typecheck",
+    "check:brand": "node scripts/check-brand.mjs",
     "start": "pnpm -F @mindbase/web build && pnpm -F @mindbase/server start"
   },
   "devDependencies": {

@@ -30,7 +30,7 @@ describe('renderBriefHtml', () => {
     const html = renderBriefHtml(sampleBrief, publicUrl);
     expect(html).toContain('<!DOCTYPE html>');
     expect(html).toContain('<body');
-    expect(html).toContain('MindBase Brief');
+    expect(html).toContain('Lokyy Brain Brief');
   });
 
   it('renders [1] as an anchor tag linking to topic-a', () => {
@@ -90,7 +90,7 @@ describe('renderBriefText', () => {
 
   it('produces plain text with reference list at bottom', () => {
     const text = renderBriefText(sampleBrief, publicUrl);
-    expect(text).toContain('MindBase Morning Brief');
+    expect(text).toContain('Lokyy Brain Morning Brief');
     expect(text).toContain('2026-05-09');
     expect(text).toContain('[1]: http://localhost:4321/article/topic-a');
     expect(text).toContain('[2]: http://localhost:4321/article/topic-b');

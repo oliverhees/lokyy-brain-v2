@@ -26,7 +26,7 @@ export interface RssConfig {
   enabled: boolean;
   intervalMinutes: number;       // default 60
   fetchTimeoutMs: number;        // default 15000
-  fetchUserAgent: string;        // default 'MindBase/0.1'
+  fetchUserAgent: string;        // default 'LokyyBrain/0.1'
   readabilityEnabled: boolean;   // default true
 }
 

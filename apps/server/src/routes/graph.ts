@@ -40,7 +40,7 @@ export function graphRoutes(ctx: ServerContext): Router {
     try {
       const graph = ctx.wikiIndex.buildGraph({ projectId: ctx.currentProjectId });
       const xml = toGraphML(graph, { excludeVisibility: parseExclude(req.query as Record<string, unknown>) });
-      res.setHeader('Content-Disposition', 'attachment; filename="mindbase-graph.graphml"');
+      res.setHeader('Content-Disposition', 'attachment; filename="lokyy-brain-graph.graphml"');
       res.type('application/xml').send(xml);
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });
@@ -51,7 +51,7 @@ export function graphRoutes(ctx: ServerContext): Router {
     try {
       const graph = ctx.wikiIndex.buildGraph({ projectId: ctx.currentProjectId });
       const cypher = toCypher(graph, { excludeVisibility: parseExclude(req.query as Record<string, unknown>) });
-      res.setHeader('Content-Disposition', 'attachment; filename="mindbase-graph.cypher"');
+      res.setHeader('Content-Disposition', 'attachment; filename="lokyy-brain-graph.cypher"');
       res.type('text/plain').send(cypher);
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });

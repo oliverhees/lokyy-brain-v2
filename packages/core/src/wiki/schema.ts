@@ -24,8 +24,8 @@ import type { Store } from '../storage/store';
 
 export const SCHEMA_PATH = 'wiki/schema.md';
 
-/** Default schema for a fresh MindBase wiki. Editable by the user. */
-export const DEFAULT_SCHEMA = `# MindBase Wiki Schema
+/** Default schema for a fresh Lokyy Brain wiki. Editable by the user. */
+export const DEFAULT_SCHEMA = `# Lokyy Brain Wiki Schema
 
 _This is the user-editable contract between you and the LLM that maintains
 your wiki. The LLM reads it before every compile, query, and lint to know

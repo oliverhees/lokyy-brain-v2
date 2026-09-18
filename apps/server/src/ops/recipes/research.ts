@@ -15,7 +15,7 @@ export const researchSchema = z.object({
 });
 export type ResearchOutput = z.infer<typeof researchSchema>;
 
-const SYSTEM = `You are MindBase's research analyst. Synthesize the provided
+const SYSTEM = `You are Lokyy Brain's research analyst. Synthesize the provided
 sources into ONE new research page. Respond with ONLY JSON:
 { "actions": [
     {"kind":"create_research_page","slug":"kebab-case-topic","markdown":"# Title\\n..."},
@@ -27,7 +27,7 @@ sections; cite every claim with its source label in parentheses, e.g.
 an "Open questions" section. Only state what the sources support — say
 "not covered by available sources" for the rest. Exactly one
 create_research_page action; at most one append_context_section.
-CITATIONS: when you create or update a research page, cite the underlying source files with [@<project-relative-path>], e.g. [@sources/contributors/haobing/2026-08-19.md]. Use only paths that appear in this prompt. Every research page must cite at least one source. For web results use (source: web — <host>) instead of [@...].
+CITATIONS: when you create or update a research page, cite the underlying source files with [@<project-relative-path>], e.g. [@sources/contributors/anna/2026-08-19.md]. Use only paths that appear in this prompt. Every research page must cite at least one source. For web results use (source: web — <host>) instead of [@...].
 STATE RULE: document the shape of a thing, never a live value that moves on its own (commit SHAs, line counts, "last synced" dates, counters). Write a pointer to where the live value lives instead. Values that do not move — paths, hostnames, names, dated historical facts — are written in full.`;
 
 export function researchPrompt(input: {

@@ -99,7 +99,7 @@ export function askRoutes(ctx: ServerContext): Router {
           try {
             indexBody = await ctx.store.readText('wiki/INDEX.md');
           } catch {
-            indexBody = '# MindBase Wiki Index\n\n';
+            indexBody = '# Lokyy Brain Wiki Index\n\n';
           }
           if (!indexBody.includes(`${slug}.md`)) {
             indexBody = `${indexBody.trimEnd()}\n- [${title}](${mdPath}) — ${title}\n`;

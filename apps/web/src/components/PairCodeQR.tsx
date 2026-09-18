@@ -76,7 +76,7 @@ export function PairCodeQR() {
         {data.code}
       </div>
       <div className="text-sm text-center" style={{ color: 'var(--text-mid)' }}>
-        Expires in {secondsLeft}s · scan from MindBase mobile app or paste in browser extension
+        Expires in {secondsLeft}s · scan from Lokyy Brain mobile app or paste in browser extension
       </div>
     </div>
   );

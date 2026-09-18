@@ -50,7 +50,7 @@ export async function braveSearchSources(apiKey: string, query: string): Promise
       try {
         // Result URLs are third-party controlled: SSRF-safe fetch (LBV2-13).
         const page = await safeFetch(res.url, {
-          headers: { 'User-Agent': 'MindBase-research/1.0' },
+          headers: { 'User-Agent': 'LokyyBrain-research/1.0' },
           timeoutMs: FETCH_TIMEOUT_MS,
           maxBytes: 2 * 1024 * 1024,
         });

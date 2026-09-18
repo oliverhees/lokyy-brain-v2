@@ -305,7 +305,7 @@ export function DailyBriefSettings({ currentConfig, onSave }: Props) {
                 type="email"
                 value={cfg.smtp.from}
                 onChange={(e) => updateSmtp('from', e.target.value)}
-                placeholder="MindBase <you@example.com>"
+                placeholder="Lokyy Brain <you@example.com>"
                 className="w-full rounded-[6px] px-2 py-1.5 text-[11.5px] font-mono outline-none"
                 style={{ ...inputStyle, background: 'var(--surface-0)', border: '1px solid var(--border-subtle)' }}
               />

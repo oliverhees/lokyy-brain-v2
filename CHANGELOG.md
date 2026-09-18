@@ -2,6 +2,9 @@
 
 ## Unreleased — Lokyy Brain v2 fork
 
+### Changed
+- Product name "Lokyy Brain" everywhere users, admins and the LLM read it (LBV2-35): web UI, MCP server name (`lokyy-brain`) and instructions/tool descriptions, brief e-mail, LLM prompts, vault headings, docs. Package names, `MINDBASE_*` variables, tool names, the `mindbase://` scheme and the `X-Mindbase-User` header are unchanged. CI guard `scripts/check-brand.mjs`. See `docs/adr/0001-rebrand-lokyy-brain.md`.
+
 ### Added
 - Setup portal `apps/portal` (LBV2-28) at `app.<domain>` behind Authentik: admin setup wizard (company, EUrouter key + route shared or per vault, optional SMTP), employee invitations (slot assignment, Authentik user + groups, one-time set-password link, MetaMCP provisioning, optional mail), role change, disable/enable, remove (MCP key revoked first, vault data kept, slot retired; explicit restore or release), audit log, and "Mein Zugang" (vault links, MCP URL, key reveal/regenerate, Claude Code and `mcpServers` snippets). Holds no Authentik token: the new `authentik-gate` service (`deploy/stack/authentik-gate`) alone holds the least-privilege service-account token and lets the portal manage only its own employees (never superusers, `akadmin` or `lokyy-admins` members; allowlisted groups; no password endpoint). Authentik blueprint `apps/portal/authentik/lokyy-portal.yaml`, API `apps/portal/openapi.json`, E2E stack `apps/portal/test/e2e`. See `docs/setup-portal.md`.
 - MCP over Streamable HTTP (`apps/mcp/dist/http.js`) with bearer token, session limits and Host allow-list; optional read-only token profile with a fail-closed allowlist of 13 tools and a reader view that hides `internal`/`pii` pages. See `docs/self-hosting-mcp-http.md`.

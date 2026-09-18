@@ -254,7 +254,7 @@ async function main() {
   process.on('SIGINT', shutdown);
 
   app.listen(PORT, () => {
-    console.log(`MindBase server running at http://localhost:${PORT}`);
+    console.log(`Lokyy Brain server running at http://localhost:${PORT}`);
     console.log(`Data directory: ${ctx.dataDir}`);
 
     if (shouldStartMdns(process.env)) {
@@ -270,6 +270,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error('Failed to start MindBase server:', e);
+  console.error('Failed to start Lokyy Brain server:', e);
   process.exit(1);
 });

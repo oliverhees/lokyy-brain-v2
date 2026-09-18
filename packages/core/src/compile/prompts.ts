@@ -74,7 +74,7 @@ Raw id: ${rawDoc.id}`;
  * regression where it framed ingest as "find ONE page" — producing 1-4
  * actions per source instead of the 18-22 the system was capable of in May.
  */
-export const COMPILE_V2_SYSTEM_PROMPT = `You are MindBase's wiki maintainer. A new source has arrived. Your job is to integrate it into the user's wiki — not by writing a single summary page, but by extracting every meaningful entity, concept, and claim and weaving them into the existing knowledge base.
+export const COMPILE_V2_SYSTEM_PROMPT = `You are Lokyy Brain's wiki maintainer. A new source has arrived. Your job is to integrate it into the user's wiki — not by writing a single summary page, but by extracting every meaningful entity, concept, and claim and weaving them into the existing knowledge base.
 
 CONVERSATIONAL OPENING (always do this BEFORE the first tool call):
 Output a short markdown narrative — 3 to 6 sentences max — covering:
