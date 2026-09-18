@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MePage } from './MePage.tsx';
-import { byText, click, fakeApi, flush, mount, type Mounted } from '../../../test/fakes/client.tsx';
+import { byText, click, fakeApi, mount, type Mounted } from '../../../test/fakes/client.tsx';
 import { ApiError } from '../api.ts';
 import type { MyAccess } from '../types.ts';
 
@@ -34,21 +34,14 @@ describe('MePage', () => {
     expect(m.container.textContent).not.toContain('sk_mt_secret1');
   });
 
-  it('regenerates only after confirmation, waits for the watcher and then shows the new key', async () => {
-    let meCalls = 0;
-    const api = fakeApi({
-      // 1: before, 2-3: rotation pending at the watcher, 4+: new key provisioned
-      'GET /api/me': () => (++meCalls === 1 || meCalls >= 4 ? me : { ...me, provisioning: 'pending' }),
-      'POST /api/me/key/rotate': { pending: true },
-      'POST /api/me/key/reveal': { apiKey: 'sk_mt_new' },
-    });
-    m = await mount(<MePage pollMs={5} />, api);
+  it('regenerates only after confirmation and shows the new key', async () => {
+    const api = fakeApi({ 'GET /api/me': me, 'POST /api/me/key/rotate': { apiKey: 'sk_mt_new' } });
+    m = await mount(<MePage />, api);
     await click(byText(m.container, 'Neuen Schlüssel erzeugen'));
     expect(api.calls.some((c) => c.path === '/api/me/key/rotate')).toBe(false);
     const dialogConfirm = [...m.container.querySelectorAll('dialog button')].find((b) => b.textContent?.includes('Neuen Schlüssel erzeugen')) as HTMLElement;
     await click(dialogConfirm);
     expect(api.calls.some((c) => c.path === '/api/me/key/rotate')).toBe(true);
-    for (let i = 0; i < 10 && !m.container.textContent?.includes('sk_mt_new'); i++) { await new Promise((r) => setTimeout(r, 10)); await flush(); }
     expect(m.container.textContent).toContain('sk_mt_new');
     expect(m.container.textContent).toContain('Neuer Schlüssel erzeugt');
   });
@@ -71,17 +64,6 @@ describe('MePage', () => {
     fail = false;
     await click(byText(m.container, 'Erneut versuchen'));
     expect(m.container.textContent).toContain('Anna Muster');
-  });
-
-  it('while the access is being provisioned: hint, no reveal button', async () => {
-    m = await mount(<MePage pollMs={1000} />, fakeApi({ 'GET /api/me': { ...me, provisioning: 'pending' } }));
-    expect(m.container.textContent).toContain('wird gerade eingerichtet');
-    expect([...m.container.querySelectorAll('button')].some((b) => b.textContent?.includes('Schlüssel anzeigen'))).toBe(false);
-  });
-
-  it('a failed provisioning is explained', async () => {
-    m = await mount(<MePage />, fakeApi({ 'GET /api/me': { ...me, provisioning: 'failed' } }));
-    expect(m.container.textContent).toContain('konnte nicht eingerichtet werden');
   });
 
   it('a failed reveal is announced', async () => {

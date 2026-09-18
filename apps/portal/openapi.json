@@ -237,13 +237,6 @@
                         "string",
                         "null"
                       ]
-                    },
-                    "package": {
-                      "type": [
-                        "string",
-                        "null"
-                      ],
-                      "description": "LOKYY_PACKAGE, admins only"
                     }
                   }
                 }

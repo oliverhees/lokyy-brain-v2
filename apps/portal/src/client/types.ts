@@ -8,7 +8,6 @@ export interface Session {
   hasAccess: boolean;
   setupComplete: boolean;
   companyName: string | null;
-  package?: string | null;
 }
 
 export interface UserRow {
@@ -18,15 +17,12 @@ export interface UserRow {
   displayName: string;
   role: Role;
   status: 'invited' | 'active' | 'disabled';
-  provisioning: ProvisioningState;
+  provisioning: 'pending' | 'ok' | 'failed';
   invitedAt: string;
   activatedAt: string | null;
 }
 
-export type ProvisioningState = 'pending' | 'ok' | 'failed';
-export interface ProvisioningRun { state: ProvisioningState; at: string | null; error: string | null; restartMetamcp: boolean }
-export interface Route { id: string; name: string }
-export interface VaultLlm { keyHint: string; ruleId: string; ruleName: string }
+export interface ProvisioningRun { at: string; status: 'ok' | 'failed'; error?: string; restartMetamcp: boolean }
 
 export interface UsersResponse {
   users: UserRow[];
@@ -39,12 +35,12 @@ export interface InviteResponse { user: UserRow; inviteLink: string; mailed: boo
 
 export interface SetupStatus {
   company: { name: string } | null;
-  llm: { mode: 'shared' | 'per-vault'; model: string | null; vaults: Record<string, VaultLlm>; baseUrl: string } | null;
+  llm: { mode: 'shared' | 'per-vault'; model: string; keyHints: Record<string, string>; baseUrl: string } | null;
   smtp: { host: string; port: number; secure: boolean; username: string; from: string; passwordSet: boolean } | null;
   setupCompletedAt: string | null;
   vaults: string[];
   slots: { total: number; free: number };
-  package: string | null;
+  lastProvisioning: ProvisioningRun | null;
 }
 
 export interface MyAccess {
@@ -57,7 +53,7 @@ export interface MyAccess {
   companyVaultUrl: string | null;
   mcpUrl: string;
   serverName: string;
-  provisioning: ProvisioningState;
+  provisioning: 'pending' | 'ok' | 'failed';
 }
 
 export interface AuditEntry { at: string; actor: string; action: string; target?: string }

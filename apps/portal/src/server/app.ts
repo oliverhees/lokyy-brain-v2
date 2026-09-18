@@ -161,8 +161,7 @@ export function createApp(o: AppOptions): Express {
     const setup = await o.service.setupStatus();
     res.json({ username: c.username, isAdmin: c.isAdmin, csrfToken: csrfToken(o.csrfSecret, c.username),
       hasAccess: users.some((u) => u.username === c.username && u.status !== 'disabled'),
-      setupComplete: setup.setupCompletedAt !== null, companyName: setup.company?.name ?? null,
-      ...(c.isAdmin ? { package: o.packageName ?? null } : {}) });
+      setupComplete: setup.setupCompletedAt !== null, companyName: setup.company?.name ?? null });
   }));
 
   // ------------------------------------------------------------ admin

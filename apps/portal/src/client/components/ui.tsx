@@ -62,28 +62,6 @@ export function TextField({ label, hint, error, optional, className, ...input }:
 export const fieldError = (fields: Record<string, string>, name: string): string | undefined =>
   fields[name] ? fieldMessage(fields[name]!) : undefined;
 
-// ------------------------------------------------------------------ Select
-export function SelectField({ label, hint, error, options, placeholder, value, onChange, disabled }:
-  { label: string; hint?: string | undefined; error?: string | undefined; options: { value: string; label: string }[]; placeholder: string;
-    value: string; onChange: (v: string) => void; disabled?: boolean }) {
-  const id = useId();
-  const hintId = hint ? `${id}-hint` : undefined;
-  const errId = error ? `${id}-err` : undefined;
-  return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={id} className="text-sm font-medium text-fg">{label}</label>
-      <select id={id} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}
-        aria-invalid={error ? true : undefined} aria-describedby={[hintId, errId].filter(Boolean).join(' ') || undefined}
-        className={cx('focus-ring min-h-[40px] rounded-md border bg-input px-3 text-sm text-fg disabled:opacity-60', error ? 'border-danger' : 'border-line')}>
-        <option value="">{placeholder}</option>
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-      {hint && <p id={hintId} className="text-xs text-muted">{hint}</p>}
-      {error && <p id={errId} className="flex items-center gap-1 text-xs font-medium text-danger"><AlertCircle aria-hidden className="h-3.5 w-3.5" />{error}</p>}
-    </div>
-  );
-}
-
 // ------------------------------------------------------------------ Radio group
 export function RadioGroup<T extends string>({ legend, name, value, options, onChange }:
   { legend: string; name: string; value: T; options: { value: T; label: string; hint?: string }[]; onChange: (v: T) => void }) {

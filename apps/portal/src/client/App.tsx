@@ -53,7 +53,6 @@ export function App() {
             <Brain aria-hidden className="h-6 w-6 text-link" />
             <span className="text-base font-semibold text-fg">Lokyy Brain</span>
             {session.companyName && <span className="text-sm text-muted">· {session.companyName}</span>}
-            {session.package && <span className="text-sm text-muted">· {de.app.package(session.package)}</span>}
           </div>
           <span className="text-sm text-muted">{de.app.signedInAs(session.username)}</span>
         </div>

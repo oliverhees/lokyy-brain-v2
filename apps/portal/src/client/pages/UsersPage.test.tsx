@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest';
 import { UsersPage } from './UsersPage.tsx';
-import { byText, click, fakeApi, flush, input, mount, type, type Mounted } from '../../../test/fakes/client.tsx';
+import { byText, click, fakeApi, input, mount, type, type Mounted } from '../../../test/fakes/client.tsx';
 import { ApiError } from '../api.ts';
 import type { UserRow, UsersResponse } from '../types.ts';
 
@@ -99,37 +99,10 @@ describe('UsersPage', () => {
     expect(m.container.querySelector('[role="alert"]')?.textContent).toContain('nicht erreichbar');
   });
 
-  it('polls while provisioning is pending and shows the result', async () => {
-    let n = 0;
-    const api = fakeApi({ 'GET /api/admin/users': () => (++n < 3
-      ? list([row({ provisioning: 'pending' })], { lastProvisioning: { state: 'pending', at: null, error: null, restartMetamcp: false } })
-      : list([row({ provisioning: 'ok' })], { lastProvisioning: { state: 'ok', at: 't', error: null, restartMetamcp: false } })) });
-    m = await mount(<UsersPage pollMs={40} />, api);
-    expect(m.container.textContent).toContain('MCP-Zugang wird eingerichtet');
-    for (let i = 0; i < 20 && m.container.textContent?.includes('wird eingerichtet'); i++) { await new Promise((r) => setTimeout(r, 20)); await flush(); }
-    expect(m.container.textContent).not.toContain('wird eingerichtet');
-    const polls = api.calls.filter((c) => c.path === '/api/admin/users').length;
-    await new Promise((r) => setTimeout(r, 150)); await flush();
-    expect(api.calls.filter((c) => c.path === '/api/admin/users').length).toBe(polls); // stops polling
-  });
-
-  it('release of a retired slot needs the typed slot name', async () => {
-    const api = fakeApi({ 'GET /api/admin/users': list([], { retired: [{ slot: 'v03', formerUsername: 'carl', retiredAt: 't' }] }), 'POST /api/admin/slots/v03/release': null });
-    m = await mount(<UsersPage />, api);
-    await click(byText(m.container, 'Freigeben'));
-    expect(m.container.querySelector('dialog[open]')?.textContent).toContain('sieht diese Daten');
-    const confirm = [...m.container.querySelectorAll('dialog button')].find((b) => b.textContent === 'Platz freigeben') as HTMLButtonElement;
-    expect(confirm.disabled).toBe(true);
-    await type(input(m.container, 'Zur Bestätigung „v03“'), 'v03');
-    await click(confirm);
-    expect(api.calls.find((c) => c.path === '/api/admin/slots/v03/release')?.body).toEqual({ confirm: 'v03' });
-    expect(m.container.textContent).toContain('Vault-Platz freigegeben');
-  });
-
   it('warns about failed provisioning and offers a retry', async () => {
     const api = fakeApi({
-      'GET /api/admin/users': list([row({ provisioning: 'failed' })], { lastProvisioning: { state: 'failed', at: 't', error: 'boom', restartMetamcp: false } }),
-      'POST /api/admin/provision': { status: 'pending' },
+      'GET /api/admin/users': list([row({ provisioning: 'failed' })], { lastProvisioning: { at: 't', status: 'failed', restartMetamcp: false } }),
+      'POST /api/admin/provision': { status: 'ok' },
     });
     m = await mount(<UsersPage />, api);
     expect(m.container.textContent).toContain('MCP-Zugang fehlgeschlagen');
