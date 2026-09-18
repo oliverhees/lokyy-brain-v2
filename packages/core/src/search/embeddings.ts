@@ -5,12 +5,15 @@
  * The ~570MB BGE-M3 model is downloaded to ~/.cache/huggingface/ on first use
  * and cached on disk for subsequent loads.
  *
- * NOTE: No vitest tests for this file — model download is too slow for CI.
- * Manual smoke: `node -e "import('./dist/search/embeddings.js').then(m => m.embed('hello').then(v => console.log(v.length)))"`
+ * With MINDBASE_EMBED_URL + MINDBASE_EMBED_TOKEN (LBV2-26) the shared embedding service is used
+ * instead and the model is never loaded here (see remote-embedder.ts).
+ *
+ * Tests mock the model (embeddings.test.ts); manual smoke with the real model: `node -e "import('./dist/search/embeddings.js').then(m => m.embed('hello').then(v => console.log(v.length)))"`
  */
 
 // Import type only — the actual runtime import is dynamic so bundlers don't pull it into web chunks
 import type { FeatureExtractionPipeline } from '@xenova/transformers';
+import { EMBED_MAX_CHARS, remoteEmbedderFromEnv } from './remote-embedder';
 
 let extractor: FeatureExtractionPipeline | null = null;
 
@@ -31,9 +34,11 @@ async function getExtractor(): Promise<FeatureExtractionPipeline> {
  * First call downloads the model (~570MB, ~30-60s). Subsequent calls use disk cache.
  */
 export async function embed(text: string): Promise<number[]> {
+  const remote = remoteEmbedderFromEnv(process.env);
+  if (remote) return remote.embed(text);
   const fx = await getExtractor();
   // BGE-M3 supports up to ~8k tokens; slice by chars as a rough guard
-  const truncated = text.slice(0, 8000);
+  const truncated = text.slice(0, EMBED_MAX_CHARS);
   const result = await fx(truncated, { pooling: 'mean', normalize: true });
   return Array.from(result.data as Float32Array);
 }

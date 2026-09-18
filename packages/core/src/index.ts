@@ -69,6 +69,8 @@ export { SearchIndex } from './search/index';
 export type { SearchDoc, SearchResult } from './search/index';
 export { EmbeddingStore } from './search/embedding-store';
 export type { CachedEmbedding } from './search/embedding-store';
+export { createRemoteEmbedder, remoteEmbedderFromEnv, EmbedServiceError, EMBED_MAX_CHARS } from './search/remote-embedder';
+export type { RemoteEmbedder, RemoteEmbedderOptions } from './search/remote-embedder';
 export { parseOperators, extractSnippet, hybridSearch } from './search/hybrid';
 export type { HybridQuery, HybridResult, SearchFilters, SnippetResult } from './search/hybrid';
 export { multilingualTokenize } from './search/tokenizer';
