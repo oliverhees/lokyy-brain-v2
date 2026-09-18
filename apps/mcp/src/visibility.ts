@@ -232,14 +232,17 @@ export function createReaderView(base: Context, acquireLlmCall: () => boolean = 
   // (ask_wiki). Everything such a tool can put into a prompt comes from this filtered
   // context, so only visible pages reach the provider. The config copy carries only
   // provider and model: no API key, no base URL.
-  const readerConfig = base.config ? { provider: base.config.provider, model: base.config.model } : null;
+  // Read through on every access: base.config follows mindbase.config.json changes (LBV2-32).
   const readerCtx = {
     store,
     searchIndex,
     wikiIndex,
     cards,
     feeds,
-    config: readerConfig,
+    get config() {
+      const c = base.config;
+      return c ? { provider: c.provider, model: c.model } : null;
+    },
     getAdapter: () => readerAdapter(base.getAdapter(), acquireLlmCall),
     reindex: readOnly,
     mcpClient: base.mcpClient,

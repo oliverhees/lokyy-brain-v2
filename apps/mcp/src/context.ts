@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import { FileStore, ProjectScopedStore, SearchIndex, FeedStore, CardStore, TemplateStore, WikiIndex, reindex, createAdapter, isValidProjectId, type LLMAdapter, type Store } from '@mindbase/core';
 import { SynthesisCache } from './lib/synthesis-cache.js';
 import { extractPdfText } from './lib/extract-pdf.js';
+import { createConfigReloader, configReloadIntervalMs } from './lib/config-reloader.js';
 
 export interface MCPConfig {
   provider: 'openai' | 'anthropic' | 'deepseek' | 'ollama';
@@ -27,7 +28,8 @@ export interface Context {
   cards: CardStore;
   templates: TemplateStore;
   synthesisCache: SynthesisCache;
-  config: MCPConfig | null;       // null if config file missing
+  /** Current mindbase.config.json (re-read on change); null if the file is missing. */
+  readonly config: MCPConfig | null;
   getAdapter: () => LLMAdapter;   // throws if config missing
   reindex: () => Promise<void>;
   /** Identifies the calling client if detectable (from MCP_CLIENT env var). */
@@ -105,11 +107,12 @@ export async function loadContext(opts: {
   await templates.ensureDefaults();
   const synthesisCache = new SynthesisCache(dataDir);
 
-  let config: MCPConfig | null = null;
-  try {
-    const text = await fs.readFile(path.join(dataDir, 'mindbase.config.json'), 'utf-8');
-    config = JSON.parse(text) as MCPConfig;
-  } catch { /* ok — read-only tools still work */ }
+  // Missing config is ok — read-only tools still work. Re-read on change (LBV2-32).
+  const configFile = createConfigReloader<MCPConfig>(path.join(dataDir, 'mindbase.config.json'), {
+    minIntervalMs: configReloadIntervalMs(process.env),
+    log: (line) => { process.stderr.write(line); },
+  });
+  configFile.current();
 
   // Build a fresh search index from disk on each start (cheap for personal-scale wikis)
   const searchIndex = new SearchIndex();
@@ -150,8 +153,9 @@ export async function loadContext(opts: {
     cards,
     templates,
     synthesisCache,
-    config,
+    get config() { return configFile.current(); },
     getAdapter: () => {
+      const config = configFile.current();
       if (!config) throw new Error('LLM not configured');
       return createAdapter(config.provider, {
         apiKey: config.apiKey,
