@@ -96,5 +96,6 @@ Tests: `deploy/coolify/tests/config-check.sh` (static: generator tests, `docker 
 - MetaMCP stores API keys and vault tokens in plain text in `metamcp-db` (accepted risk, see `deploy/stack/README.md`).
 - The embedding model stays loaded after the first search (~2.6 GiB per vault until restart).
 - `GET /api/config` shows the vault's EUrouter key to everyone with web access to that vault.
+- EUrouter: the model is chosen as a route (routing rule, `ruleId`) in the portal or the vault settings; PDF chat sends locally extracted text only (no figures/layout), limited by `maxContextChars`.
 - The shared embedding service (LBV2-26) is not part of the packages yet (generator option `embed`, off).
 - Not yet verified on a real Coolify server: Raw-mode deploy end to end, certificates for all hosts, cookie SameSite with the Google callback, egress rules surviving restarts.

@@ -27,6 +27,7 @@ function readerLlmLimits(): { rate: ReaderLlmRateLimit; tokenWindow: SlidingWind
   return readerLlm;
 }
 export { createReaderView } from './visibility.js';
+export { loadContext } from './context.js';
 export type { AccessProfile } from './access.js';
 
 export interface RunOptions {
