@@ -84,17 +84,43 @@ login() {
   curlk -c "$jar" -b "$jar" "$exec_url" >/dev/null
   post "$(jq -cn --arg u "$user" '{component:"ak-stage-identification",uid_field:$u}')" >/dev/null
   resp=$(post "$(jq -cn --arg p "$pass" '{component:"ak-stage-password",password:$p}')")
-  for _ in 1 2 3; do
+  MFA_SEEN=""
+  for _ in 1 2 3 4 5 6; do
     kind=$(jq -r '.component // .type' <<<"$resp")
     case $kind in
       xak-flow-redirect | redirect)
         to=$(jq -r '.to' <<<"$resp")
         curlk -L -c "$jar" -b "$jar" -o /dev/null "$([[ $to == http* ]] && echo "$to" || echo "$(U auth)$to")"; return 0 ;;
       ak-stage-consent) resp=$(post "$(jq -c '{component:"ak-stage-consent",token:.token}' <<<"$resp")") ;;
+      ak-stage-authenticator-validate)
+        [[ -n ${MFA_SECRET_FILE:-} ]] || { echo "MFA required for $user" >&2; MFA_SEEN=validate; return 5; }
+        if [[ $(jq '.device_challenges | length' <<<"$resp") -gt 0 ]]; then
+          MFA_SEEN=${MFA_SEEN:-challenge}
+          totp_next_window
+          resp=$(post "$(jq -cn --arg c "$(totp "$(cat "$MFA_SECRET_FILE")")" '{component:"ak-stage-authenticator-validate",code:$c}')")
+        else
+          MFA_SEEN=setup
+          resp=$(post "$(jq -c '{component:"ak-stage-authenticator-validate",selected_stage:([.configuration_stages[] | select(.meta_model_name | test("totp"))][0].pk)}' <<<"$resp")")
+        fi ;;
+      ak-stage-authenticator-totp)
+        sed -nE 's#.*[?&]secret=([A-Z2-7]+).*#\1#p' <<<"$(jq -r .config_url <<<"$resp")" >"$MFA_SECRET_FILE"
+        resp=$(post "$(jq -cn --arg c "$(totp "$(cat "$MFA_SECRET_FILE")")" '{component:"ak-stage-authenticator-totp",code:$c}')") ;;
       *) echo "unexpected stage: $(jq -c '{component,type,response_errors}' <<<"$resp")" >&2; return 4 ;;
     esac
   done
 }
+# totp <base32 secret> → current 6-digit code (RFC 6238, SHA-1, 30 s)
+totp() {
+  node -e '
+const s = process.argv[1].replace(/=+$/, ""), a = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+let bits = ""; for (const c of s) bits += a.indexOf(c).toString(2).padStart(5, "0");
+const key = Buffer.from(bits.match(/.{8}/g).map((b) => parseInt(b, 2)));
+const ctr = Buffer.alloc(8); ctr.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000)));
+const h = require("crypto").createHmac("sha1", key).update(ctr).digest(), o = h[19] & 15;
+console.log(String((h.readUInt32BE(o) & 0x7fffffff) % 1e6).padStart(6, "0"));' "$1"
+}
+# a TOTP code is accepted once: wait for a fresh 30 s window before reusing the device
+totp_next_window() { sleep $(( 31 - $(date +%s) % 30 )); }
 # access <jar> <url> [curl args] → DATA (backend answered JSON), DENIED, LOGIN or OTHER:<code>
 access() {
   local jar=$1 url=$2 body out status final; shift 2
@@ -180,13 +206,18 @@ isolation_checks() { # isolation_checks <pkg> <last-slot>
   done
 
   echo "== [$pkg] bootstrap admin (ADMIN_EMAIL + generated password)"
-  login "$jars/admin" "$(U mcp)/" "ops@example.com" "$admin_pass" && ok "admin login with ADMIN_EMAIL" || bad "admin login with ADMIN_EMAIL"
+  MFA_SECRET_FILE= login "$jars/admin" "$(U mcp)/" "ops@example.com" "$admin_pass" 2>/dev/null
+  expect "admin login stops at the MFA stage without a device" "${MFA_SEEN:-none}" "validate"
+  rm -f "$jars/admin"
+  MFA_SECRET_FILE=$work/admin-totp login "$jars/admin" "$(U mcp)/" "ops@example.com" "$admin_pass" && ok "admin login with ADMIN_EMAIL + MFA (${MFA_SEEN})" || bad "admin login with ADMIN_EMAIL + MFA"
+  [[ $pkg == s ]] && expect "first admin login enrols TOTP" "$MFA_SEEN" "setup"
+  [[ $pkg == m ]] && expect "later admin login asks for the TOTP code" "$MFA_SEEN" "challenge"
   expect "admin → MetaMCP admin UI" "$(access "$jars/admin" "$(U mcp)/health")" "DATA"
   expect "admin in lokyy-admins" "$(api GET '/core/users/?username=akadmin' | jq -r '[.results[0].groups_obj[].name] | index("lokyy-admins") != null')" "true"
   expect "admin → personal vault v01 (no slot group)" "$(access "$jars/admin" "$(U v01)/api/config")" "DENIED"
 
   echo "== [$pkg] slot isolation (web)"
-  login "$jars/alice" "$(U v01)/" alice "$(cat "$work/pass-alice")" || bad "alice login"
+  MFA_SECRET_FILE= login "$jars/alice" "$(U v01)/" alice "$(cat "$work/pass-alice")" && expect "employee login without MFA" "${MFA_SEEN:-none}" "none" || bad "alice login"
   login "$jars/bob" "$(U v02)/" bob "$(cat "$work/pass-bob")" || bad "bob login"
   login "$jars/walt" "$(U firma)/" walt "$(cat "$work/pass-walt")" || bad "walt login"
   login "$jars/rita" "$(U v01)/" rita "$(cat "$work/pass-rita")" 2>/dev/null || true
