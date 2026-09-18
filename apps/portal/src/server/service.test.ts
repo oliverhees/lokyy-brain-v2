@@ -305,6 +305,25 @@ describe('role change, disable, enable, remove', () => {
     await expect(h.service.changeRole('admin', 'anna', 'writer')).rejects.toMatchObject({ status: 502, code: 'revocation_failed' });
   });
 
+  it('remove disables the user before the Authentik step: a failed Authentik call cannot re-provision a key (re-audit LOW)', async () => {
+    await invite('anna');
+    h.ak.failNext = { status: 500, body: 'boom' };
+    await expect(h.service.remove('admin', 'anna', { confirm: 'anna', keepData: true })).rejects.toMatchObject({ status: 502, code: 'authentik_failed' });
+    expect((await h.service.listUsers()).users[0]).toMatchObject({ username: 'anna', status: 'disabled' });
+    await invite('ben'); // reconciles MetaMCP
+    expect(h.mm.users.has('lokyy-anna')).toBe(false);
+    expect(h.mm.apiKeys.filter((k) => k.user_id === 'lokyy-anna')).toEqual([]);
+    await h.service.remove('admin', 'anna', { confirm: 'anna', keepData: true }); // retry works
+    expect(h.ak.userByName('anna')).toBeUndefined();
+  });
+
+  it('an employee made a portal admin by hand cannot be changed by the portal (the gate refuses)', async () => {
+    await invite('anna');
+    h.ak.addToGroup(h.ak.userByName('anna')!.pk, 'lokyy-admins');
+    await expect(h.service.remove('admin', 'anna', { confirm: 'anna', keepData: true })).rejects.toMatchObject({ status: 409, code: 'authentik_forbidden' });
+    expect(h.ak.userByName('anna')).toBeDefined();
+  });
+
   it('one broken MetaMCP account does not block the removal of another user', async () => {
     await invite('anna'); await invite('ben');
     h.mm.failUser = 'lokyy-ben';

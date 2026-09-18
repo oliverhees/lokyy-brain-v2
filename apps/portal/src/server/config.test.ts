@@ -7,7 +7,7 @@ const base: Record<string, string> = {
   LOKYY_DOMAIN: 'example.com',
   LOKYY_SLOTS: 'v01,v02',
   VAULT_PROXY_SECRET: 's'.repeat(40),
-  AUTHENTIK_API_TOKEN: 't'.repeat(40),
+  AUTHENTIK_GATE_SECRET: 'g'.repeat(40),
   METAMCP_DATABASE_URL: 'postgresql://metamcp:pw@metamcp-db:5432/metamcp',
   VAULT_ADMIN_URL: 'http://lokyy-traefik:8090',
 };
@@ -18,7 +18,7 @@ describe('loadConfig', () => {
     expect(c).toMatchObject({
       port: 3000, domain: 'example.com', slots: ['v01', 'v02'], stateDir: '/state', package: null, smtpAllowedHosts: [],
       publicOrigin: 'https://app.example.com',
-      authentik: { url: 'http://authentik-server:9000', publicUrl: 'https://auth.example.com' },
+      authentik: { gateUrl: 'http://authentik-gate:8080', publicUrl: 'https://auth.example.com' },
       metamcp: { url: 'http://metamcp:12008', publicBase: 'https://mcp.example.com' },
       inviteValidity: 'days=7',
     });
@@ -29,9 +29,15 @@ describe('loadConfig', () => {
     expect(c).toMatchObject({ stateDir: '/var/lib/lokyy-state', package: 'team-10', smtpAllowedHosts: ['mail.intern', 'relay.lan'] });
   });
 
-  it.each(['LOKYY_DOMAIN', 'LOKYY_SLOTS', 'VAULT_PROXY_SECRET', 'AUTHENTIK_API_TOKEN', 'METAMCP_DATABASE_URL', 'VAULT_ADMIN_URL'])('requires %s', (name) => {
+  it.each(['LOKYY_DOMAIN', 'LOKYY_SLOTS', 'VAULT_PROXY_SECRET', 'AUTHENTIK_GATE_SECRET', 'METAMCP_DATABASE_URL', 'VAULT_ADMIN_URL'])('requires %s', (name) => {
     const { [name]: _, ...rest } = base;
     expect(() => loadConfig(rest)).toThrow(name);
+  });
+
+  it('holds no Authentik token: it only knows the gate and its shared secret', () => {
+    const c = loadConfig({ ...base, AUTHENTIK_API_TOKEN: 'leftover', AUTHENTIK_GATE_URL: 'http://gate:9999' });
+    expect(c.authentik).toEqual({ gateUrl: 'http://gate:9999', publicUrl: 'https://auth.example.com', gateSecret: 'g'.repeat(40) });
+    expect(() => loadConfig({ ...base, AUTHENTIK_GATE_SECRET: 'short' })).toThrow(/AUTHENTIK_GATE_SECRET/);
   });
 
   it('rejects a short proxy secret and a bad domain', () => {

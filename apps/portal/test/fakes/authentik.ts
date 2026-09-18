@@ -19,6 +19,9 @@ export interface RecordedRequest {
   body: unknown;
 }
 
+/** Groups that grant superuser rights, as in a fresh Authentik */
+const SUPERUSER_GROUPS: ReadonlySet<string> = new Set(['authentik Admins']);
+
 const json = (status: number, body: unknown): Response =>
   new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -60,7 +63,8 @@ export class FakeAuthentik {
   }
 
   #serialize(u: FakeUser) {
-    return { ...u, groups_obj: u.groups.map((g) => ({ pk: g, name: this.groups.get(g) })) };
+    const groups_obj = u.groups.map((g) => ({ pk: g, name: this.groups.get(g)!, is_superuser: SUPERUSER_GROUPS.has(this.groups.get(g)!) }));
+    return { ...u, type: 'internal', is_superuser: groups_obj.some((g) => g.is_superuser), groups_obj };
   }
 
   fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
@@ -81,7 +85,8 @@ export class FakeAuthentik {
 
     if (path === '/api/v3/core/users/' && method === 'GET') {
       const name = url.searchParams.get('username');
-      const results = [...this.users.values()].filter((u) => name === null || u.username === name).map((u) => this.#serialize(u));
+      const upath = url.searchParams.get('path');
+      const results = [...this.users.values()].filter((u) => (name === null || u.username === name) && (upath === null || u.path === upath)).map((u) => this.#serialize(u));
       return json(200, { pagination: { count: results.length }, results });
     }
     if (path === '/api/v3/core/users/' && method === 'POST') {

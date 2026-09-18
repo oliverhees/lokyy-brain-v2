@@ -2,7 +2,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AuthentikClient } from '../../src/server/authentik.ts';
+import { AuthentikGateClient } from '../../src/server/authentik.ts';
 import { MetamcpProvisioner, READ_TOOLS } from '../../src/server/metamcp.ts';
 import { PortalService, type Mailer, type VaultAdmin, type VaultLlmConfig } from '../../src/server/service.ts';
 import { EurouterError, type RoutingRule } from '../../src/server/eurouter.ts';
@@ -10,6 +10,7 @@ import { checkSmtpHost } from '../../src/server/smtp-guard.ts';
 import { StateStore } from '../../src/server/state.ts';
 import { AuditLog } from '../../src/server/audit.ts';
 import { FakeAuthentik } from './authentik.ts';
+import { fakeGate, GATE_SECRET, GATE_URL, type FakeGate } from './gate.ts';
 import { ALL_TOOLS, FakeMetamcp } from './metamcp.ts';
 
 export const SLOTS = ['v01', 'v02', 'v03'];
@@ -54,6 +55,7 @@ const DNS: Record<string, string[]> = {
 export interface Harness {
   dir: string;
   ak: FakeAuthentik;
+  gate: FakeGate;
   mm: FakeMetamcp;
   eurouter: FakeEurouter;
   vaults: FakeVaultAdmin;
@@ -67,6 +69,7 @@ export function harness(opts: { siteUrl?: (host: string) => string; mcpPublicBas
   const dir = mkdtempSync(join(tmpdir(), 'portal-svc-'));
   const groups = [...SLOTS.map((s) => `vault-${s}`), 'vault-firma-read', 'vault-firma-write', 'lokyy-admins', 'lokyy-users'];
   const ak = new FakeAuthentik(groups);
+  const gate = fakeGate(ak);
   const env: Record<string, string> = { MCP_TOKEN_FIRMA: 'tok-firma', MCP_READONLY_TOKEN_FIRMA: 'tok-firma-ro' };
   const tools: Record<string, string[]> = { 'tok-firma': ALL_TOOLS, 'tok-firma-ro': [...READ_TOOLS] };
   for (const s of SLOTS) { env[`MCP_TOKEN_${s.toUpperCase()}`] = `tok-${s}`; tools[`tok-${s}`] = ALL_TOOLS; }
@@ -82,7 +85,7 @@ export function harness(opts: { siteUrl?: (host: string) => string; mcpPublicBas
     slots: SLOTS,
     store,
     audit: new AuditLog(join(dir, 'audit.log')),
-    authentik: new AuthentikClient({ baseUrl: 'http://authentik-server:9000', token: 'tok-secret', fetch: ak.fetch }),
+    authentik: new AuthentikGateClient({ gateUrl: GATE_URL, secret: GATE_SECRET, fetch: gate.fetch }),
     metamcp: new MetamcpProvisioner({ db: mm.db, baseUrl: 'http://metamcp:12008', publicBase: 'https://mcp.example.com', fetch: mm.fetch, env }),
     eurouter,
     smtpHostCheck: (host) => checkSmtpHost(host, ['relay.lan'], async (h) => {
@@ -95,5 +98,5 @@ export function harness(opts: { siteUrl?: (host: string) => string; mcpPublicBas
     log: () => {},
     ...opts,
   });
-  return { dir, ak, mm, eurouter, vaults, mailer, store, service, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  return { dir, ak, gate, mm, eurouter, vaults, mailer, store, service, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }

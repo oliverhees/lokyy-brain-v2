@@ -6,7 +6,7 @@ import {
   type FieldErrors, type Role,
 } from '../shared/validation.ts';
 import { inviteMail } from '../shared/i18n/mail.de.ts';
-import { AuthentikClient, AuthentikError, managedGroupsFor } from './authentik.ts';
+import { AuthentikError, managedGroupsFor, type AuthentikGateClient } from './authentik.ts';
 import type { MetamcpProvisioner, ProvisionResult } from './metamcp.ts';
 import { COMPANY_VAULT, nextFreeSlot, toUsersJson } from './slots.ts';
 import type { PortalState, SlotUser, SmtpSettings, StateStore, VaultLlm } from './state.ts';
@@ -64,7 +64,7 @@ export interface ServiceDeps {
   slots: string[];
   store: StateStore;
   audit: AuditLog;
-  authentik: AuthentikClient;
+  authentik: AuthentikGateClient;
   metamcp: MetamcpProvisioner;
   eurouter: Routes;
   /** Refuses SMTP hosts that resolve to private addresses (unless allow-listed) */
@@ -331,7 +331,7 @@ export class PortalService {
     if (u.authentikPk !== null) {
       try {
         await this.#d.authentik.setActive(u.authentikPk, false);
-        await this.#d.authentik.endSessions(username);
+        await this.#d.authentik.endSessions(u.authentikPk);
       } catch (e) { authentikError = this.#mapAuthentik(e); }
     }
     await this.#provision(); // not provisioned any more → MetaMCP account removed
@@ -358,18 +358,22 @@ export class PortalService {
     // Wiping needs a vault-side API (separate item); never pretend to have deleted data.
     if (opts.keepData !== true) throw new ServiceError(400, 'wipe_unsupported');
     const revoked = await this.#revoke(username);
+    // Disabled before anything else can fail: a user left behind by a failed step is never provisioned
+    // again, and the removal can simply be retried.
+    await this.#patch(username, (x) => { x.status = 'disabled'; });
     if (!revoked) {
-      // Keep the user (disabled) so the removal can be retried; access must be gone before the record is.
-      await this.#patch(username, (x) => { x.status = 'disabled'; });
       await this.#d.audit.write({ actor, action: 'user.remove', target: username, details: { slot: u.slot, revoked: false } });
       throw new ServiceError(502, 'revocation_failed');
     }
     try {
       if (u.authentikPk !== null) {
-        await this.#d.authentik.endSessions(username);
+        await this.#d.authentik.endSessions(u.authentikPk);
         await this.#d.authentik.deleteUser(u.authentikPk);
       }
-    } catch (e) { throw this.#mapAuthentik(e); }
+    } catch (e) {
+      await this.#d.audit.write({ actor, action: 'user.remove', target: username, details: { slot: u.slot, revoked: true, authentik: false } });
+      throw this.#mapAuthentik(e);
+    }
     await this.#d.store.update((s) => {
       s.users = s.users.filter((x) => x.username !== username);
       s.retired.push({ slot: u.slot, formerUsername: username, retiredAt: now() });
@@ -548,6 +552,7 @@ export class PortalService {
       if (e.code === 'username_taken') return new ServiceError(409, 'username_taken');
       if (e.code === 'group_missing') return new ServiceError(500, 'authentik_group_missing');
       if (e.code === 'no_recovery_flow') return new ServiceError(500, 'authentik_no_recovery_flow');
+      if (e.code === 'forbidden') return new ServiceError(409, 'authentik_forbidden');
       return new ServiceError(502, 'authentik_failed');
     }
     return e as Error;

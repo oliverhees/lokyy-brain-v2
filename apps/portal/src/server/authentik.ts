@@ -1,24 +1,22 @@
-// Authentik admin API adapter (API token = AUTHENTIK_BOOTSTRAP_TOKEN of the stack).
-// Invitation model: the portal creates the user with its groups up front and hands out a recovery
-// link of the brand's recovery flow (portal blueprint: lokyy-set-password), where the user sets their
-// own password. Authentik's invitation + enrollment flow cannot assign groups from invitation data
+// Client of the authentik-gate (deploy/stack/authentik-gate): the portal holds no Authentik token. The
+// gate alone holds it and only lets the portal manage its own employees (lokyy_managed, never superusers,
+// "authentik Admins" or lokyy-admins members, groups from an allowlist, no password endpoint).
+// Invitation model: the portal creates the user with its groups up front and hands out a recovery link of
+// the brand's recovery flow (portal blueprint: lokyy-set-password), where the user sets their own
+// password. Authentik's invitation + enrollment flow cannot assign groups from invitation data
 // (user_write discards "groups", checked in 2026.8.2), so a user created that way would have no access.
 import type { Role } from '../shared/validation.ts';
 
 export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
-/** Group names owned by the portal; every other group of a user (e.g. lokyy-admins) is left alone. */
-const MANAGED_GROUP = /^(vault-|lokyy-users$)/;
 /** Admits a user to the portal (forward-auth of app.<domain> is bound to it). */
 export const USERS_GROUP = 'lokyy-users';
-/** Users the portal created carry these attributes; it never touches any other account. */
-const PATH = 'lokyy';
 
 export function managedGroupsFor(slot: string, role: Role): string[] {
   return [`vault-${slot}`, role === 'writer' ? 'vault-firma-write' : 'vault-firma-read', USERS_GROUP];
 }
 
-export type AuthentikErrorCode = 'http' | 'username_taken' | 'group_missing' | 'no_recovery_flow' | 'unreachable';
+export type AuthentikErrorCode = 'http' | 'username_taken' | 'group_missing' | 'no_recovery_flow' | 'forbidden' | 'unreachable';
 
 export class AuthentikError extends Error {
   readonly code: AuthentikErrorCode;
@@ -31,32 +29,21 @@ export class AuthentikError extends Error {
   }
 }
 
-export interface AuthentikUser {
+export interface GateUser {
   pk: number;
   username: string;
+  slot: string | null;
   isActive: boolean;
-  attributes: Record<string, unknown>;
-  groups: { pk: string; name: string }[];
+  groups: string[];
 }
 
-interface RawUser {
-  pk: number;
-  username: string;
-  is_active: boolean;
-  attributes?: Record<string, unknown>;
-  groups?: string[];
-  groups_obj?: { pk: string; name: string }[] | null;
-}
-
-const toUser = (u: RawUser): AuthentikUser => ({
-  pk: u.pk, username: u.username, isActive: u.is_active, attributes: u.attributes ?? {}, groups: u.groups_obj ?? [],
-});
-
-export interface AuthentikOptions {
-  baseUrl: string;
-  /** Public Authentik URL (https://auth.<domain>): links Authentik builds from the internal API host are rewritten to it */
+export interface GateClientOptions {
+  /** http://authentik-gate:8080 on the internal portal↔gate network */
+  gateUrl: string;
+  /** Public Authentik URL (https://auth.<domain>): links Authentik builds from its internal host are rewritten to it */
   publicUrl?: string;
-  token: string;
+  /** Shared bearer secret (AUTHENTIK_GATE_SECRET) */
+  secret: string;
   fetch?: FetchFn;
   timeoutMs?: number;
 }
@@ -69,127 +56,90 @@ export interface EnsureUserInput {
   groups: string[];
 }
 
-export class AuthentikClient {
+const GATE_ERRORS: Record<number, AuthentikErrorCode> = { 403: 'forbidden', 409: 'username_taken', 422: 'group_missing', 424: 'no_recovery_flow' };
+
+export class AuthentikGateClient {
   readonly #base: string;
   readonly #public: string | null;
-  readonly #token: string;
+  readonly #secret: string;
   readonly #fetch: FetchFn;
   readonly #timeoutMs: number;
-  readonly #groupPks = new Map<string, string>();
 
-  constructor(opts: AuthentikOptions) {
-    this.#base = opts.baseUrl.replace(/\/+$/, '');
+  constructor(opts: GateClientOptions) {
+    this.#base = opts.gateUrl.replace(/\/+$/, '');
     this.#public = opts.publicUrl ? opts.publicUrl.replace(/\/+$/, '') : null;
-    this.#token = opts.token;
+    this.#secret = opts.secret;
     this.#fetch = opts.fetch ?? fetch;
-    this.#timeoutMs = opts.timeoutMs ?? 15_000;
+    this.#timeoutMs = opts.timeoutMs ?? 20_000;
   }
 
-  async #call<T>(method: string, path: string, body?: unknown, query?: Record<string, string>): Promise<{ status: number; data: T }> {
-    const url = new URL(`${this.#base}/api/v3${path}`);
-    for (const [k, v] of Object.entries(query ?? {})) url.searchParams.set(k, v);
+  /** 404 is returned to the caller (some operations accept it); every other failure throws. */
+  async #call<T>(method: string, path: string, body?: unknown): Promise<{ status: number; data: T }> {
     let res: Response;
     try {
-      res = await this.#fetch(url, {
+      res = await this.#fetch(`${this.#base}${path}`, {
         method,
-        headers: { authorization: `Bearer ${this.#token}`, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+        headers: { authorization: `Bearer ${this.#secret}`, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(this.#timeoutMs),
       });
     } catch (e) {
-      throw new AuthentikError('unreachable', `Authentik ${method} ${path}: ${(e as Error).name}`);
+      throw new AuthentikError('unreachable', `authentik-gate ${method} ${path}: ${(e as Error).name}`);
     }
     const text = await res.text();
     let data: unknown = null;
-    try { data = text ? JSON.parse(text) : null; } catch { /* non-JSON error page */ }
+    try { data = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
     if (!res.ok && res.status !== 404) {
-      // Response bodies can echo request data; only field names of validation errors are reported.
-      const fields = data && typeof data === 'object' ? Object.keys(data).join(',') : '';
-      const err = new AuthentikError('http', `Authentik ${method} ${path}: HTTP ${res.status}${fields ? ` (${fields})` : ''}`, res.status);
-      if (res.status === 400 && JSON.stringify(data).includes('No recovery flow')) {
-        throw new AuthentikError('no_recovery_flow', 'Authentik brand has no recovery flow (portal blueprint not applied?)', 400);
-      }
-      throw err;
+      const error = data && typeof data === 'object' && typeof (data as { error?: unknown }).error === 'string' ? (data as { error: string }).error : '';
+      throw new AuthentikError(GATE_ERRORS[res.status] ?? 'http', `authentik-gate ${method} ${path}: HTTP ${res.status}${error ? ` (${error})` : ''}`, res.status);
     }
     return { status: res.status, data: data as T };
   }
 
-  async findUser(username: string): Promise<AuthentikUser | null> {
-    const { data } = await this.#call<{ results: RawUser[] }>('GET', '/core/users/', undefined, { username });
-    const hit = (data?.results ?? []).find((u) => u.username === username);
-    return hit ? toUser(hit) : null;
-  }
-
-  async getUser(pk: number): Promise<AuthentikUser | null> {
-    const { status, data } = await this.#call<RawUser>('GET', `/core/users/${pk}/`);
-    return status === 404 ? null : toUser(data);
-  }
-
-  async #groupPk(name: string): Promise<string> {
-    const cached = this.#groupPks.get(name);
-    if (cached) return cached;
-    const { data } = await this.#call<{ results: { pk: string; name: string }[] }>('GET', '/core/groups/', undefined, { name });
-    const hit = (data?.results ?? []).find((g) => g.name === name);
-    if (!hit) throw new AuthentikError('group_missing', `Authentik group ${name} does not exist (blueprint not applied?)`);
-    this.#groupPks.set(name, hit.pk);
-    return hit.pk;
-  }
-
-  static isPortalUser(u: AuthentikUser, slot: string): boolean {
-    return u.attributes['lokyy_managed'] === true && u.attributes['lokyy_slot'] === slot;
-  }
-
   /** Creates or updates the portal user of a slot; returns its pk. Never adopts a foreign account. */
   async ensureUser(input: EnsureUserInput): Promise<number> {
-    const desired = await Promise.all(input.groups.map((g) => this.#groupPk(g)));
-    const existing = await this.findUser(input.username);
-    if (existing) {
-      if (!AuthentikClient.isPortalUser(existing, input.slot)) {
-        throw new AuthentikError('username_taken', `Authentik user ${input.username} exists and is not the portal user of ${input.slot}`);
-      }
-      await this.#call('PATCH', `/core/users/${existing.pk}/`, { name: input.name, email: input.email });
-      await this.#applyGroups(existing, desired);
-      return existing.pk;
+    const { data: found } = await this.#call<{ status: 'absent' | 'managed' | 'foreign'; user?: GateUser }>('POST', '/v1/users/lookup', { username: input.username });
+    if (found.status === 'foreign' || (found.status === 'managed' && found.user?.slot !== input.slot)) {
+      throw new AuthentikError('username_taken', `Authentik user ${input.username} exists and is not the portal user of ${input.slot}`);
     }
-    const { data } = await this.#call<RawUser>('POST', '/core/users/', {
-      username: input.username, name: input.name, email: input.email, is_active: true, path: PATH,
-      attributes: { lokyy_managed: true, lokyy_slot: input.slot }, groups: desired,
-    });
-    return data.pk;
+    if (found.status === 'managed' && found.user) {
+      await this.#must('PATCH', `/v1/users/${found.user.pk}`, { name: input.name, email: input.email, groups: input.groups });
+      return found.user.pk;
+    }
+    const { data } = await this.#call<{ user: GateUser }>('POST', '/v1/users', input);
+    return data.user.pk;
   }
 
-  async #applyGroups(user: AuthentikUser, desiredPks: string[]): Promise<void> {
-    const keep = user.groups.filter((g) => !MANAGED_GROUP.test(g.name)).map((g) => g.pk);
-    await this.#call('PATCH', `/core/users/${user.pk}/`, { groups: [...new Set([...keep, ...desiredPks])] });
+  async #must(method: string, path: string, body?: unknown): Promise<void> {
+    const { status } = await this.#call(method, path, body);
+    if (status === 404) throw new AuthentikError('http', `authentik-gate ${method} ${path}: user not found`, 404);
   }
 
-  /** Replaces the portal-managed groups (vault-*, lokyy-users) of a user; other groups stay. */
+  /** Replaces the portal-managed groups (vault-*, lokyy-users) of a user; the gate leaves other groups alone. */
   async setGroups(pk: number, groups: string[]): Promise<void> {
-    const user = await this.getUser(pk);
-    if (!user) throw new AuthentikError('http', `Authentik user ${pk} not found`, 404);
-    await this.#applyGroups(user, await Promise.all(groups.map((g) => this.#groupPk(g))));
+    await this.#must('PATCH', `/v1/users/${pk}`, { groups });
   }
 
   async setActive(pk: number, active: boolean): Promise<void> {
-    await this.#call('PATCH', `/core/users/${pk}/`, { is_active: active });
+    await this.#must('PATCH', `/v1/users/${pk}`, { isActive: active });
   }
 
   /** One-time link to the brand's recovery flow; the user sets their own password there. */
   async inviteLink(pk: number, tokenDuration: string): Promise<string> {
-    const { data } = await this.#call<{ link: string }>('POST', `/core/users/${pk}/recovery/`, { token_duration: tokenDuration });
-    if (!data?.link || !/^https?:\/\//.test(data.link)) throw new AuthentikError('http', 'Authentik returned no recovery link');
+    const { status, data } = await this.#call<{ link?: string }>('POST', `/v1/users/${pk}/recovery`, { tokenDuration });
+    if (status === 404 || typeof data?.link !== 'string' || !/^https?:\/\//.test(data.link)) throw new AuthentikError('http', 'authentik-gate returned no recovery link');
     if (!this.#public) return data.link;
     const u = new URL(data.link);
     return `${this.#public}${u.pathname}${u.search}`;
   }
 
-  /** Ends all Authentik sessions of a user (forward-auth cookies stop working). */
-  async endSessions(username: string): Promise<void> {
-    const { data } = await this.#call<{ results: { uuid: string }[] }>('GET', '/core/authenticated_sessions/', undefined, { user__username: username });
-    for (const s of data?.results ?? []) await this.#call('DELETE', `/core/authenticated_sessions/${s.uuid}/`);
+  /** Ends all Authentik sessions of a user (forward-auth cookies stop working); a missing user has none. */
+  async endSessions(pk: number): Promise<void> {
+    await this.#call('DELETE', `/v1/users/${pk}/sessions`);
   }
 
+  /** Deleting a user that is already gone is not an error. */
   async deleteUser(pk: number): Promise<void> {
-    await this.#call('DELETE', `/core/users/${pk}/`);
+    await this.#call('DELETE', `/v1/users/${pk}`);
   }
 }

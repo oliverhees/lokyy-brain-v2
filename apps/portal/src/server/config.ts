@@ -16,7 +16,8 @@ export interface PortalConfig {
   smtpAllowedHosts: string[];
   publicOrigin: string;
   staticDir: string;
-  authentik: { url: string; publicUrl: string; token: string };
+  /** The portal holds no Authentik token: authentik-gate does, and only lets it manage its employees */
+  authentik: { gateUrl: string; gateSecret: string; publicUrl: string };
   metamcp: { url: string; databaseUrl: string; publicBase: string; origin: string };
   vaultAdminUrl: string;
   inviteValidity: string;
@@ -38,6 +39,8 @@ export function loadConfig(env: Record<string, string | undefined>): PortalConfi
   if (!DOMAIN_RE.test(domain)) throw new Error('LOKYY_DOMAIN must be a bare domain like example.com');
   const proxySecret = req('VAULT_PROXY_SECRET');
   if (proxySecret.length < 32 || proxySecret.trim() !== proxySecret) throw new Error('VAULT_PROXY_SECRET must be at least 32 characters without surrounding whitespace');
+  const gateSecret = req('AUTHENTIK_GATE_SECRET');
+  if (gateSecret.length < 32 || gateSecret.trim() !== gateSecret) throw new Error('AUTHENTIK_GATE_SECRET must be at least 32 characters without surrounding whitespace');
   const inviteValidity = env['PORTAL_INVITE_VALIDITY'] ?? 'days=7';
   const iv = /^(days|hours)=(\d{1,3})$/.exec(inviteValidity);
   // Invitation links are login credentials: at most 14 days.
@@ -59,7 +62,11 @@ export function loadConfig(env: Record<string, string | undefined>): PortalConfi
     smtpAllowedHosts: (env['SMTP_ALLOWED_HOSTS'] ?? '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
     publicOrigin: env['PORTAL_PUBLIC_ORIGIN'] ?? `${scheme}://app.${domain}${port ? `:${port}` : ''}`,
     staticDir: env['PORTAL_STATIC_DIR'] ?? new URL('../../dist/client', import.meta.url).pathname,
-    authentik: { url: env['AUTHENTIK_URL'] ?? 'http://authentik-server:9000', publicUrl: env['AUTHENTIK_PUBLIC_URL'] ?? `${scheme}://auth.${domain}${port ? `:${port}` : ''}`, token: req('AUTHENTIK_API_TOKEN') },
+    authentik: {
+      gateUrl: env['AUTHENTIK_GATE_URL'] ?? 'http://authentik-gate:8080',
+      gateSecret,
+      publicUrl: env['AUTHENTIK_PUBLIC_URL'] ?? `${scheme}://auth.${domain}${port ? `:${port}` : ''}`,
+    },
     metamcp: {
       url: metamcpUrl,
       databaseUrl: req('METAMCP_DATABASE_URL'),

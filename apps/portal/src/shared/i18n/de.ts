@@ -45,6 +45,7 @@ export const de = {
       smtp_failed: 'Die Test-E-Mail konnte nicht gesendet werden. Bitte prüfen Sie die SMTP-Angaben.',
       authentik_failed: 'Die Anmeldung (Authentik) ist gerade nicht erreichbar.',
       authentik_group_missing: 'In der Anmeldung (Authentik) fehlt eine Gruppe. Bitte den Betreiber informieren.',
+      authentik_forbidden: 'Dieses Konto darf das Portal nicht ändern (z. B. weil es Administrator ist). Bitte direkt in der Anmeldung (Authentik) bearbeiten.',
       authentik_no_recovery_flow: 'In der Anmeldung (Authentik) fehlt der Ablauf „Passwort festlegen“. Bitte den Betreiber informieren.',
       provisioning_failed: 'Der MCP-Zugang konnte nicht eingerichtet werden. Bitte später erneut versuchen.',
       revocation_failed: 'Der MCP-Schlüssel konnte nicht gesperrt werden. Die Person ist deaktiviert; bitte den Vorgang wiederholen.',
