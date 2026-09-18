@@ -22,7 +22,7 @@ beforeEach(() => {
 afterEach(() => h.cleanup());
 
 const call = (method: string, path: string) => (request(app) as unknown as Record<string, (p: string) => request.Test>)[method]!(path)
-  .set('x-vault-proxy-secret', 'p'.repeat(40)).set('x-authentik-username', 'akadmin').set('x-authentik-groups', 'lokyy-admins')
+  .set('x-portal-proxy-secret', 'p'.repeat(40)).set('x-authentik-username', 'akadmin').set('x-authentik-groups', 'lokyy-admins')
   .set('x-csrf-token', csrfToken('c', 'akadmin'));
 
 describe('openapi.json', () => {
@@ -31,7 +31,7 @@ describe('openapi.json', () => {
   });
 
   it.each(operations)('%s %s exists on the server', async (method, path) => {
-    const r = await call(method, path.replace('{username}', 'anna').replace('{slot}', 'v01')).send(method === 'get' ? undefined : {});
+    const r = await call(method, path.replace('{username}', 'anna')).send(method === 'get' ? undefined : {});
     expect(r.body?.error).not.toBe('not_found');
   });
 
@@ -48,7 +48,7 @@ describe('openapi.json', () => {
       }
     };
     walk((app as unknown as { _router: { stack: Layer[] } })._router.stack, '');
-    const documented = new Set(operations.map(([m, p]) => `${m} ${p.replace('{username}', ':username').replace('{slot}', ':slot')}`));
+    const documented = new Set(operations.map(([m, p]) => `${m} ${p.replace('{username}', ':username')}`));
     expect(found.length).toBeGreaterThanOrEqual(operations.length);
     const undocumented = found.filter((r) => !documented.has(r));
     expect(undocumented).toEqual([]);

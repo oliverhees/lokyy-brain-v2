@@ -2,802 +2,169 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Lokyy setup portal API",
-    "version": "1.1.0",
-    "description": "Internal API of the setup portal (app.<domain>). Only reachable through Traefik behind Authentik forward-auth: Traefik sets X-Vault-Proxy-Secret and the Authentik identity headers (X-authentik-username, X-authentik-groups, '|'-separated). /api/admin/* requires the group lokyy-admins. Every non-GET request needs X-CSRF-Token (from GET /api/session), a same-origin Origin header if the browser sends one, and a JSON body. Errors: {\"error\": \"<code>\", \"fields\"?: {\"<field>\": \"<code>\"}}. Rate limits per user: 240 requests/min, 10/min for invitations, EUrouter route lookup, SMTP test and key reveal/rotate (429 with Retry-After). MetaMCP provisioning is done by a watcher: the portal writes users.json, reads metamcp-clients.json; provisioning states are pending | ok | failed."
+    "version": "1.0.0",
+    "description": "Internal API of the setup portal (app.<domain>). Only reachable through Traefik behind Authentik forward-auth: Traefik sets X-Portal-Proxy-Secret and the Authentik identity headers (X-authentik-username, X-authentik-groups, '|'-separated). /api/admin/* requires the group lokyy-admins. Every non-GET request needs X-CSRF-Token (from GET /api/session), a same-origin Origin header if the browser sends one, and a JSON body. Errors: {\"error\": \"<code>\", \"fields\"?: {\"<field>\": \"<code>\"}}. Rate limits per user: 240 requests/min, 10/min for invitations, SMTP test and key reveal/rotate (429 with Retry-After)."
   },
-  "servers": [
-    {
-      "url": "https://app.{domain}",
-      "variables": {
-        "domain": {
-          "default": "example.com"
-        }
-      }
-    }
-  ],
+  "servers": [{ "url": "https://app.{domain}", "variables": { "domain": { "default": "example.com" } } }],
   "components": {
     "securitySchemes": {
-      "forwardAuth": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-Vault-Proxy-Secret",
-        "description": "Set by Traefik after Authentik forward-auth; never by clients."
-      },
-      "csrf": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-CSRF-Token"
-      }
+      "forwardAuth": { "type": "apiKey", "in": "header", "name": "X-Portal-Proxy-Secret", "description": "Set by Traefik after Authentik forward-auth; never by clients." },
+      "csrf": { "type": "apiKey", "in": "header", "name": "X-CSRF-Token" }
     },
     "schemas": {
       "Error": {
-        "type": "object",
-        "required": [
-          "error"
-        ],
-        "properties": {
-          "error": {
-            "type": "string"
-          },
-          "fields": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
-          }
-        }
+        "type": "object", "required": ["error"],
+        "properties": { "error": { "type": "string" }, "fields": { "type": "object", "additionalProperties": { "type": "string" } } }
       },
-      "Role": {
-        "type": "string",
-        "enum": [
-          "reader",
-          "writer"
-        ]
-      },
+      "Role": { "type": "string", "enum": ["reader", "writer"] },
       "User": {
         "type": "object",
         "properties": {
-          "slot": {
-            "type": "string",
-            "example": "v01"
-          },
-          "username": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,30}$"
-          },
-          "email": {
-            "type": "string",
-            "format": "email"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "role": {
-            "$ref": "#/components/schemas/Role"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "invited",
-              "active",
-              "disabled"
-            ]
-          },
-          "provisioning": {
-            "type": "string",
-            "enum": [
-              "pending",
-              "ok",
-              "failed"
-            ],
-            "description": "derived from the watcher result (metamcp-clients.json)"
-          },
-          "invitedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "activatedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          }
+          "slot": { "type": "string", "example": "v01" },
+          "username": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,30}$" },
+          "email": { "type": "string", "format": "email" },
+          "displayName": { "type": "string" },
+          "role": { "$ref": "#/components/schemas/Role" },
+          "status": { "type": "string", "enum": ["invited", "active", "disabled"] },
+          "provisioning": { "type": "string", "enum": ["pending", "ok", "failed"] },
+          "invitedAt": { "type": "string", "format": "date-time" },
+          "activatedAt": { "type": ["string", "null"], "format": "date-time" }
         }
       },
       "ProvisioningRun": {
-        "type": [
-          "object",
-          "null"
-        ],
-        "properties": {
-          "at": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "ok",
-              "failed"
-            ]
-          },
-          "error": {
-            "type": "string"
-          },
-          "restartMetamcp": {
-            "type": "boolean"
-          }
-        }
+        "type": ["object", "null"],
+        "properties": { "at": { "type": "string" }, "status": { "type": "string", "enum": ["ok", "failed"] }, "error": { "type": "string" }, "restartMetamcp": { "type": "boolean" } }
       },
       "Invite": {
-        "type": "object",
-        "required": [
-          "username",
-          "email",
-          "displayName",
-          "role"
-        ],
+        "type": "object", "required": ["username", "email", "displayName", "role"],
         "properties": {
-          "username": {
-            "type": "string"
-          },
-          "email": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string",
-            "maxLength": 80
-          },
-          "role": {
-            "$ref": "#/components/schemas/Role"
-          }
+          "username": { "type": "string" }, "email": { "type": "string" }, "displayName": { "type": "string", "maxLength": 80 },
+          "role": { "$ref": "#/components/schemas/Role" }
         }
       },
       "InviteResult": {
         "type": "object",
         "properties": {
-          "user": {
-            "$ref": "#/components/schemas/User"
-          },
-          "inviteLink": {
-            "type": "string",
-            "description": "One-time link to the Authentik set-password flow"
-          },
-          "mailed": {
-            "type": "boolean"
-          },
-          "mailError": {
-            "type": "boolean"
-          }
+          "user": { "$ref": "#/components/schemas/User" },
+          "inviteLink": { "type": "string", "description": "One-time link to the Authentik set-password flow" },
+          "mailed": { "type": "boolean" }, "mailError": { "type": "boolean" }
         }
       }
     },
     "responses": {
-      "Error": {
-        "description": "Error",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/Error"
-            }
-          }
-        }
-      },
-      "NoContent": {
-        "description": "Done"
-      }
+      "Error": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "NoContent": { "description": "Done" }
     }
   },
-  "security": [
-    {
-      "forwardAuth": [],
-      "csrf": []
-    }
-  ],
+  "security": [{ "forwardAuth": [], "csrf": [] }],
   "paths": {
     "/healthz": {
-      "get": {
-        "summary": "Liveness (no authentication)",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "{\"ok\":true}"
-          }
-        }
-      }
+      "get": { "summary": "Liveness (no authentication)", "security": [], "responses": { "200": { "description": "{\"ok\":true}" } } }
     },
     "/api/session": {
       "get": {
         "summary": "Caller identity, admin flag and CSRF token",
-        "responses": {
-          "200": {
-            "description": "Session",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "username": {
-                      "type": "string"
-                    },
-                    "isAdmin": {
-                      "type": "boolean"
-                    },
-                    "csrfToken": {
-                      "type": "string"
-                    },
-                    "hasAccess": {
-                      "type": "boolean"
-                    },
-                    "setupComplete": {
-                      "type": "boolean"
-                    },
-                    "companyName": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
+        "responses": { "200": { "description": "Session", "content": { "application/json": { "schema": { "type": "object", "properties": {
+          "username": { "type": "string" }, "isAdmin": { "type": "boolean" }, "csrfToken": { "type": "string" },
+          "hasAccess": { "type": "boolean" }, "setupComplete": { "type": "boolean" }, "companyName": { "type": ["string", "null"] } } } } } } }
       }
     },
     "/api/admin/setup": {
-      "get": {
-        "summary": "Setup state (secrets only as masked hints / passwordSet)",
-        "responses": {
-          "200": {
-            "description": "Setup status"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
+      "get": { "summary": "Setup state (secrets only as masked hints / passwordSet)", "responses": { "200": { "description": "Setup status" }, "403": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/admin/setup/company": {
       "put": {
         "summary": "Set the company name",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "name"
-                ],
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "maxLength": 100
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "204": {
-            "$ref": "#/components/responses/NoContent"
-          },
-          "400": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "maxLength": 100 } } } } } },
+        "responses": { "204": { "$ref": "#/components/responses/NoContent" }, "400": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/admin/setup/llm": {
       "put": {
-        "summary": "Apply EUrouter key + route (rule id) to the vaults via the internal config entrypoint; every vault call is audited",
-        "description": "The route must belong to the key's EUrouter account. Keys are not stored by the portal (masked hint only). Per vault: vaults left out stay unchanged. model is optional (no default).",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "mode"
-                ],
-                "properties": {
-                  "mode": {
-                    "type": "string",
-                    "enum": [
-                      "shared",
-                      "per-vault"
-                    ]
-                  },
-                  "apiKey": {
-                    "type": "string",
-                    "description": "shared mode"
-                  },
-                  "ruleId": {
-                    "type": "string",
-                    "description": "shared mode"
-                  },
-                  "model": {
-                    "type": "string"
-                  },
-                  "vaults": {
-                    "type": "object",
-                    "description": "per-vault mode: vault (firma, v01, …) → {apiKey, ruleId}",
-                    "additionalProperties": {
-                      "type": "object",
-                      "properties": {
-                        "apiKey": {
-                          "type": "string"
-                        },
-                        "ruleId": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "{\"failed\": [vaults not reachable]}"
-          },
-          "400": {
-            "description": "invalid_input (fields incl. invalid_key, unknown_route, unknown_vault)"
-          },
-          "502": {
-            "description": "eurouter_unavailable"
-          }
-        }
+        "summary": "Point vault LLMs at EUrouter (https://api.eurouter.ai/api/v1) with a shared or per-vault key",
+        "description": "Keys are sent to the vaults' config API and not stored by the portal (only a masked hint). Per-vault: empty entries leave that vault unchanged.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["mode", "model"], "properties": {
+          "mode": { "type": "string", "enum": ["shared", "per-vault"] }, "model": { "type": "string" },
+          "sharedKey": { "type": "string" }, "keys": { "type": "object", "additionalProperties": { "type": "string" }, "description": "vault (firma, v01, …) → key" } } } } } },
+        "responses": { "200": { "description": "{\"failed\": [vaults not reachable]}" }, "400": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/admin/setup/smtp": {
       "put": {
         "summary": "Configure SMTP for invitation mails (password optional on update: kept)",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "host",
-                  "port",
-                  "secure",
-                  "from"
-                ],
-                "properties": {
-                  "host": {
-                    "type": "string"
-                  },
-                  "port": {
-                    "type": "integer"
-                  },
-                  "secure": {
-                    "type": "boolean"
-                  },
-                  "username": {
-                    "type": "string"
-                  },
-                  "password": {
-                    "type": "string"
-                  },
-                  "from": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "204": {
-            "$ref": "#/components/responses/NoContent"
-          },
-          "400": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["host", "port", "secure", "from"], "properties": {
+          "host": { "type": "string" }, "port": { "type": "integer" }, "secure": { "type": "boolean" },
+          "username": { "type": "string" }, "password": { "type": "string" }, "from": { "type": "string" } } } } } },
+        "responses": { "204": { "$ref": "#/components/responses/NoContent" }, "400": { "$ref": "#/components/responses/Error" } }
       },
-      "delete": {
-        "summary": "Remove SMTP settings and password",
-        "responses": {
-          "204": {
-            "$ref": "#/components/responses/NoContent"
-          }
-        }
-      }
+      "delete": { "summary": "Remove SMTP settings and password", "responses": { "204": { "$ref": "#/components/responses/NoContent" } } }
     },
     "/api/admin/setup/smtp/test": {
       "post": {
         "summary": "Send a test mail",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "to"
-                ],
-                "properties": {
-                  "to": {
-                    "type": "string",
-                    "format": "email"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "204": {
-            "$ref": "#/components/responses/NoContent"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          },
-          "502": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["to"], "properties": { "to": { "type": "string", "format": "email" } } } } } },
+        "responses": { "204": { "$ref": "#/components/responses/NoContent" }, "409": { "$ref": "#/components/responses/Error" }, "502": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/admin/setup/complete": {
-      "post": {
-        "summary": "Mark the setup as complete (needs company and LLM)",
-        "responses": {
-          "204": {
-            "$ref": "#/components/responses/NoContent"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
+      "post": { "summary": "Mark the setup as complete (needs company and LLM)", "responses": { "204": { "$ref": "#/components/responses/NoContent" }, "409": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/admin/users": {
-      "get": {
-        "summary": "Employees, retired slots, free slots, last provisioning run",
-        "responses": {
-          "200": {
-            "description": "List"
-          }
-        }
-      },
+      "get": { "summary": "Employees, retired slots, free slots, last provisioning run", "responses": { "200": { "description": "List" } } },
       "post": {
         "summary": "Invite: next free slot, Authentik user + groups, MetaMCP provisioning, invitation link (mailed if SMTP)",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Invite"
-              }
-            }
-          }
-        },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Invite" } } } },
         "responses": {
-          "201": {
-            "description": "Invited",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InviteResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "description": "username_exists | email_exists | username_taken | no_free_slot",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "502": {
-            "$ref": "#/components/responses/Error"
-          }
+          "201": { "description": "Invited", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InviteResult" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "409": { "description": "username_exists | email_exists | username_taken | no_free_slot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "502": { "$ref": "#/components/responses/Error" }
         }
       }
     },
     "/api/admin/users/{username}": {
-      "parameters": [
-        {
-          "name": "username",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
+      "parameters": [{ "name": "username", "in": "path", "required": true, "schema": { "type": "string" } }],
       "patch": {
-        "summary": "Change the company-vault role (groups; users.json role + keyRotation, the watcher swaps the token and rotates the key)",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "role"
-                ],
-                "properties": {
-                  "role": {
-                    "$ref": "#/components/schemas/Role"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "{\"user\": User}"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
+        "summary": "Change the company-vault role (groups + re-provisioning; the user's MCP key is rotated)",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["role"], "properties": { "role": { "$ref": "#/components/schemas/Role" } } } } } },
+        "responses": { "200": { "description": "{\"user\": User}" }, "404": { "$ref": "#/components/responses/Error" } }
       },
       "delete": {
         "summary": "Remove: Authentik user and MetaMCP account deleted, vault data kept, slot retired",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "confirm",
-                  "keepData"
-                ],
-                "properties": {
-                  "confirm": {
-                    "type": "string",
-                    "description": "must equal the username"
-                  },
-                  "keepData": {
-                    "type": "boolean",
-                    "description": "false (wipe) answers 400 wipe_unsupported"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "204": {
-            "$ref": "#/components/responses/NoContent"
-          },
-          "400": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["confirm", "keepData"], "properties": {
+          "confirm": { "type": "string", "description": "must equal the username" }, "keepData": { "type": "boolean", "description": "false (wipe) answers 400 wipe_unsupported" } } } } } },
+        "responses": { "204": { "$ref": "#/components/responses/NoContent" }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/admin/users/{username}/invite": {
-      "parameters": [
-        {
-          "name": "username",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "post": {
-        "summary": "New invitation link for an invited user",
-        "responses": {
-          "200": {
-            "description": "{inviteLink, mailed, mailError?}"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
+      "parameters": [{ "name": "username", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": { "summary": "New invitation link for an invited user", "responses": { "200": { "description": "{inviteLink, mailed, mailError?}" }, "409": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/admin/users/{username}/disable": {
-      "parameters": [
-        {
-          "name": "username",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "post": {
-        "summary": "Deactivate in Authentik, end sessions, drop from users.json (the watcher removes the MetaMCP account)",
-        "responses": {
-          "204": {
-            "$ref": "#/components/responses/NoContent"
-          }
-        }
-      }
+      "parameters": [{ "name": "username", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": { "summary": "Deactivate in Authentik, end sessions, remove MetaMCP account (key revoked)", "responses": { "204": { "$ref": "#/components/responses/NoContent" } } }
     },
     "/api/admin/users/{username}/enable": {
-      "parameters": [
-        {
-          "name": "username",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "post": {
-        "summary": "Reactivate (new MCP key)",
-        "responses": {
-          "204": {
-            "$ref": "#/components/responses/NoContent"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
+      "parameters": [{ "name": "username", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": { "summary": "Reactivate (new MCP key)", "responses": { "204": { "$ref": "#/components/responses/NoContent" }, "409": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/admin/provision": {
-      "post": {
-        "summary": "Ask the watcher to provision again (users.json generation + 1)",
-        "responses": {
-          "202": {
-            "description": "{\"status\":\"pending\"}"
-          }
-        }
-      }
+      "post": { "summary": "Re-run MetaMCP provisioning for everyone", "responses": { "200": { "description": "{\"status\":\"ok\"}" }, "502": { "description": "{\"status\":\"failed\"}" } } }
     },
     "/api/admin/audit": {
-      "get": {
-        "summary": "Last 200 audit entries (no secrets)",
-        "responses": {
-          "200": {
-            "description": "{entries: [{at, actor, action, target?, details?}]}"
-          }
-        }
-      }
+      "get": { "summary": "Last 200 audit entries (no secrets)", "responses": { "200": { "description": "{entries: [{at, actor, action, target?, details?}]}" } } }
     },
     "/api/me": {
       "get": {
         "summary": "Mein Zugang: vault links, MCP URL (no key); first call marks an invited user active",
-        "responses": {
-          "200": {
-            "description": "Access"
-          },
-          "403": {
-            "description": "disabled"
-          },
-          "404": {
-            "description": "no_access"
-          }
-        }
+        "responses": { "200": { "description": "Access" }, "403": { "description": "disabled" }, "404": { "description": "no_access" } }
       }
     },
     "/api/me/key/reveal": {
-      "post": {
-        "summary": "The caller's MetaMCP API key",
-        "responses": {
-          "200": {
-            "description": "{\"apiKey\": \"sk_mt_…\"}"
-          },
-          "409": {
-            "description": "key_not_provisioned (pending, poll /api/me)"
-          },
-          "502": {
-            "description": "provisioning_failed"
-          }
-        }
-      }
+      "post": { "summary": "The caller's MetaMCP API key", "responses": { "200": { "description": "{\"apiKey\": \"sk_mt_…\"}" }, "409": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/me/key/rotate": {
-      "post": {
-        "summary": "Request a new key (keyRotation in users.json); poll /api/me until provisioning is ok, then reveal",
-        "responses": {
-          "202": {
-            "description": "{\"pending\": true}"
-          }
-        }
-      }
-    },
-    "/api/admin/setup/llm/routes": {
-      "post": {
-        "summary": "EUrouter routing rules (\"routes\") of a key; validates the key (GET https://api.eurouter.ai/api/v1/routing-rules)",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "apiKey"
-                ],
-                "properties": {
-                  "apiKey": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "{\"routes\": [{\"id\": \"<uuid>\", \"name\": \"<rule_name>\"}]}"
-          },
-          "400": {
-            "description": "fields.apiKey = invalid_key | length | charset"
-          },
-          "502": {
-            "description": "eurouter_unavailable"
-          }
-        }
-      }
-    },
-    "/api/admin/slots/{slot}/release": {
-      "parameters": [
-        {
-          "name": "slot",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string",
-            "pattern": "^v\\d{2,3}$"
-          }
-        }
-      ],
-      "post": {
-        "summary": "Release a retired slot: the next invitation gets it, including the former user's vault data",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "confirm"
-                ],
-                "properties": {
-                  "confirm": {
-                    "type": "string",
-                    "description": "must equal the slot"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "204": {
-            "$ref": "#/components/responses/NoContent"
-          },
-          "400": {
-            "description": "confirm_mismatch"
-          },
-          "404": {
-            "description": "slot_not_retired"
-          }
-        }
-      }
+      "post": { "summary": "Issue a new key for the caller (old key stops working)", "responses": { "200": { "description": "{\"apiKey\": \"sk_mt_…\"}" }, "502": { "$ref": "#/components/responses/Error" } } }
     }
   }
 }

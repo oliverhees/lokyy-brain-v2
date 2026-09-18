@@ -1,5 +1,3 @@
-// E2E stand-in for the LBV2-27 provisioning watcher (the real one runs inside the metamcp container).
-// Port of deploy/stack/metamcp/provision.mjs, used only by test/e2e/watcher/main.ts.
 // MetaMCP provisioning for the portal — a port of deploy/stack/metamcp/provision.mjs (LBV2-4/-24)
 // that runs in the portal container instead of inside the metamcp container: same reconcile logic,
 // same validation, same tripwire, but with the MetaMCP Postgres client and HTTP base injected.
@@ -14,9 +12,9 @@
 // be restarted from here (no Docker socket) — restartMetamcp is reported, key rotation already makes
 // old keys fail on open sessions (MetaMCP checks the key per request, mcp-gate drops the binding).
 import { randomBytes, scrypt } from 'node:crypto';
-import { READ_ONLY_TOOL_NAMES } from '../../../../mcp/src/access.ts';
-import type { UsersJson } from '../../../src/server/slots.ts';
-import type { FetchFn } from '../../../src/server/authentik.ts';
+import { READ_ONLY_TOOL_NAMES } from '../../../mcp/src/access.ts';
+import type { UsersJson } from './slots.ts';
+import type { FetchFn } from './authentik.ts';
 
 export const READ_TOOLS: ReadonlySet<string> = new Set(READ_ONLY_TOOL_NAMES);
 

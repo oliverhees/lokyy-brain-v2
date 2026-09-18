@@ -4,7 +4,7 @@ import { nextFreeSlot, parseSlots, toUsersJson } from './slots.ts';
 
 const user = (slot: string, username: string, extra: Partial<SlotUser> = {}): SlotUser => ({
   slot, username, email: `${username}@example.com`, displayName: username, role: 'reader', status: 'active',
-  authentikPk: null, invitedAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', ...extra,
+  authentikPk: null, provisioning: 'ok', invitedAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', ...extra,
 });
 
 const withUsers = (users: SlotUser[], retired: PortalState['retired'] = []): PortalState => ({ ...emptyState(), users, retired });
@@ -56,19 +56,12 @@ describe('toUsersJson (deploy/stack/metamcp/provision.mjs input)', () => {
     ]);
     expect(toUsersJson(state)).toEqual({
       companyVault: 'firma',
-      generation: 0,
       users: [
         { username: 'anna', role: 'reader', vault: 'v01', allowVaultNameMismatch: true },
         { username: 'ben', role: 'writer', vault: 'v02', allowVaultNameMismatch: true },
       ],
     });
   });
-  it('carries the generation and a requested key rotation', () => {
-    const state = { ...withUsers([user('v01', 'anna', { keyRotation: 'r1' })]), usersGeneration: 7 };
-    expect(toUsersJson(state)).toEqual({ companyVault: 'firma', generation: 7,
-      users: [{ username: 'anna', role: 'reader', vault: 'v01', allowVaultNameMismatch: true, keyRotation: 'r1' }] });
-  });
-
   it('sorts by slot so the file is stable', () => {
     const state = withUsers([user('v03', 'carl'), user('v01', 'anna')]);
     expect(toUsersJson(state).users.map((u) => u.vault)).toEqual(['v01', 'v03']);

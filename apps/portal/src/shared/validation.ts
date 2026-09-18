@@ -69,13 +69,6 @@ export function validateEurouterKey(value: unknown): string | null {
   return /^[\x21-\x7e]+$/.test(k) ? null : 'charset';
 }
 
-/** EUrouter routing rule id (UUID) */
-export function validateRuleId(value: unknown): string | null {
-  const r = asString(value);
-  if (r === null) return 'required';
-  return /^[A-Za-z0-9-]{1,100}$/.test(r) ? null : 'format';
-}
-
 /** Model id as listed by EUrouter, e.g. "mistral/mistral-small-3.2" */
 export function validateModel(value: unknown): string | null {
   const m = asString(value);

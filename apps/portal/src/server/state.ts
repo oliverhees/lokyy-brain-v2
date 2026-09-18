@@ -1,7 +1,7 @@
 // Portal state in the lokyy-state volume (only the portal mounts it read-write):
 //   state.json    slot assignments, company and setup data (no secrets)
 //   secrets.json  secrets the portal must keep to work (SMTP password); never sent to a client
-//   users.json    derived, provision.mjs format + generation/keyRotation; read by the provisioning watcher
+//   users.json    derived, in the format of deploy/stack/metamcp/provision.mjs (mcp-gate may read it)
 // Every write is atomic (temp file + rename, mode 600). Updates are serialised in-process: the portal
 // is the only writer, one container, one process.
 import { existsSync } from 'node:fs';
@@ -12,6 +12,8 @@ import type { Role } from '../shared/validation.ts';
 import { toUsersJson } from './slots.ts';
 
 export type SlotStatus = 'invited' | 'active' | 'disabled';
+export type ProvisioningStatus = 'pending' | 'ok' | 'failed';
+
 export interface SlotUser {
   slot: string;
   username: string;
@@ -21,8 +23,8 @@ export interface SlotUser {
   status: SlotStatus;
   /** Authentik user pk, null until the Authentik user exists */
   authentikPk: number | null;
-  /** Opaque value; a new value asks the provisioning watcher to rotate this user's MCP key */
-  keyRotation?: string;
+  /** State of the MetaMCP account for this user (servers, endpoint, API key) */
+  provisioning: ProvisioningStatus;
   invitedAt: string;
   /** First portal visit (the user has set a password); null while invited */
   activatedAt?: string | null;
@@ -36,20 +38,11 @@ export interface RetiredSlot {
   retiredAt: string;
 }
 
-export interface VaultLlm {
-  /** masked key ("••••abcd"); the key itself lives only in the vault */
-  keyHint: string;
-  /** EUrouter routing rule ("route") */
-  ruleId: string;
-  ruleName: string;
-}
-
 export interface LlmSettings {
   mode: 'shared' | 'per-vault';
-  /** optional; EUrouter picks the model through the route */
-  model?: string;
-  /** vault ("firma", "v01", …) → what was applied to it */
-  vaults: Record<string, VaultLlm>;
+  model: string;
+  /** vault ("firma", "v01", …) → masked key ("••••abcd"); the keys themselves live only in the vaults */
+  keyHints: Record<string, string>;
   updatedAt: string;
 }
 
@@ -62,6 +55,14 @@ export interface SmtpSettings {
   updatedAt: string;
 }
 
+export interface ProvisioningRun {
+  at: string;
+  status: 'ok' | 'failed';
+  error?: string;
+  /** MetaMCP should be restarted to end sessions with outdated upstream credentials */
+  restartMetamcp: boolean;
+}
+
 export interface PortalState {
   version: 1;
   company: { name: string } | null;
@@ -70,8 +71,7 @@ export interface PortalState {
   smtp: SmtpSettings | null;
   users: SlotUser[];
   retired: RetiredSlot[];
-  /** users.json generation; raised whenever the provisioning input changes (watcher contract) */
-  usersGeneration: number;
+  lastProvisioning: ProvisioningRun | null;
 }
 
 export interface PortalSecrets {
@@ -81,7 +81,7 @@ export interface PortalSecrets {
 }
 
 export function emptyState(): PortalState {
-  return { version: 1, company: null, setupCompletedAt: null, llm: null, smtp: null, users: [], retired: [], usersGeneration: 0 };
+  return { version: 1, company: null, setupCompletedAt: null, llm: null, smtp: null, users: [], retired: [], lastProvisioning: null };
 }
 
 async function writeAtomic(file: string, content: string): Promise<void> {
@@ -131,11 +131,7 @@ export class StateStore {
   update<T>(fn: (state: PortalState) => T | Promise<T>): Promise<T> {
     return this.#serial(async () => {
       const state = await this.read();
-      const before = JSON.stringify({ ...toUsersJson(state), generation: 0 });
-      const generation = state.usersGeneration;
       const result = await fn(state);
-      // Raise the generation when the watcher's input changed (unless fn already did, e.g. a retry nudge).
-      if (state.usersGeneration === generation && JSON.stringify({ ...toUsersJson(state), generation: 0 }) !== before) state.usersGeneration += 1;
       await mkdir(this.dir, { recursive: true, mode: 0o700 });
       await writeAtomic(this.stateFile, `${JSON.stringify(state, null, 2)}\n`);
       await writeAtomic(this.usersFile, `${JSON.stringify(toUsersJson(state), null, 2)}\n`);

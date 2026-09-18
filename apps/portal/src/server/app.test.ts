@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
-import { harness, RULE_A, type Harness } from '../../test/fakes/harness.ts';
+import { harness, type Harness } from '../../test/fakes/harness.ts';
 import { createApp, csrfToken } from './app.ts';
 import { AuditLog } from './audit.ts';
 import { join } from 'node:path';
@@ -23,7 +23,7 @@ afterEach(() => h.cleanup());
 type Who = { user: string; groups?: string };
 const admin: Who = { user: 'akadmin', groups: 'authentik Admins|lokyy-admins' };
 const as = (who: Who, req: request.Test, { csrf = true } = {}) => {
-  req.set('x-vault-proxy-secret', PROXY).set('x-authentik-username', who.user);
+  req.set('x-portal-proxy-secret', PROXY).set('x-authentik-username', who.user);
   if (who.groups !== undefined) req.set('x-authentik-groups', who.groups);
   if (csrf) req.set('x-csrf-token', csrfToken(CSRF_SECRET, who.user));
   return req;
@@ -38,11 +38,11 @@ describe('perimeter', () => {
 
   it('rejects requests without or with a wrong proxy secret', async () => {
     expect((await request(app).get('/api/session').set('x-authentik-username', 'akadmin')).status).toBe(403);
-    expect((await request(app).get('/api/session').set('x-vault-proxy-secret', 'x'.repeat(40)).set('x-authentik-username', 'akadmin')).status).toBe(403);
+    expect((await request(app).get('/api/session').set('x-portal-proxy-secret', 'x'.repeat(40)).set('x-authentik-username', 'akadmin')).status).toBe(403);
   });
 
   it('rejects requests without identity', async () => {
-    expect((await request(app).get('/api/session').set('x-vault-proxy-secret', PROXY)).status).toBe(401);
+    expect((await request(app).get('/api/session').set('x-portal-proxy-secret', PROXY)).status).toBe(401);
   });
 
   it('sets hardening headers and no-store on the API', async () => {
@@ -58,7 +58,6 @@ describe('perimeter', () => {
 describe('session', () => {
   it('tells admins apart by the lokyy-admins group and hands out a CSRF token', async () => {
     const r = await as(admin, request(app).get('/api/session'));
-    expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ username: 'akadmin', isAdmin: true, csrfToken: csrfToken(CSRF_SECRET, 'akadmin'), hasAccess: false });
     const e = await as({ user: 'anna', groups: 'vault-v01' }, request(app).get('/api/session'));
     expect(e.body.isAdmin).toBe(false);
@@ -108,17 +107,11 @@ describe('admin API', () => {
     const list = await as(admin, request(app).get('/api/admin/users'));
     expect(list.body.users).toHaveLength(1);
     expect(list.body.users[0]).not.toHaveProperty('authentikPk');
-    expect(list.body.users[0]).not.toHaveProperty('keyRotation');
-    expect(list.body.users[0].provisioning).toBe('pending');
     expect((await as(admin, request(app).patch('/api/admin/users/anna').send({ role: 'writer' }))).body.user.role).toBe('writer');
     expect((await as(admin, request(app).post('/api/admin/users/anna/disable'))).status).toBe(204);
     expect((await as(admin, request(app).post('/api/admin/users/anna/enable'))).status).toBe(204);
     expect((await as(admin, request(app).delete('/api/admin/users/anna').send({ confirm: 'anna', keepData: true }))).status).toBe(204);
     expect((await as(admin, request(app).get('/api/admin/users'))).body.retired).toHaveLength(1);
-    expect((await as(admin, request(app).post('/api/admin/slots/v01/release').send({ confirm: 'v01' }))).status).toBe(204);
-    expect((await as(admin, request(app).get('/api/admin/users'))).body.retired).toHaveLength(0);
-    expect((await as(admin, request(app).post('/api/admin/slots/..%2F/release').send({ confirm: 'x' }))).status).toBe(404);
-    expect((await as(admin, request(app).post('/api/admin/provision'))).status).toBe(202);
   });
 
   it('maps validation errors to 400 with field codes', async () => {
@@ -132,13 +125,11 @@ describe('admin API', () => {
   });
 
   it('setup endpoints never return secrets', async () => {
-    const routes = await as(admin, request(app).post('/api/admin/setup/llm/routes').send({ apiKey: 'sk-eu-abcdefghijkl1234' }));
-    expect(routes.body.routes[0]).toEqual(RULE_A);
-    await as(admin, request(app).put('/api/admin/setup/llm').send({ mode: 'shared', apiKey: 'sk-eu-abcdefghijkl1234', ruleId: RULE_A.id }));
+    await as(admin, request(app).put('/api/admin/setup/llm').send({ mode: 'shared', model: 'm', sharedKey: 'sk-eu-abcdefghijkl1234' }));
     await as(admin, request(app).put('/api/admin/setup/smtp').send({ host: 'smtp.example.com', port: 587, secure: false, username: 'u', password: 'mail-pass-123', from: 'noreply@example.com' }));
     const r = await as(admin, request(app).get('/api/admin/setup'));
     expect(JSON.stringify(r.body)).not.toMatch(/abcdefghijkl|mail-pass-123/);
-    expect(r.body.llm.vaults.firma).toEqual({ keyHint: '••••1234', ruleId: RULE_A.id, ruleName: 'eu-standard' });
+    expect(r.body.llm.keyHints.firma).toBe('••••1234');
   });
 
   it('shows the audit log to admins', async () => {
@@ -158,7 +149,6 @@ describe('admin API', () => {
 describe('Mein Zugang', () => {
   beforeEach(async () => {
     await h.service.invite('akadmin', { username: 'anna', email: 'anna@example.com', displayName: 'Anna', role: 'reader' });
-    h.watcher.run();
   });
   const anna = { user: 'anna', groups: 'vault-v01|vault-firma-read' };
 
@@ -173,13 +163,7 @@ describe('Mein Zugang', () => {
     expect((await as(anna, request(app).get('/api/me/key'))).status).toBe(404);
     const k1 = (await as(anna, request(app).post('/api/me/key/reveal'))).body.apiKey;
     expect(k1).toMatch(/^sk_mt_/);
-    const rot = await as(anna, request(app).post('/api/me/key/rotate'));
-    expect(rot.status).toBe(202);
-    expect(rot.body).toEqual({ pending: true });
-    expect((await as(anna, request(app).post('/api/me/key/reveal'))).status).toBe(409);
-    h.watcher.run();
-    const k2 = (await as(anna, request(app).post('/api/me/key/reveal'))).body.apiKey;
-    expect(k2).toMatch(/^sk_mt_/);
+    const k2 = (await as(anna, request(app).post('/api/me/key/rotate'))).body.apiKey;
     expect(k2).not.toBe(k1);
     expect((await as(anna, request(app).post('/api/me/key/reveal'), { csrf: false })).status).toBe(403);
   });

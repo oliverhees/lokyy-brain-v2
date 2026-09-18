@@ -19,31 +19,15 @@ describe('StateStore', () => {
     await store.update((s) => {
       s.company = { name: 'Muster GmbH' };
       s.users.push({ slot: 'v01', username: 'anna', email: 'anna@example.com', displayName: 'Anna', role: 'writer', status: 'invited',
-        authentikPk: 7, invitedAt: 't', updatedAt: 't' });
+        authentikPk: 7, provisioning: 'pending', invitedAt: 't', updatedAt: 't' });
     });
     const onDisk = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
     expect(onDisk.company.name).toBe('Muster GmbH');
     expect(statSync(join(dir, 'state.json')).mode & 0o777).toBe(0o600);
     const users = JSON.parse(readFileSync(join(dir, 'users.json'), 'utf8'));
-    expect(users).toEqual({ companyVault: 'firma', generation: 1, users: [{ username: 'anna', role: 'writer', vault: 'v01', allowVaultNameMismatch: true }] });
+    expect(users).toEqual({ companyVault: 'firma', users: [{ username: 'anna', role: 'writer', vault: 'v01', allowVaultNameMismatch: true }] });
     // a fresh store sees the persisted state
     expect((await new StateStore(dir).read()).users).toHaveLength(1);
-  });
-
-  it('raises the users.json generation only when the provisioning input changes (or on request)', async () => {
-    const store = new StateStore(dir);
-    const gen = () => JSON.parse(readFileSync(join(dir, 'users.json'), 'utf8')).generation;
-    await store.update((s) => { s.company = { name: 'A' }; });
-    expect(gen()).toBe(0);
-    await store.update((s) => { s.users.push({ slot: 'v01', username: 'anna', email: 'a@example.com', displayName: 'A', role: 'reader', status: 'invited', authentikPk: 1, invitedAt: 't', updatedAt: 't' }); });
-    expect(gen()).toBe(1);
-    await store.update((s) => { s.company = { name: 'B' }; s.users[0]!.displayName = 'Anna'; });
-    expect(gen()).toBe(1);
-    await store.update((s) => { s.users[0]!.keyRotation = 'x'; });
-    expect(gen()).toBe(2);
-    await store.update((s) => { s.usersGeneration += 1; });
-    expect(gen()).toBe(3);
-    expect((await store.read()).usersGeneration).toBe(3);
   });
 
   it('leaves no temp files behind', async () => {

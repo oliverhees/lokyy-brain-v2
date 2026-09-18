@@ -1,23 +1,22 @@
 // HTTP layer of the portal. The portal is reachable only through Traefik (app.<domain>) behind
-// Authentik forward-auth (group lokyy-users); Traefik overwrites the identity headers and adds the proxy
-// secret (X-Vault-Proxy-Secret, as on the vault hosts).
+// Authentik forward-auth; Traefik overwrites the identity headers and adds the portal's proxy secret.
 // Every /api request: proxy secret → identity → (admin group) → CSRF for mutations → rate limit.
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { ServiceError, type PortalService, type UserWithProvisioning } from './service.ts';
+import { ServiceError, type PortalService } from './service.ts';
 import type { AuditLog } from './audit.ts';
+import type { SlotUser } from './state.ts';
 
 export const ADMIN_GROUP = 'lokyy-admins';
 const IDENTITY_HEADER = 'x-authentik-username';
 const GROUPS_HEADER = 'x-authentik-groups';
-const PROXY_HEADER = 'x-vault-proxy-secret';
+const PROXY_HEADER = 'x-portal-proxy-secret';
 const CSRF_HEADER = 'x-csrf-token';
 /** Authentik usernames (admins may have names the portal would not create, e.g. akadmin) */
 const IDENTITY_RE = /^[A-Za-z0-9_.@+-]{1,150}$/;
 const PATH_USERNAME_RE = /^[a-z][a-z0-9-]{1,30}$/;
-const PATH_SLOT_RE = /^v\d{2,3}$/;
 
 export interface AppOptions {
   service: PortalService;
@@ -26,8 +25,6 @@ export interface AppOptions {
   csrfSecret: string;
   /** https://app.<domain>; a mutation with another Origin is refused */
   publicOrigin: string;
-  /** LOKYY_PACKAGE, shown to admins */
-  packageName?: string | null;
   /** Built client (vite build), null in API-only tests */
   staticDir: string | null;
   log: (msg: string) => void;
@@ -77,7 +74,7 @@ class RateLimiter {
   }
 }
 
-const publicUser = (u: UserWithProvisioning) => ({
+const publicUser = (u: SlotUser) => ({
   slot: u.slot, username: u.username, email: u.email, displayName: u.displayName, role: u.role, status: u.status,
   provisioning: u.provisioning, invitedAt: u.invitedAt, activatedAt: u.activatedAt ?? null,
 });
@@ -167,9 +164,8 @@ export function createApp(o: AppOptions): Express {
   // ------------------------------------------------------------ admin
   const admin = express.Router();
   admin.use(requireAdmin);
-  admin.get('/setup', wrap(async (_req, res) => { res.json({ ...(await o.service.setupStatus()), package: o.packageName ?? null }); }));
+  admin.get('/setup', wrap(async (_req, res) => { res.json(await o.service.setupStatus()); }));
   admin.put('/setup/company', wrap(async (req, res) => { await o.service.setCompany(who(req), req.body ?? {}); res.status(204).end(); }));
-  admin.post('/setup/llm/routes', limitSensitive, wrap(async (req, res) => { res.json({ routes: await o.service.listRoutes(who(req), req.body ?? {}) }); }));
   admin.put('/setup/llm', wrap(async (req, res) => { res.json(await o.service.setLlm(who(req), req.body ?? {})); }));
   admin.put('/setup/smtp', wrap(async (req, res) => { await o.service.setSmtp(who(req), req.body ?? {}); res.status(204).end(); }));
   admin.delete('/setup/smtp', wrap(async (req, res) => { await o.service.removeSmtp(who(req)); res.status(204).end(); }));
@@ -192,15 +188,9 @@ export function createApp(o: AppOptions): Express {
     await o.service.remove(who(req), pathUser(req), { confirm: req.body?.confirm, keepData: req.body?.keepData });
     res.status(204).end();
   }));
-  admin.post('/slots/:slot/release', wrap(async (req, res) => {
-    const slot = String(req.params['slot'] ?? '');
-    if (!PATH_SLOT_RE.test(slot)) throw new ServiceError(404, 'slot_not_retired');
-    await o.service.releaseSlot(who(req), slot, { confirm: req.body?.confirm });
-    res.status(204).end();
-  }));
   admin.post('/provision', wrap(async (req, res) => {
-    await o.service.reprovision(who(req));
-    res.status(202).json({ status: 'pending' });
+    const r = await o.service.reprovision(who(req));
+    res.status(r.status === 'ok' ? 200 : 502).json({ status: r.status });
   }));
   admin.get('/audit', wrap(async (_req, res) => { res.json({ entries: await o.audit.recent(200) }); }));
   api.use('/admin', admin);
@@ -208,7 +198,7 @@ export function createApp(o: AppOptions): Express {
   // ------------------------------------------------------------ self service
   api.get('/me', wrap(async (req, res) => { res.json(await o.service.myAccess(who(req))); }));
   api.post('/me/key/reveal', limitSensitive, wrap(async (req, res) => { res.json({ apiKey: await o.service.revealKey(who(req)) }); }));
-  api.post('/me/key/rotate', limitSensitive, wrap(async (req, res) => { res.status(202).json(await o.service.rotateKey(who(req))); }));
+  api.post('/me/key/rotate', limitSensitive, wrap(async (req, res) => { res.json({ apiKey: await o.service.rotateKey(who(req)) }); }));
 
   api.use((_req, res) => { res.status(404).json({ error: 'not_found' }); });
   app.use('/api', api);
