@@ -4,6 +4,7 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import { FileStore, SearchIndex, FeedStore, CardStore, TemplateStore, WikiIndex, reindex, createAdapter, type LLMAdapter, type Store } from '@mindbase/core';
 import { SynthesisCache } from './lib/synthesis-cache.js';
+import { extractPdfText } from './lib/extract-pdf.js';
 
 export interface MCPConfig {
   provider: 'openai' | 'anthropic' | 'deepseek' | 'ollama';
@@ -115,6 +116,8 @@ export async function loadContext(opts: {
         model: config.model,
         baseUrl: config.baseUrl || undefined,
         ruleId: config.ruleId,
+        extractPdfText: (data) => extractPdfText(new Uint8Array(data)),
+        maxDocumentChars: config.maxContextChars,
       });
     },
     reindex: async () => {

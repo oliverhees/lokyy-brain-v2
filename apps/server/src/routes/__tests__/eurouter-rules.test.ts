@@ -146,13 +146,20 @@ describe('EUrouter routing rules (LBV2-30)', () => {
       expect(res.body.error).toBe('EUrouter is not the configured endpoint');
     });
 
-    it('answers a generic 502 when EUrouter refuses the key; the key is never logged', async () => {
+    it('says the key is invalid when EUrouter refuses it; the key is never logged', async () => {
       mockEurouter();
       await ctx.saveConfig({ ...BASE, apiKey: 'eur_wrong' });
       const res = await request(app).get('/api/config/eurouter/rules').set(ADMIN);
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: 'Key invalid or not authorised' });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('eur_wrong');
+    });
+
+    it('answers a generic 502 on other upstream errors', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ error: 'boom internal detail' }, 500));
+      const res = await request(app).get('/api/config/eurouter/rules').set(ADMIN);
       expect(res.status).toBe(502);
       expect(res.body).toEqual({ error: 'Could not load EUrouter routes' });
-      expect(JSON.stringify(warn.mock.calls)).not.toContain('eur_wrong');
     });
   });
 
@@ -216,6 +223,89 @@ describe('EUrouter routing rules (LBV2-30)', () => {
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('Invalid EUrouter rule id');
     });
+  });
+});
+
+describe('probe rate limit for POST /eurouter/rules and /test (LBV2-30 audit L1)', () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+  it('shares one budget between both routes and answers 429 with Retry-After', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubEnv('VAULT_CONFIG_PROBE_RATE', '2');
+    mockEurouter();
+    const outer = await mkdtemp(join(tmpdir(), 'eurouter-rate-'));
+    try {
+      const c = await createContext(outer);
+      await c.saveConfig({ ...BASE });
+      const a = express();
+      a.use(express.json());
+      a.use('/api/config', configRoutes(c));
+      const body = { provider: 'openai', model: 'gpt-4o', baseUrl: EU, apiKey: MASKED_SECRET };
+      expect((await request(a).post('/api/config/eurouter/rules').send(body)).status).toBe(200);
+      expect((await request(a).post('/api/config/test').send(body)).status).toBe(200);
+      const limited = await request(a).post('/api/config/eurouter/rules').send(body);
+      expect(limited.status).toBe(429);
+      expect(limited.body).toEqual({ ok: false, error: 'Too many requests, try again shortly' });
+      expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+      expect((await request(a).post('/api/config/test').send(body)).status).toBe(429);
+      expect((await request(a).get('/api/config/eurouter/rules')).status).toBe(200);
+    } finally {
+      await rm(outer, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses an invalid VAULT_CONFIG_PROBE_RATE instead of disabling the limit', async () => {
+    vi.stubEnv('VAULT_CONFIG_PROBE_RATE', 'lots');
+    const outer = await mkdtemp(join(tmpdir(), 'eurouter-rate-'));
+    try {
+      const c = await createContext(outer);
+      expect(() => configRoutes(c)).toThrow('VAULT_CONFIG_PROBE_RATE');
+    } finally {
+      await rm(outer, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('PDF chat through EUrouter in the server adapter (LBV2-30)', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+  const PDF = ['%PDF-1.4', '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj', '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
+    '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 100]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj',
+    '4 0 obj<</Length 44>>stream', 'BT /F1 12 Tf 10 50 Td (Hello EU PDF) Tj ET', 'endstream endobj',
+    '5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj', 'trailer<</Root 1 0 R>>', '%%EOF'].join('\n');
+  const pdfMessage = { role: 'user' as const, content: [
+    { type: 'text' as const, text: 'Summarize.' },
+    { type: 'document' as const, media_type: 'application/pdf' as const, data: Buffer.from(PDF).toString('base64') },
+  ] };
+
+  async function chatWith(cfg: Partial<AtlasConfig>) {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fetchSpy = mockEurouter();
+    const outer = await mkdtemp(join(tmpdir(), 'eurouter-pdf-'));
+    try {
+      const c = await createContext(outer);
+      await c.saveConfig({ ...BASE, ruleId: RULE, ...cfg });
+      const chunks: Array<{ kind: string; error?: string }> = [];
+      for await (const ch of c.getAdapter().chat({ model: c.config.model, messages: [pdfMessage] })) chunks.push(ch);
+      return { fetchSpy, chunks };
+    } finally {
+      await rm(outer, { recursive: true, force: true });
+    }
+  }
+
+  it('sends the locally extracted text via chat/completions with model and rule_id', async () => {
+    const { fetchSpy } = await chatWith({});
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(String(url)).toBe(`${EU}/chat/completions`);
+    const body = JSON.parse(String(init?.body)) as { model: string; rule_id: string; messages: Array<{ content: string }> };
+    expect(body).toMatchObject({ model: 'qwen3.6-27b', rule_id: RULE });
+    expect(body.messages[0]!.content).toContain('Hello EU PDF');
+  });
+
+  it('uses maxContextChars as the PDF text limit', async () => {
+    const { fetchSpy, chunks } = await chatWith({ maxContextChars: 5 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(chunks.find((c) => c.kind === 'error')?.error).toMatch(/too long for the model context \(limit 5 characters\)/);
   });
 });
 

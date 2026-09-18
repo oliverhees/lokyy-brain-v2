@@ -1,16 +1,18 @@
 import { Router, type Response } from 'express';
 import {
   createAdapter, effectiveLlmBaseUrl, isLlmUrlAllowed, LLM_HOST_NOT_ALLOWED_ERROR,
-  EUROUTER_RULE_NOT_FOUND, isEurouterBaseUrl, isEurouterRuleId, listEurouterRules,
+  EurouterHttpError, EUROUTER_RULE_NOT_FOUND, isEurouterBaseUrl, isEurouterRuleId, listEurouterRules,
 } from '@mindbase/core';
 import type { ServerContext } from '../context';
 import type { AtlasConfig } from '../config';
 import { ConfigInputError, INVALID_RULE_ID_ERROR, maskConfig, mergeSecrets, unmaskApiKey, maskUrlCredentials, resolveStoredBaseUrl } from '../lib/config-secrets';
 import { requireConfigAdminAlways } from '../lib/proxy-identity';
+import { probeRateLimiter } from '../lib/probe-rate-limit';
 
 const GENERIC_TEST_ERROR = 'Connection test failed';
 const NOT_EUROUTER_ERROR = 'EUrouter is not the configured endpoint';
 const RULES_FAILED_ERROR = 'Could not load EUrouter routes';
+const KEY_REJECTED_ERROR = 'Key invalid or not authorised';
 
 /** Lists the routing rules for the route picker (LBV2-30); upstream details are logged, never returned. */
 async function sendEurouterRules(res: Response, apiKey: string, baseUrl: string): Promise<void> {
@@ -18,6 +20,10 @@ async function sendEurouterRules(res: Response, apiKey: string, baseUrl: string)
     res.json({ rules: await listEurouterRules({ apiKey, baseUrl }) });
   } catch (e) {
     console.warn(`[config/eurouter/rules] ${(e as Error).message}`);
+    if (e instanceof EurouterHttpError && (e.status === 401 || e.status === 403)) {
+      res.status(400).json({ error: KEY_REJECTED_ERROR });
+      return;
+    }
     res.status(502).json({ error: RULES_FAILED_ERROR });
   }
 }
@@ -30,6 +36,8 @@ function llmEndpointAllowed(provider: string | undefined, baseUrl: string | unde
 
 export function configRoutes(ctx: ServerContext): Router {
   const router = Router();
+  // Shared by both routes that call the provider with a key from the request body.
+  const probeLimit = probeRateLimiter(process.env);
 
   router.get('/', (_req, res) => {
     res.json(maskConfig(ctx.config));
@@ -68,7 +76,7 @@ export function configRoutes(ctx: ServerContext): Router {
   });
 
   // Same, for a key typed into the form but not saved yet; the mask follows unmaskApiKey's rules.
-  router.post('/eurouter/rules', async (req, res) => {
+  router.post('/eurouter/rules', probeLimit, async (req, res) => {
     const { provider, apiKey, baseUrl } = (req.body ?? {}) as Partial<AtlasConfig>;
     const endpoint = resolveStoredBaseUrl(baseUrl, ctx.config);
     if (!isEurouterBaseUrl(endpoint)) {
@@ -90,7 +98,7 @@ export function configRoutes(ctx: ServerContext): Router {
     await sendEurouterRules(res, key, endpoint);
   });
 
-  router.post('/test', async (req, res) => {
+  router.post('/test', probeLimit, async (req, res) => {
     const { provider, apiKey, model, baseUrl, ruleId } = (req.body ?? {}) as Partial<AtlasConfig>;
     if (ruleId && !isEurouterRuleId(ruleId)) {
       res.status(400).json({ ok: false, error: INVALID_RULE_ID_ERROR });
