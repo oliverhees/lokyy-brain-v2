@@ -83,9 +83,9 @@ describe('EurouterRoutePicker', () => {
   });
 
   it('says the key is invalid when the server reports it', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => json({ error: 'Key invalid or not authorised' }, 400)));
+    vi.stubGlobal('fetch', vi.fn(async () => json({ error: 'EUrouter key invalid or not authorised' }, 400)));
     await render({ apiKey: 'eur_wrong' });
-    expect(q('eurouter-routes-error')?.textContent).toContain('Key invalid or not authorised');
+    expect(q('eurouter-routes-error')?.textContent).toContain('EUrouter key invalid or not authorised');
   });
 
   it('shows an empty state when the key has no routes', async () => {
