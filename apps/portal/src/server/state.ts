@@ -2,7 +2,7 @@
 //   state.json    slot assignments, company and setup data (no secrets)
 //   secrets.json  secrets the portal must keep to work (SMTP password); never sent to a client
 //   users.json    derived, provision.mjs format + generation/keyRotation; read by the provisioning watcher
-// Every write is atomic (temp file + rename; mode 600, users.json 644). Updates are serialised in-process: the portal
+// Every write is atomic (temp file + rename, mode 600). Updates are serialised in-process: the portal
 // is the only writer, one container, one process.
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -84,11 +84,11 @@ export function emptyState(): PortalState {
   return { version: 1, company: null, setupCompletedAt: null, llm: null, smtp: null, users: [], retired: [], usersGeneration: 0 };
 }
 
-async function writeAtomic(file: string, content: string, mode = 0o600): Promise<void> {
+async function writeAtomic(file: string, content: string): Promise<void> {
   const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`;
   try {
-    await writeFile(tmp, content, { mode, flag: 'wx' });
-    await chmod(tmp, mode); // independent of the umask
+    await writeFile(tmp, content, { mode: 0o600, flag: 'wx' });
+    await chmod(tmp, 0o600); // umask cannot widen it, but be explicit
     await rename(tmp, file);
   } catch (e) {
     await rm(tmp, { force: true });
@@ -138,8 +138,7 @@ export class StateStore {
       if (state.usersGeneration === generation && JSON.stringify({ ...toUsersJson(state), generation: 0 }) !== before) state.usersGeneration += 1;
       await mkdir(this.dir, { recursive: true, mode: 0o700 });
       await writeAtomic(this.stateFile, `${JSON.stringify(state, null, 2)}\n`);
-      // 644: no secrets, and the provisioning watcher runs under another uid
-      await writeAtomic(this.usersFile, `${JSON.stringify(toUsersJson(state), null, 2)}\n`, 0o644);
+      await writeAtomic(this.usersFile, `${JSON.stringify(toUsersJson(state), null, 2)}\n`);
       return result;
     });
   }

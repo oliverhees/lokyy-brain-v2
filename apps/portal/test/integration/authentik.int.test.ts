@@ -15,14 +15,14 @@ describe.runIf(enabled)('AuthentikClient against Authentik 2026.8.2', () => {
   it('creates the portal user with the contract groups', async () => {
     pk = await client.ensureUser({ username, name: 'Int Test', email: `${username}@example.com`, slot: 'v02', groups: managedGroupsFor('v02', 'reader') });
     const u = await client.getUser(pk);
-    expect(u?.groups.map((g) => g.name).sort()).toEqual(['lokyy-users', 'vault-firma-read', 'vault-v02']);
+    expect(u?.groups.map((g) => g.name).sort()).toEqual(['vault-firma-read', 'vault-v02']);
     expect(u?.attributes).toMatchObject({ lokyy_managed: true, lokyy_slot: 'v02' });
   });
 
   it('is idempotent and switches the role groups', async () => {
     const again = await client.ensureUser({ username, name: 'Int Test 2', email: `${username}@example.com`, slot: 'v02', groups: managedGroupsFor('v02', 'writer') });
     expect(again).toBe(pk);
-    expect((await client.getUser(pk!))?.groups.map((g) => g.name).sort()).toEqual(['lokyy-users', 'vault-firma-write', 'vault-v02']);
+    expect((await client.getUser(pk!))?.groups.map((g) => g.name).sort()).toEqual(['vault-firma-write', 'vault-v02']);
   });
 
   it('refuses to adopt akadmin', async () => {

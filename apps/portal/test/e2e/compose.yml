@@ -117,24 +117,26 @@ services:
     environment:
       LOKYY_DOMAIN: portal.localhost
       LOKYY_SLOTS: v01,v02
-      VAULT_PROXY_SECRET: ${PORTAL_PROXY_SECRET:?run test/e2e/run.sh}
-      LOKYY_STATE_DIR: /state
-      LOKYY_PROVISION_DIR: /provision
-      LOKYY_PACKAGE: e2e-2
+      PORTAL_PROXY_SECRET: ${PORTAL_PROXY_SECRET:?run test/e2e/run.sh}
       LOKYY_PUBLIC_SCHEME: http
       LOKYY_PUBLIC_PORT: "18380"
       AUTHENTIK_URL: http://authentik-server:9000
       AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN}
       METAMCP_URL: http://metamcp:12008
+      METAMCP_DATABASE_URL: postgresql://metamcp:${METAMCP_PG_PASS}@metamcp-db:5432/metamcp
       VAULT_ADMIN_URL: http://10.234.2.2:8090
-    volumes: [lokyy-state:/state, lokyy-provision:/provision:ro]
+      MCP_TOKEN_V01: ${MCP_TOKEN_V01:?run test/e2e/run.sh}
+      MCP_TOKEN_V02: ${MCP_TOKEN_V02:?run test/e2e/run.sh}
+      MCP_TOKEN_FIRMA: ${MCP_TOKEN_FIRMA:?run test/e2e/run.sh}
+      MCP_READONLY_TOKEN_FIRMA: ${MCP_READONLY_TOKEN_FIRMA:?run test/e2e/run.sh}
+    volumes: [lokyy-state:/state]
     labels:
       - traefik.enable=true
       - traefik.docker.network=lokyy-portal_edge
       - traefik.http.routers.portal.rule=Host(`app.portal.localhost`)
       - traefik.http.routers.portal.entrypoints=web
       - traefik.http.routers.portal.middlewares=authentik@docker,portal-secret@docker
-      - traefik.http.middlewares.portal-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PORTAL_PROXY_SECRET}
+      - traefik.http.middlewares.portal-secret.headers.customrequestheaders.X-Portal-Proxy-Secret=${PORTAL_PROXY_SECRET}
       - traefik.http.services.portal.loadbalancer.server.port=3000
       # Second layer for the portal-admin entrypoint: only the portal's fixed address
       - traefik.http.middlewares.portal-only.ipallowlist.sourcerange=10.234.2.3/32
@@ -143,6 +145,7 @@ services:
       - traefik.http.routers.portal-outpost.service=authentik
     networks:
       edge: {}
+      metamcp-internal: {}
       portal-admin: { ipv4_address: 10.234.2.3 }
 
   # ------------------------------------------------------------------- Vaults
@@ -167,8 +170,7 @@ services:
       - traefik.http.routers.vault-v01-outpost.entrypoints=web
       - traefik.http.routers.vault-v01-outpost.service=authentik
       # portal-admin: only the config API, identity and secret set by Traefik
-      # only GET/PUT /api/config and POST /api/config/test
-      - traefik.http.routers.vault-v01-admin.rule=(Path(`/v01/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v01/api/config/test`) && Method(`POST`))
+      - traefik.http.routers.vault-v01-admin.rule=PathPrefix(`/v01/api/config`)
       - traefik.http.routers.vault-v01-admin.entrypoints=portal-admin
       - traefik.http.routers.vault-v01-admin.service=vault-v01
       - traefik.http.routers.vault-v01-admin.middlewares=portal-only@docker,vault-v01-admin-strip@docker,vault-v01-admin-hdr@docker
@@ -200,8 +202,7 @@ services:
       - traefik.http.routers.vault-v02-outpost.rule=Host(`v02.portal.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.vault-v02-outpost.entrypoints=web
       - traefik.http.routers.vault-v02-outpost.service=authentik
-      # only GET/PUT /api/config and POST /api/config/test
-      - traefik.http.routers.vault-v02-admin.rule=(Path(`/v02/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v02/api/config/test`) && Method(`POST`))
+      - traefik.http.routers.vault-v02-admin.rule=PathPrefix(`/v02/api/config`)
       - traefik.http.routers.vault-v02-admin.entrypoints=portal-admin
       - traefik.http.routers.vault-v02-admin.service=vault-v02
       - traefik.http.routers.vault-v02-admin.middlewares=portal-only@docker,vault-v02-admin-strip@docker,vault-v02-admin-hdr@docker
@@ -234,8 +235,7 @@ services:
       - traefik.http.routers.vault-firma-outpost.rule=Host(`firma.portal.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.vault-firma-outpost.entrypoints=web
       - traefik.http.routers.vault-firma-outpost.service=authentik
-      # only GET/PUT /api/config and POST /api/config/test
-      - traefik.http.routers.vault-firma-admin.rule=(Path(`/firma/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/firma/api/config/test`) && Method(`POST`))
+      - traefik.http.routers.vault-firma-admin.rule=PathPrefix(`/firma/api/config`)
       - traefik.http.routers.vault-firma-admin.entrypoints=portal-admin
       - traefik.http.routers.vault-firma-admin.service=vault-firma
       - traefik.http.routers.vault-firma-admin.middlewares=portal-only@docker,vault-firma-admin-strip@docker,vault-firma-admin-hdr@docker
@@ -340,30 +340,6 @@ services:
     entrypoint: ["/init.sh"]
     networks: [metamcp-internal]
 
-  # Stand-in for the LBV2-27 provisioning watcher (the real one runs inside the metamcp container):
-  # reads users.json from lokyy-state (ro), writes metamcp-clients.json to lokyy-provision.
-  watcher:
-    image: node:24-alpine
-    working_dir: ${PORTAL_DIR:?run test/e2e/run.sh}
-    command: ["node", "test/e2e/watcher/main.ts"]
-    depends_on:
-      metamcp: { condition: service_healthy }
-    environment:
-      LOKYY_STATE_DIR: /state
-      LOKYY_PROVISION_DIR: /provision
-      DATABASE_URL: postgresql://metamcp:${METAMCP_PG_PASS}@metamcp-db:5432/metamcp
-      METAMCP_URL: http://metamcp:12008
-      METAMCP_PUBLIC_BASE: http://mcp.portal.localhost:18380
-      MCP_TOKEN_V01: ${MCP_TOKEN_V01}
-      MCP_TOKEN_V02: ${MCP_TOKEN_V02}
-      MCP_TOKEN_FIRMA: ${MCP_TOKEN_FIRMA}
-      MCP_READONLY_TOKEN_FIRMA: ${MCP_READONLY_TOKEN_FIRMA}
-    volumes:
-      - ${REPO_DIR}:${REPO_DIR}:ro
-      - lokyy-state:/state:ro
-      - lokyy-provision:/provision
-    networks: [edge, metamcp-internal]
-
   # Runs the integration/E2E tests inside the edge network (reaches Traefik as "traefik").
   tester:
     image: node:24-alpine
@@ -419,7 +395,6 @@ networks:
 
 volumes:
   lokyy-state:
-  lokyy-provision:
   models:
   vault-v01:
   vault-v02:

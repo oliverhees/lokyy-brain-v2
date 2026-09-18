@@ -1,8 +1,7 @@
 // Local UI preview against in-memory fakes (no Authentik/MetaMCP needed):
 //   node test/dev/serve.ts            → http://127.0.0.1:18390  (build the client first: pnpm build)
 // Plays Traefik: adds the proxy secret and an identity. ?as=<user> switches the identity (cookie);
-// "akadmin" is admin, every other name an employee. The fake watcher "provisions" every 2 s; the fake
-// EUrouter knows the key sk-eu-abcdefghijkl1234 (two routes). Never use outside local development.
+// "akadmin" is admin, every other name an employee. Never use outside local development.
 import express from 'express';
 import { join } from 'node:path';
 import { createApp } from '../../src/server/app.ts';
@@ -23,7 +22,6 @@ if (process.env['DEV_SEED'] !== '0') {
   await h.service.invite('akadmin', { username: 'ben', email: 'ben@example.com', displayName: 'Ben Beispiel', role: 'writer' });
   await h.service.markActive('ben');
 }
-setInterval(() => h.watcher.run(), 2000);
 
 const app = express();
 app.use((req, res, next) => {
@@ -31,7 +29,7 @@ app.use((req, res, next) => {
   const q = typeof req.query['as'] === 'string' ? req.query['as'] : null;
   const who = q ?? m?.[1] ?? 'akadmin';
   if (q) res.cookie('dev_as', q, { sameSite: 'strict' });
-  req.headers['x-vault-proxy-secret'] = PROXY;
+  req.headers['x-portal-proxy-secret'] = PROXY;
   req.headers['x-authentik-username'] = who;
   req.headers['x-authentik-groups'] = who === 'akadmin' ? 'authentik Admins|lokyy-admins' : 'vault-v01';
   next();

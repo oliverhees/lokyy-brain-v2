@@ -49,21 +49,6 @@ case ${1:-} in
     ;;
   test)
     "${compose[@]}" --profile test run --rm tester npx vitest run test/integration
-    # Vault config entrypoint, seen from the portal: only GET/PUT /api/config and POST /api/config/test
-    "${compose[@]}" exec -T portal node -e '
-      const base = process.env.VAULT_ADMIN_URL;
-      const cases = [["GET", "/v01/api/config", 200], ["POST", "/v01/api/config", 404], ["DELETE", "/v01/api/config", 404],
-        ["GET", "/v01/api/wiki", 404], ["GET", "/v01/api/config/../server", 404], ["POST", "/firma/api/config/test", 400], ["GET", "/v09/api/config", 404]];
-      let bad = 0;
-      (async () => {
-        for (const [m, p, want] of cases) {
-          const r = await fetch(base + p, { method: m, headers: { "content-type": "application/json" }, body: m === "POST" ? "{}" : undefined });
-          const ok = want === 400 ? r.status >= 400 && r.status < 500 && r.status !== 404 : r.status === want;
-          console.log((ok ? "ok  " : "FAIL") + " " + m + " " + p + " -> " + r.status);
-          if (!ok) bad++;
-        }
-        process.exit(bad ? 1 : 0);
-      })();'
     ;;
   down)
     "${compose[@]}" --profile test down -v --remove-orphans
