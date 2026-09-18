@@ -3,7 +3,10 @@
 import { createHash } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 
-const VAULT_RE = /^[a-z][a-z0-9-]{0,62}$/;
+// Lowercase words joined by single dashes, at most 63 characters. Names starting with "sha256-" are
+// refused: EMBED_TOKEN_SHA256_X would be both vault "sha256-x"'s plain token and vault "x"'s hash.
+const VAULT_RE = /^(?!sha256-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+const MIN_DISTINCT_TOKEN_CHARS = 16;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
 const envSuffix = (vault: string) => vault.toUpperCase().replaceAll('-', '_');
@@ -23,10 +26,15 @@ export const plainTokenVars = (vaults: readonly string[]) => vaults.map(tokenPla
 export function parseTokenConfig(vaultsCsv: string, env: Record<string, string | undefined>): Map<string, string> {
   const vaults = vaultsCsv.split(',').map((v) => v.trim()).filter(Boolean);
   if (vaults.length === 0) throw new Error('EMBED_VAULTS is empty');
+  // Defence in depth for the naming rule above: no vault's plain variable may be another's hash variable.
+  const hashVars = new Set(vaults.map(tokenHashVar));
+  for (const v of vaults) {
+    if (hashVars.has(tokenPlainVar(v))) throw new Error(`vault name ${v} collides with another vault's EMBED_TOKEN_SHA256_ variable`);
+  }
   const tokens = new Map<string, string>();
   const seen = new Set<string>();
   for (const vault of vaults) {
-    if (!VAULT_RE.test(vault)) throw new Error(`invalid vault name in EMBED_VAULTS: ${vault}`);
+    if (!VAULT_RE.test(vault) || vault.length > 63) throw new Error(`invalid vault name in EMBED_VAULTS: ${vault}`);
     if (tokens.has(vault)) throw new Error(`duplicate vault in EMBED_VAULTS: ${vault}`);
     const hashName = tokenHashVar(vault);
     const plainName = tokenPlainVar(vault);
@@ -35,7 +43,9 @@ export function parseTokenConfig(vaultsCsv: string, env: Record<string, string |
     if (hashed && plain) throw new Error(`both ${plainName} and ${hashName} are set; set only one`);
     let hash: string;
     if (plain) {
-      if (!/^[\x21-\x7e]{32,512}$/.test(plain)) throw new Error(`${plainName} must be 32–512 printable characters without spaces`);
+      if (!/^[\x21-\x7e]{32,512}$/.test(plain) || new Set(plain).size < MIN_DISTINCT_TOKEN_CHARS) {
+        throw new Error(`${plainName} must be 32–512 printable characters without spaces and at least ${MIN_DISTINCT_TOKEN_CHARS} distinct characters (e.g. openssl rand -hex 32)`);
+      }
       hash = createHash('sha256').update(plain, 'utf8').digest('hex');
     } else {
       hash = hashed.toLowerCase();

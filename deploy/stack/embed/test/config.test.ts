@@ -4,6 +4,9 @@ import { parseTokenConfig, parseSourceConfig, plainTokenVars, inNetworks, config
 
 const H1 = '1'.repeat(64);
 const H2 = 'ab'.repeat(32);
+// Strong-enough plain tokens (≥ 16 distinct characters)
+const P1 = '0123456789abcdefghij'.repeat(2);
+const P2 = 'klmnopqrstuvwxyzABCD'.repeat(2);
 
 test('token hashes are read per vault from EMBED_TOKEN_SHA256_<VAULT>', () => {
   const m = parseTokenConfig('anna, ben,my-firma', {
@@ -62,26 +65,26 @@ test('address matching handles IPv4-mapped IPv6 and rejects anything else', () =
 
 test('plain tokens (EMBED_TOKEN_<VAULT>, e.g. Coolify magic env) are hashed at startup', async () => {
   const { createHash } = await import('node:crypto');
-  const plain = 'p'.repeat(40);
+  const plain = P1;
   const m = parseTokenConfig('v01,v30,firma', {
     EMBED_TOKEN_V01: plain,
     EMBED_TOKEN_SHA256_V30: H2,
-    EMBED_TOKEN_FIRMA: 'f'.repeat(64),
+    EMBED_TOKEN_FIRMA: P2,
   });
   assert.equal(m.get('v01'), createHash('sha256').update(plain).digest('hex'));
   assert.equal(m.get('v30'), H2);
-  assert.equal(m.get('firma'), createHash('sha256').update('f'.repeat(64)).digest('hex'));
+  assert.equal(m.get('firma'), createHash('sha256').update(P2).digest('hex'));
 });
 
 test('plain and hashed token for the same vault is a startup error; weak plain tokens are refused', () => {
-  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: 'p'.repeat(40), EMBED_TOKEN_SHA256_V01: H1 }), /both EMBED_TOKEN_V01 and EMBED_TOKEN_SHA256_V01/);
+  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: P1, EMBED_TOKEN_SHA256_V01: H1 }), /both EMBED_TOKEN_V01 and EMBED_TOKEN_SHA256_V01/);
   assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: 'short' }), /EMBED_TOKEN_V01 must be/);
-  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: `${'p'.repeat(40)} x` }), /EMBED_TOKEN_V01 must be/);
-  assert.throws(() => parseTokenConfig('v01,v02', { EMBED_TOKEN_V01: 'q'.repeat(40), EMBED_TOKEN_V02: 'q'.repeat(40) }), /same token/);
+  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: `${P1} x` }), /EMBED_TOKEN_V01 must be/);
+  assert.throws(() => parseTokenConfig('v01,v02', { EMBED_TOKEN_V01: P1, EMBED_TOKEN_V02: P1 }), /same token/);
 });
 
 test('error messages never contain a plain token', () => {
-  const secret = 's'.repeat(40);
+  const secret = P2;
   for (const env of [{ EMBED_TOKEN_V01: secret, EMBED_TOKEN_SHA256_V01: H1 }, { EMBED_TOKEN_V01: secret, EMBED_TOKEN_V02: secret }]) {
     try { parseTokenConfig('v01,v02', env); assert.fail('expected an error'); } catch (e) {
       assert.ok(!(e as Error).message.includes(secret));
@@ -98,4 +101,22 @@ test('slot names v01..v30 and firma are valid vault names', () => {
   const names = Array.from({ length: 30 }, (_, i) => `v${String(i + 1).padStart(2, '0')}`);
   names.forEach((n, i) => { env[`EMBED_TOKEN_SHA256_${n.toUpperCase()}`] = i.toString(16).padStart(64, '0'); });
   assert.equal(parseTokenConfig([...names, 'firma'].join(','), env).size, 31);
+});
+
+test('vault names starting with "sha256-" are refused: EMBED_TOKEN_SHA256_X would be both vault "sha256-x"\'s plain token and vault "x"\'s hash', () => {
+  assert.throws(() => parseTokenConfig('sha256-x', { EMBED_TOKEN_SHA256_X: 'k'.repeat(40) }), /vault name/);
+  assert.throws(() => parseTokenConfig('x,sha256-x', { EMBED_TOKEN_SHA256_X: H1 }), /vault name/);
+});
+
+test('any env-name collision between vaults is a startup error', () => {
+  // "a-b" and "a_b" are not valid names, but "ab-c" vs "ab" + suffix could collide in future naming: check generically
+  assert.throws(() => parseTokenConfig('v01,v01-', { EMBED_TOKEN_SHA256_V01: H1 }), /vault name|collid/);
+});
+
+test('trivial plain tokens (fewer than 16 distinct characters) are refused', () => {
+  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: 'a'.repeat(32) }), /EMBED_TOKEN_V01 must/);
+  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: 'abababababababababababababababab' }), /EMBED_TOKEN_V01 must/);
+  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: '0123456789abcde'.repeat(3) }), /EMBED_TOKEN_V01 must/);
+  const hex = '0123456789abcdef'.repeat(2) + 'f00dbabe';
+  assert.equal(parseTokenConfig('v01', { EMBED_TOKEN_V01: hex }).size, 1);
 });
