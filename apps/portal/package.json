@@ -13,8 +13,7 @@
   },
   "dependencies": {
     "express": "^4.21.1",
-    "nodemailer": "^9.1.0",
-    "pg": "^8.23.0"
+    "nodemailer": "^9.1.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
@@ -28,6 +27,7 @@
     "autoprefixer": "^10.4.20",
     "happy-dom": "^15.11.7",
     "lucide-react": "^1.16.0",
+    "pg": "^8.23.0",
     "postcss": "^8.4.49",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

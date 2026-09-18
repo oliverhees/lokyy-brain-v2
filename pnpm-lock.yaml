@@ -170,9 +170,6 @@ importers:
       nodemailer:
         specifier: ^9.1.0
         version: 9.1.1
-      pg:
-        specifier: ^8.23.0
-        version: 8.23.0
     devDependencies:
       '@types/express':
         specifier: ^5.0.0
@@ -207,6 +204,9 @@ importers:
       lucide-react:
         specifier: ^1.16.0
         version: 1.16.0(react@19.2.5)
+      pg:
+        specifier: ^8.23.0
+        version: 8.23.0
       postcss:
         specifier: ^8.4.49
         version: 8.5.14

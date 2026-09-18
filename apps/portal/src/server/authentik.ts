@@ -8,12 +8,14 @@ import type { Role } from '../shared/validation.ts';
 export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 /** Group names owned by the portal; every other group of a user (e.g. lokyy-admins) is left alone. */
-const MANAGED_GROUP = /^vault-/;
+const MANAGED_GROUP = /^(vault-|lokyy-users$)/;
+/** Admits a user to the portal (forward-auth of app.<domain> is bound to it). */
+export const USERS_GROUP = 'lokyy-users';
 /** Users the portal created carry these attributes; it never touches any other account. */
 const PATH = 'lokyy';
 
 export function managedGroupsFor(slot: string, role: Role): string[] {
-  return [`vault-${slot}`, role === 'writer' ? 'vault-firma-write' : 'vault-firma-read'];
+  return [`vault-${slot}`, role === 'writer' ? 'vault-firma-write' : 'vault-firma-read', USERS_GROUP];
 }
 
 export type AuthentikErrorCode = 'http' | 'username_taken' | 'group_missing' | 'no_recovery_flow' | 'unreachable';
@@ -161,7 +163,7 @@ export class AuthentikClient {
     await this.#call('PATCH', `/core/users/${user.pk}/`, { groups: [...new Set([...keep, ...desiredPks])] });
   }
 
-  /** Replaces the portal-managed (vault-*) groups of a user; other groups stay. */
+  /** Replaces the portal-managed groups (vault-*, lokyy-users) of a user; other groups stay. */
   async setGroups(pk: number, groups: string[]): Promise<void> {
     const user = await this.getUser(pk);
     if (!user) throw new AuthentikError('http', `Authentik user ${pk} not found`, 404);

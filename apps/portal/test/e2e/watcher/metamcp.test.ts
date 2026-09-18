@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { hashPassword, hashPasswordWithSalt, MetamcpProvisioner, validateUsersSpec, READ_TOOLS } from './metamcp.ts';
-import { FakeMetamcp, ALL_TOOLS } from '../../test/fakes/metamcp.ts';
-import type { UsersJson } from './slots.ts';
+import { FakeMetamcp, ALL_TOOLS } from './fake-metamcp.ts';
+import type { UsersJson } from '../../../src/server/slots.ts';
 
 const tokens: Record<string, string> = {
   MCP_TOKEN_V01: 'tok-v01', MCP_TOKEN_V02: 'tok-v02', MCP_TOKEN_FIRMA: 'tok-firma', MCP_READONLY_TOKEN_FIRMA: 'tok-firma-ro',
@@ -9,6 +9,7 @@ const tokens: Record<string, string> = {
 
 const spec = (...users: [string, 'reader' | 'writer', string][]): UsersJson => ({
   companyVault: 'firma',
+  generation: 0,
   users: users.map(([username, role, vault]) => ({ username, role, vault, allowVaultNameMismatch: true as const })),
 });
 
@@ -42,7 +43,7 @@ describe('validateUsersSpec (rules of deploy/stack/metamcp/provision.mjs)', () =
   });
   it.each([
     ['invalid username', spec(['Anna', 'reader', 'v01'])],
-    ['vault must equal username', { companyVault: 'firma', users: [{ username: 'anna', role: 'reader', vault: 'v01' }] }],
+    ['vault must equal username', { companyVault: 'firma', generation: 0, users: [{ username: 'anna', role: 'reader', vault: 'v01' }] }],
     ['more than one user', spec(['anna', 'reader', 'v01'], ['ben', 'reader', 'v01'])],
     ['company vault', spec(['anna', 'reader', 'firma'])],
     ['role must be', spec(['anna', 'admin' as 'reader', 'v01'])],

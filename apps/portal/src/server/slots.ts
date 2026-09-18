@@ -27,19 +27,22 @@ export function nextFreeSlot(slots: readonly string[], state: PortalState): stri
 
 export interface UsersJson {
   companyVault: string;
-  users: { username: string; role: Role; vault: string; allowVaultNameMismatch: true }[];
+  /** Raised on every change; the watcher echoes it as sourceGeneration */
+  generation: number;
+  users: { username: string; role: Role; vault: string; allowVaultNameMismatch: true; keyRotation?: string }[];
 }
 
 /**
- * Input for MetaMCP provisioning (same format as deploy/stack/users.json). Disabled users are left out,
- * so provisioning removes their MetaMCP account and API key.
+ * Input for the MetaMCP provisioning watcher (deploy/stack/users.json format plus generation and
+ * keyRotation). Disabled users are left out, so provisioning removes their MetaMCP account and API key.
  */
 export function toUsersJson(state: PortalState): UsersJson {
   return {
     companyVault: COMPANY_VAULT,
+    generation: state.usersGeneration ?? 0,
     users: state.users
       .filter((u) => u.status !== 'disabled')
       .sort((a, b) => a.slot.localeCompare(b.slot))
-      .map((u) => ({ username: u.username, role: u.role, vault: u.slot, allowVaultNameMismatch: true as const })),
+      .map((u) => ({ username: u.username, role: u.role, vault: u.slot, allowVaultNameMismatch: true as const, ...(u.keyRotation ? { keyRotation: u.keyRotation } : {}) })),
   };
 }

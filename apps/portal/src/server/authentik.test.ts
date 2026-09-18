@@ -5,14 +5,14 @@ import { FakeAuthentik } from '../../test/fakes/authentik.ts';
 let ak: FakeAuthentik;
 let client: AuthentikClient;
 beforeEach(() => {
-  ak = new FakeAuthentik(['vault-v01', 'vault-v02', 'vault-firma-read', 'vault-firma-write', 'lokyy-admins']);
+  ak = new FakeAuthentik(['vault-v01', 'vault-v02', 'vault-firma-read', 'vault-firma-write', 'lokyy-admins', 'lokyy-users']);
   client = new AuthentikClient({ baseUrl: 'http://authentik-server:9000', token: 'tok-secret', fetch: ak.fetch });
 });
 
 describe('managedGroupsFor', () => {
-  it('maps slot and role to the Authentik groups of the contract', () => {
-    expect(managedGroupsFor('v01', 'reader')).toEqual(['vault-v01', 'vault-firma-read']);
-    expect(managedGroupsFor('v02', 'writer')).toEqual(['vault-v02', 'vault-firma-write']);
+  it('maps slot and role to the Authentik groups of the contract (lokyy-users admits to the portal)', () => {
+    expect(managedGroupsFor('v01', 'reader')).toEqual(['vault-v01', 'vault-firma-read', 'lokyy-users']);
+    expect(managedGroupsFor('v02', 'writer')).toEqual(['vault-v02', 'vault-firma-write', 'lokyy-users']);
   });
 });
 
@@ -58,8 +58,8 @@ describe('AuthentikClient', () => {
   it('keeps groups the portal does not manage (lokyy-admins) when changing vault groups', async () => {
     const pk = await client.ensureUser({ username: 'anna', name: 'A', email: 'a@example.com', slot: 'v01', groups: ['vault-v01', 'vault-firma-read'] });
     ak.addToGroup(pk, 'lokyy-admins');
-    await client.setGroups(pk, ['vault-v01', 'vault-firma-write']);
-    expect(ak.groupNamesOf(pk)).toEqual(['lokyy-admins', 'vault-firma-write', 'vault-v01']);
+    await client.setGroups(pk, ['vault-v01', 'vault-firma-write', 'lokyy-users']);
+    expect(ak.groupNamesOf(pk)).toEqual(['lokyy-admins', 'lokyy-users', 'vault-firma-write', 'vault-v01']);
     await client.setGroups(pk, []);
     expect(ak.groupNamesOf(pk)).toEqual(['lokyy-admins']);
   });

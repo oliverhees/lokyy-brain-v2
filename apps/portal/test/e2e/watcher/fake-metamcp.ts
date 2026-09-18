@@ -2,7 +2,7 @@
 // (users, accounts, sessions, api_keys), better-auth email sign-in, the frontend tRPC procedures
 // used by deploy/stack/metamcp/provision.mjs and the /metamcp/<endpoint>/mcp tools/list path.
 import { randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
-import { READ_TOOLS } from '../../src/server/metamcp.ts';
+import { READ_TOOLS } from './metamcp.ts';
 
 export const ALL_TOOLS = [...READ_TOOLS, 'write_wiki_page', 'ingest_url', 'delete_note'];
 
