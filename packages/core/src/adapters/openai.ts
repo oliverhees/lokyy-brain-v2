@@ -2,6 +2,10 @@ import type { ChatChunk, ChatMessage, ChatRequest, ContentBlock, ToolCall, ToolD
 import type { AdapterConfig, LLMAdapter } from './types';
 import { RequestDeadline, readLlmTimeoutMs } from './timeout';
 import { guardLlmFetch } from '../net/llm-host-policy';
+import {
+  EUROUTER_KEY_INVALID, EUROUTER_ROUTE_REQUIRED, EUROUTER_RULE_NOT_FOUND, EurouterHttpError,
+  eurouterChatError, isEurouterBaseUrl, isEurouterRuleId, listEurouterRules,
+} from './eurouter';
 
 interface OpenAIToolCallDelta {
   index: number;
@@ -103,6 +107,8 @@ function parseSSEEvents(buf: string): SSEEvent[] {
   return events;
 }
 
+const DEFAULT_MAX_DOCUMENT_CHARS = 50000;
+
 export class OpenAIAdapter implements LLMAdapter {
   readonly name = 'openai' as const;
   readonly supportsTools = true;
@@ -110,12 +116,23 @@ export class OpenAIAdapter implements LLMAdapter {
   private fetchImpl: typeof fetch;
   private timeoutMs: number;
   private baseUrl: string;
+  /** EUrouter routing rule sent as `rule_id`; only ever sent to EUrouter (LBV2-30). */
+  private ruleId: string | undefined;
 
   constructor(private config: AdapterConfig) {
+    if (config.ruleId !== undefined && config.ruleId !== '' && !isEurouterRuleId(config.ruleId)) {
+      throw new Error('Invalid EUrouter rule id');
+    }
     // Every request goes to the configured endpoint and carries the key (LBV2-19).
     this.fetchImpl = guardLlmFetch(config.fetchImpl ?? fetch.bind(globalThis));
     this.timeoutMs = config.timeoutMs ?? readLlmTimeoutMs(process.env);
     this.baseUrl = (config.baseUrl ?? 'https://api.openai.com').replace(/\/+$/, '');
+    this.ruleId = config.ruleId && isEurouterBaseUrl(this.baseUrl) ? config.ruleId : undefined;
+  }
+
+  /** With an EUrouter route the body names the route only: the rule brings its models (LBV2-30). */
+  private routing(model: string): Record<string, string> {
+    return this.ruleId ? { rule_id: this.ruleId } : { model };
   }
 
   /** Build the chat completions URL, handling various baseUrl formats:
@@ -166,11 +183,57 @@ export class OpenAIAdapter implements LLMAdapter {
   }
 
   async *chat(request: ChatRequest): AsyncIterable<ChatChunk> {
-    if (this.hasDocumentBlock(request.messages)) {
+    if (this.hasDocumentBlock(request.messages) && isEurouterBaseUrl(this.baseUrl)) {
+      // EUrouter's /responses only reaches a few providers (none behind an EU
+      // rule), so PDFs travel as locally extracted text (LBV2-30).
+      yield* this.chatWithExtractedPdfs(request);
+    } else if (this.hasDocumentBlock(request.messages)) {
       yield* this.chatViaResponses(request);
     } else {
       yield* this.chatViaCompletions(request);
     }
+  }
+
+  private async *chatWithExtractedPdfs(request: ChatRequest): AsyncIterable<ChatChunk> {
+    const extract = this.config.extractPdfText;
+    if (!extract) {
+      yield { kind: 'error', error: 'PDF text extraction is not available for EUrouter' };
+      return;
+    }
+    const limit = this.config.maxDocumentChars ?? DEFAULT_MAX_DOCUMENT_CHARS;
+    let total = 0;
+    const messages: ChatMessage[] = [];
+    for (const m of request.messages) {
+      if (!Array.isArray(m.content)) { messages.push(m); continue; }
+      const blocks: ContentBlock[] = [];
+      for (const b of m.content) {
+        if (b.type !== 'document') { blocks.push(b); continue; }
+        let text: string;
+        try {
+          // The extractor stops reading pages once it passes the remaining budget.
+          text = (await extract(Buffer.from(b.data, 'base64'), { maxChars: Math.max(0, limit - total) })).trim();
+        } catch (e) {
+          // Extractor errors are our own limit messages (size, pages, time) or pdfjs parse errors.
+          yield { kind: 'error', error: `Could not extract text from the PDF: ${(e as Error).message}` };
+          return;
+        }
+        if (!text) {
+          yield { kind: 'error', error: 'The PDF contains no extractable text' };
+          return;
+        }
+        total += text.length;
+        if (total > limit) {
+          yield {
+            kind: 'error',
+            error: `The PDF text is too long for the model context (more than ${limit} characters). Use a shorter document or raise maxContextChars.`,
+          };
+          return;
+        }
+        blocks.push({ type: 'text', text: `PDF document text:\n\n${text}` });
+      }
+      messages.push({ ...m, content: blocks });
+    }
+    yield* this.chatViaCompletions({ ...request, messages });
   }
 
   private async *chatViaCompletions(request: ChatRequest): AsyncIterable<ChatChunk> {
@@ -204,7 +267,7 @@ export class OpenAIAdapter implements LLMAdapter {
           authorization: `Bearer ${this.config.apiKey}`,
         },
         body: JSON.stringify({
-          model: request.model,
+          ...this.routing(request.model),
           messages,
           tools: toOpenAITools(request.tools),
           stream: true,
@@ -223,7 +286,8 @@ export class OpenAIAdapter implements LLMAdapter {
     if (!response.ok) {
       const text = await deadline.race(response.text()).catch((e: unknown) => deadline.message(e));
       deadline.clear();
-      yield { kind: 'error', error: `HTTP ${response.status}: ${text}` };
+      const friendly = isEurouterBaseUrl(this.baseUrl) ? eurouterChatError(response.status, text) : null;
+      yield { kind: 'error', error: friendly ?? `HTTP ${response.status}: ${text}` };
       return;
     }
 
@@ -428,6 +492,8 @@ export class OpenAIAdapter implements LLMAdapter {
   }
 
   async testConnection(): Promise<{ ok: boolean; error?: string }> {
+    if (isEurouterBaseUrl(this.baseUrl)) return this.testEurouter();
+
     // Try /models first; if proxy doesn't support it, try a minimal chat request
     try {
       const r = await this.fetchImpl(this.modelsUrl(), {
@@ -446,7 +512,7 @@ export class OpenAIAdapter implements LLMAdapter {
           authorization: `Bearer ${this.config.apiKey}`,
         },
         body: JSON.stringify({
-          model: this.config.model,
+          ...this.routing(this.config.model),
           messages: [{ role: 'user', content: 'hi' }],
           max_completion_tokens: 1,
         }),
@@ -455,6 +521,32 @@ export class OpenAIAdapter implements LLMAdapter {
       const text = await r.text();
       return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, 200)}` };
     } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
+  /**
+   * EUrouter's /models is public, so it proves nothing about the key. The
+   * routing-rules list checks the key and the route; a tiny rule-only chat
+   * then proves the route can answer. HTTP 200 counts even with empty text
+   * (reasoning models may spend the few tokens on reasoning).
+   */
+  private async testEurouter(): Promise<{ ok: boolean; error?: string }> {
+    const ruleId = this.ruleId;
+    if (!ruleId) return { ok: false, error: EUROUTER_ROUTE_REQUIRED };
+    try {
+      const rules = await listEurouterRules({ apiKey: this.config.apiKey, baseUrl: this.baseUrl, fetchImpl: this.fetchImpl });
+      if (!rules.some((r) => r.id.toLowerCase() === ruleId.toLowerCase())) return { ok: false, error: EUROUTER_RULE_NOT_FOUND };
+      const r = await this.fetchImpl(this.chatUrl(), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${this.config.apiKey}` },
+        body: JSON.stringify({ rule_id: ruleId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 }),
+      });
+      if (r.ok) return { ok: true };
+      const text = await r.text();
+      return { ok: false, error: eurouterChatError(r.status, text) ?? `HTTP ${r.status}: ${text.slice(0, 200)}` };
+    } catch (e) {
+      if (e instanceof EurouterHttpError && (e.status === 401 || e.status === 403)) return { ok: false, error: EUROUTER_KEY_INVALID };
       return { ok: false, error: (e as Error).message };
     }
   }
