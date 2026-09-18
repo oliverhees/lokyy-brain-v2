@@ -36,7 +36,8 @@ envv() { sed -n "s/^$1=//p" "$env_file"; }
 
 dc() { local pkg=$1; shift; docker compose -p "$PROJECT" --env-file "$env_file" -f "$coolify/compose-$pkg.yml" -f "$here/fake-coolify.override.yml" "$@"; }
 repo=$(cd "$coolify/../.." && pwd)
-has_portal() { [[ -f $repo/apps/portal/Dockerfile ]]; }
+# SMOKE_SKIP_PORTAL=1 builds the package without starting the portal (e.g. before authentik-gate exists)
+has_portal() { [[ -f $repo/apps/portal/Dockerfile && ${SMOKE_SKIP_PORTAL:-0} != 1 ]]; }
 services() { if has_portal; then dc "$1" config --services; else dc "$1" config --services | grep -vx portal; fi; }
 
 curlk() { curl -sk --connect-to "::127.0.0.1:$PORT" "$@"; }
