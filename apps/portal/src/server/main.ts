@@ -31,10 +31,12 @@ pool.on('error', (e) => log(`metamcp db: ${e.message}`));
 
 const service = new PortalService({
   domain: config.domain,
+  siteUrl: config.siteUrl,
+  mcpPublicBase: config.metamcp.publicBase,
   slots: config.slots,
   store,
   audit,
-  authentik: new AuthentikClient({ baseUrl: config.authentik.url, token: config.authentik.token }),
+  authentik: new AuthentikClient({ baseUrl: config.authentik.url, publicUrl: config.authentik.publicUrl, token: config.authentik.token }),
   metamcp: new MetamcpProvisioner({
     db: pool, baseUrl: config.metamcp.url, publicBase: config.metamcp.publicBase, origin: config.metamcp.origin,
     env: config.env, log: (m) => log(`[provision] ${m}`),

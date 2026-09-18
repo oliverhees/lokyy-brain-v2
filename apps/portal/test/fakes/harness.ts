@@ -41,7 +41,7 @@ export interface Harness {
   cleanup(): void;
 }
 
-export function harness(): Harness {
+export function harness(opts: { siteUrl?: (host: string) => string; mcpPublicBase?: string } = {}): Harness {
   const dir = mkdtempSync(join(tmpdir(), 'portal-svc-'));
   const groups = [...SLOTS.map((s) => `vault-${s}`), 'vault-firma-read', 'vault-firma-write', 'lokyy-admins'];
   const ak = new FakeAuthentik(groups);
@@ -63,6 +63,7 @@ export function harness(): Harness {
     mailerFactory: (smtp) => (smtp ? mailer : null),
     inviteValidity: 'days=7',
     log: () => {},
+    ...opts,
   });
   return { dir, ak, mm, vaults, mailer, store, service, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }

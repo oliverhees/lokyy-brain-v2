@@ -50,11 +50,42 @@ entries:
     identifiers: { target: !KeyOf a-v01, group: !KeyOf g-v01 }
     attrs: { target: !KeyOf a-v01, group: !KeyOf g-v01, order: 0 }
 
+  - model: authentik_providers_proxy.proxyprovider
+    id: p-v02
+    identifiers: { name: vault-v02 }
+    attrs:
+      <<: *provider
+      name: vault-v02
+      external_host: http://v02.portal.localhost:18380
+  - model: authentik_core.application
+    id: a-v02
+    identifiers: { slug: vault-v02 }
+    attrs: { name: Vault v02, slug: vault-v02, provider: !KeyOf p-v02, policy_engine_mode: any }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf a-v02, group: !KeyOf g-v02 }
+    attrs: { target: !KeyOf a-v02, group: !KeyOf g-v02, order: 0 }
+
+  # Company vault web UI: writers only
+  - model: authentik_providers_proxy.proxyprovider
+    id: p-firma
+    identifiers: { name: vault-firma }
+    attrs:
+      <<: *provider
+      name: vault-firma
+      external_host: http://firma.portal.localhost:18380
+  - model: authentik_core.application
+    id: a-firma
+    identifiers: { slug: vault-firma }
+    attrs: { name: Firmen-Vault, slug: vault-firma, provider: !KeyOf p-firma, policy_engine_mode: any }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf a-firma, group: !KeyOf g-fw }
+    attrs: { target: !KeyOf a-firma, group: !KeyOf g-fw, order: 0 }
+
   - model: authentik_outposts.outpost
     identifiers: { managed: goauthentik.io/outposts/embedded }
     state: present
     attrs:
-      providers: [!KeyOf p-portal, !KeyOf p-v01]
+      providers: [!KeyOf p-portal, !KeyOf p-v01, !KeyOf p-v02, !KeyOf p-firma]
       config:
         authentik_host: http://auth.portal.localhost:18380
         authentik_host_browser: http://auth.portal.localhost:18380

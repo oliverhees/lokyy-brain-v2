@@ -43,6 +43,10 @@ export interface SmtpWithPassword {
 
 export interface ServiceDeps {
   domain: string;
+  /** Public URL of a host under the domain (default https://<host>.<domain>) */
+  siteUrl?: (host: string) => string;
+  /** Public MCP base (default https://mcp.<domain>) */
+  mcpPublicBase?: string;
   slots: string[];
   store: StateStore;
   audit: AuditLog;
@@ -337,10 +341,10 @@ export class PortalService {
       slot: u.slot,
       role: u.role,
       companyName: s.company?.name ?? null,
-      vaultUrl: `https://${u.slot}.${this.#d.domain}`,
+      vaultUrl: this.#site(u.slot),
       // Readers use the company vault through MCP only (read-only token); its web UI is for writers.
-      companyVaultUrl: u.role === 'writer' ? `https://${COMPANY_VAULT}.${this.#d.domain}` : null,
-      mcpUrl: `https://mcp.${this.#d.domain}/metamcp/${u.username}/mcp`,
+      companyVaultUrl: u.role === 'writer' ? this.#site(COMPANY_VAULT) : null,
+      mcpUrl: `${this.#d.mcpPublicBase ?? `https://mcp.${this.#d.domain}`}/metamcp/${u.username}/mcp`,
       serverName: 'lokyy',
       provisioning: u.provisioning,
     };
@@ -365,6 +369,10 @@ export class PortalService {
   }
 
   // ---------------------------------------------------------------- internals
+  #site(host: string): string {
+    return this.#d.siteUrl ? this.#d.siteUrl(host) : `https://${host}.${this.#d.domain}`;
+  }
+
   async #get(username: string): Promise<SlotUser> {
     const u = (await this.#d.store.read()).users.find((x) => x.username === username);
     if (!u) throw notFound();

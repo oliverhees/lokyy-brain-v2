@@ -52,6 +52,8 @@ const toUser = (u: RawUser): AuthentikUser => ({
 
 export interface AuthentikOptions {
   baseUrl: string;
+  /** Public Authentik URL (https://auth.<domain>): links Authentik builds from the internal API host are rewritten to it */
+  publicUrl?: string;
   token: string;
   fetch?: FetchFn;
   timeoutMs?: number;
@@ -67,6 +69,7 @@ export interface EnsureUserInput {
 
 export class AuthentikClient {
   readonly #base: string;
+  readonly #public: string | null;
   readonly #token: string;
   readonly #fetch: FetchFn;
   readonly #timeoutMs: number;
@@ -74,6 +77,7 @@ export class AuthentikClient {
 
   constructor(opts: AuthentikOptions) {
     this.#base = opts.baseUrl.replace(/\/+$/, '');
+    this.#public = opts.publicUrl ? opts.publicUrl.replace(/\/+$/, '') : null;
     this.#token = opts.token;
     this.#fetch = opts.fetch ?? fetch;
     this.#timeoutMs = opts.timeoutMs ?? 15_000;
@@ -172,7 +176,9 @@ export class AuthentikClient {
   async inviteLink(pk: number, tokenDuration: string): Promise<string> {
     const { data } = await this.#call<{ link: string }>('POST', `/core/users/${pk}/recovery/`, { token_duration: tokenDuration });
     if (!data?.link || !/^https?:\/\//.test(data.link)) throw new AuthentikError('http', 'Authentik returned no recovery link');
-    return data.link;
+    if (!this.#public) return data.link;
+    const u = new URL(data.link);
+    return `${this.#public}${u.pathname}${u.search}`;
   }
 
   /** Ends all Authentik sessions of a user (forward-auth cookies stop working). */

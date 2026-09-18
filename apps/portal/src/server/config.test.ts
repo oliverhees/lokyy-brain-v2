@@ -17,7 +17,7 @@ describe('loadConfig', () => {
     const c = loadConfig(base);
     expect(c).toMatchObject({
       port: 3000, domain: 'example.com', slots: ['v01', 'v02'], stateDir: '/state', publicOrigin: 'https://app.example.com',
-      authentik: { url: 'http://authentik-server:9000' },
+      authentik: { url: 'http://authentik-server:9000', publicUrl: 'https://auth.example.com' },
       metamcp: { url: 'http://metamcp:12008', publicBase: 'https://mcp.example.com' },
       inviteValidity: 'days=7',
     });
@@ -31,6 +31,16 @@ describe('loadConfig', () => {
   it('rejects a short proxy secret and a bad domain', () => {
     expect(() => loadConfig({ ...base, PORTAL_PROXY_SECRET: 'short' })).toThrow(/PORTAL_PROXY_SECRET/);
     expect(() => loadConfig({ ...base, LOKYY_DOMAIN: 'https://example.com' })).toThrow(/LOKYY_DOMAIN/);
+  });
+
+  it('builds public URLs from scheme and port (local stacks)', () => {
+    const c = loadConfig({ ...base, LOKYY_PUBLIC_SCHEME: 'http', LOKYY_PUBLIC_PORT: '18380' });
+    expect(c.siteUrl('v01')).toBe('http://v01.example.com:18380');
+    expect(c.publicOrigin).toBe('http://app.example.com:18380');
+    expect(c.authentik.publicUrl).toBe('http://auth.example.com:18380');
+    expect(c.metamcp.publicBase).toBe('http://mcp.example.com:18380');
+    expect(loadConfig(base).siteUrl('firma')).toBe('https://firma.example.com');
+    expect(() => loadConfig({ ...base, LOKYY_PUBLIC_SCHEME: 'ftp' })).toThrow(/SCHEME/);
   });
 
   it('accepts only day/hour invitation validities', () => {

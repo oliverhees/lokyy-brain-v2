@@ -76,6 +76,12 @@ describe('AuthentikClient', () => {
     expect(ak.recoveryRequests).toEqual([{ pk, token_duration: 'days=7' }]);
   });
 
+  it('rewrites the link to the public Authentik URL (the API is called on the internal host)', async () => {
+    const pub = new AuthentikClient({ baseUrl: 'http://authentik-server:9000', publicUrl: 'https://auth.firma.de/', token: 'tok-secret', fetch: ak.fetch });
+    const pk = await pub.ensureUser({ username: 'anna', name: 'A', email: 'a@example.com', slot: 'v01', groups: [] });
+    expect(await pub.inviteLink(pk, 'days=7')).toBe(`https://auth.firma.de/if/flow/lokyy-set-password/?flow_token=tok${pk}`);
+  });
+
   it('reports a missing recovery flow as its own error code', async () => {
     ak.recoveryFlowSet = false;
     const pk = await client.ensureUser({ username: 'anna', name: 'A', email: 'a@example.com', slot: 'v01', groups: [] });

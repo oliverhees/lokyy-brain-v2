@@ -240,6 +240,16 @@ describe('my access (self service)', () => {
     expect((await h.service.myAccess('ben')).companyVaultUrl).toBe('https://firma.example.com');
   });
 
+  it('uses the configured public URLs (scheme, port, MCP base)', async () => {
+    h.cleanup();
+    h = harness({ siteUrl: (host) => `http://${host}.portal.localhost:18380`, mcpPublicBase: 'http://mcp.portal.localhost:18380' });
+    await invite('anna', 'writer');
+    expect(await h.service.myAccess('anna')).toMatchObject({
+      vaultUrl: 'http://v01.portal.localhost:18380', companyVaultUrl: 'http://firma.portal.localhost:18380',
+      mcpUrl: 'http://mcp.portal.localhost:18380/metamcp/anna/mcp',
+    });
+  });
+
   it('the first visit marks an invited user active', async () => {
     await invite('anna');
     await h.service.myAccess('anna');

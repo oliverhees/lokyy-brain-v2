@@ -1,7 +1,11 @@
 # LBV2-28 — local E2E stack for the setup portal. Project name lokyy-portal, one host port
-# (127.0.0.1:18380, Traefik), subnets 10.234.0.0/16. Mirrors the network model of deploy/stack:
-# the portal is on edge + metamcp-internal + portal-admin, never on a vault network.
-# Start with test/e2e/run.sh (generates .env with random secrets).
+# (127.0.0.1:18380, Traefik), subnets 10.234.0.0/16. Mirrors the network model of deploy/stack and the
+# LBV2-28 compose contract: the portal is on edge + metamcp-internal + portal-admin, never on a vault
+# network; vault LLM config goes through Traefik's internal portal-admin entrypoint.
+#   http://auth.portal.localhost:18380   Authentik        http://app.portal.localhost:18380   portal
+#   http://v01|v02|firma.portal.localhost:18380 vaults    http://mcp.portal.localhost:18380   mcp-gate
+# Start with test/e2e/run.sh (generates .env with random secrets). Uses the local images
+# lokyy-brain-v2:dev and lokyy-mcp-gate:dev (built from deploy/, not rebuilt here).
 name: lokyy-portal
 
 x-authentik-env: &authentik-env
@@ -21,6 +25,17 @@ x-authentik-volumes: &authentik-volumes
   - ./blueprints/e2e-stack.yaml:/blueprints/custom/e2e-stack.yaml:ro
   - ../../authentik/lokyy-portal.yaml:/blueprints/custom/lokyy-portal.yaml:ro
 
+x-vault: &vault
+  image: lokyy-brain-v2:dev
+  mem_limit: 1500m
+  environment: &vault-env
+    MCP_HTTP_PORT: "4322"
+    MINDBASE_MDNS: "off"
+    MINDBASE_DISABLE_CAPTURE: "1"
+    VAULT_LLM_ALLOWED_HOSTS: api.eurouter.ai
+    MINDBASE_MODEL_CACHE: /home/vault
+    MINDBASE_MODELS_OFFLINE: "1"
+
 services:
   traefik:
     image: traefik:v3.7.13
@@ -29,15 +44,22 @@ services:
       - --providers.docker.exposedbydefault=false
       - --providers.docker.constraints=Label(`com.docker.compose.project`,`lokyy-portal`)
       - --entrypoints.web.address=:80
-      - --entrypoints.portal-admin.address=:8090
+      # Bound to Traefik's address on portal-admin only: edge members (Authentik, MetaMCP, gate) cannot reach it
+      - --entrypoints.portal-admin.address=10.234.2.2:8090
       - --api.dashboard=false
       - --log.level=INFO
     ports:
       - "127.0.0.1:18380:80"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks: [edge, portal-admin]
+    networks:
+      edge: {}
+      portal-admin: { ipv4_address: 10.234.2.2 }
+      web-v01: {}
+      web-v02: {}
+      web-firma: {}
 
+  # ---------------------------------------------------------------- Authentik
   authentik-db:
     image: postgres:16-alpine
     environment:
@@ -67,6 +89,7 @@ services:
       - traefik.http.middlewares.authentik.forwardauth.address=http://authentik-server:9000/outpost.goauthentik.io/auth/traefik
       - traefik.http.middlewares.authentik.forwardauth.trustForwardHeader=true
       - traefik.http.middlewares.authentik.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-uid
+      - traefik.http.middlewares.vault-identity.headers.customrequestheaders.X-Mindbase-User=
     networks: [edge, authentik-internal]
 
   authentik-worker:
@@ -79,7 +102,245 @@ services:
     shm_size: 512mb
     networks: [authentik-internal]
 
-  # Runs integration tests inside the stack network, like the portal container would.
+  # ------------------------------------------------------------------- Portal
+  portal:
+    image: lokyy-portal:dev
+    build:
+      context: ../../../..
+      dockerfile: apps/portal/Dockerfile
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    depends_on:
+      metamcp: { condition: service_healthy }
+    environment:
+      LOKYY_DOMAIN: portal.localhost
+      LOKYY_SLOTS: v01,v02
+      PORTAL_PROXY_SECRET: ${PORTAL_PROXY_SECRET:?run test/e2e/run.sh}
+      LOKYY_PUBLIC_SCHEME: http
+      LOKYY_PUBLIC_PORT: "18380"
+      AUTHENTIK_URL: http://authentik-server:9000
+      AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN}
+      METAMCP_URL: http://metamcp:12008
+      METAMCP_DATABASE_URL: postgresql://metamcp:${METAMCP_PG_PASS}@metamcp-db:5432/metamcp
+      VAULT_ADMIN_URL: http://10.234.2.2:8090
+      MCP_TOKEN_V01: ${MCP_TOKEN_V01:?run test/e2e/run.sh}
+      MCP_TOKEN_V02: ${MCP_TOKEN_V02:?run test/e2e/run.sh}
+      MCP_TOKEN_FIRMA: ${MCP_TOKEN_FIRMA:?run test/e2e/run.sh}
+      MCP_READONLY_TOKEN_FIRMA: ${MCP_READONLY_TOKEN_FIRMA:?run test/e2e/run.sh}
+    volumes: [lokyy-state:/state]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=lokyy-portal_edge
+      - traefik.http.routers.portal.rule=Host(`app.portal.localhost`)
+      - traefik.http.routers.portal.entrypoints=web
+      - traefik.http.routers.portal.middlewares=authentik@docker,portal-secret@docker
+      - traefik.http.middlewares.portal-secret.headers.customrequestheaders.X-Portal-Proxy-Secret=${PORTAL_PROXY_SECRET}
+      - traefik.http.services.portal.loadbalancer.server.port=3000
+      # Second layer for the portal-admin entrypoint: only the portal's fixed address
+      - traefik.http.middlewares.portal-only.ipallowlist.sourcerange=10.234.2.3/32
+      - traefik.http.routers.portal-outpost.rule=Host(`app.portal.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
+      - traefik.http.routers.portal-outpost.entrypoints=web
+      - traefik.http.routers.portal-outpost.service=authentik
+    networks:
+      edge: {}
+      metamcp-internal: {}
+      portal-admin: { ipv4_address: 10.234.2.3 }
+
+  # ------------------------------------------------------------------- Vaults
+  vault-v01:
+    <<: *vault
+    environment:
+      <<: *vault-env
+      MCP_HTTP_TOKEN: ${MCP_TOKEN_V01}
+      MCP_HTTP_ALLOWED_HOSTS: mcp.vault-v01:4322
+      VAULT_PROXY_SECRET: ${PROXY_SECRET_V01:?run test/e2e/run.sh}
+      VAULT_ADMIN_GROUPS: vault-v01-admin,lokyy-admins
+    volumes: [vault-v01:/data, models:/models:ro, ../../../../deploy/stack/models/offline.mjs:/lokyy/offline.mjs:ro]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=lokyy-portal_web-v01
+      - traefik.http.routers.vault-v01.rule=Host(`v01.portal.localhost`)
+      - traefik.http.routers.vault-v01.entrypoints=web
+      - traefik.http.routers.vault-v01.middlewares=authentik@docker,vault-identity@docker,vault-v01-secret@docker
+      - traefik.http.middlewares.vault-v01-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_V01}
+      - traefik.http.services.vault-v01.loadbalancer.server.port=4321
+      - traefik.http.routers.vault-v01-outpost.rule=Host(`v01.portal.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
+      - traefik.http.routers.vault-v01-outpost.entrypoints=web
+      - traefik.http.routers.vault-v01-outpost.service=authentik
+      # portal-admin: only the config API, identity and secret set by Traefik
+      - traefik.http.routers.vault-v01-admin.rule=PathPrefix(`/v01/api/config`)
+      - traefik.http.routers.vault-v01-admin.entrypoints=portal-admin
+      - traefik.http.routers.vault-v01-admin.service=vault-v01
+      - traefik.http.routers.vault-v01-admin.middlewares=portal-only@docker,vault-v01-admin-strip@docker,vault-v01-admin-hdr@docker
+      - traefik.http.middlewares.vault-v01-admin-strip.stripprefix.prefixes=/v01
+      - traefik.http.middlewares.vault-v01-admin-hdr.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_V01}
+      - traefik.http.middlewares.vault-v01-admin-hdr.headers.customrequestheaders.X-authentik-groups=lokyy-admins
+      - traefik.http.middlewares.vault-v01-admin-hdr.headers.customrequestheaders.X-authentik-username=lokyy-portal
+    networks:
+      web-v01: {}
+      mcp-v01: { aliases: [upstream.vault-v01] }
+
+  vault-v02:
+    <<: *vault
+    environment:
+      <<: *vault-env
+      MCP_HTTP_TOKEN: ${MCP_TOKEN_V02}
+      MCP_HTTP_ALLOWED_HOSTS: mcp.vault-v02:4322
+      VAULT_PROXY_SECRET: ${PROXY_SECRET_V02:?run test/e2e/run.sh}
+      VAULT_ADMIN_GROUPS: vault-v02-admin,lokyy-admins
+    volumes: [vault-v02:/data, models:/models:ro, ../../../../deploy/stack/models/offline.mjs:/lokyy/offline.mjs:ro]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=lokyy-portal_web-v02
+      - traefik.http.routers.vault-v02.rule=Host(`v02.portal.localhost`)
+      - traefik.http.routers.vault-v02.entrypoints=web
+      - traefik.http.routers.vault-v02.middlewares=authentik@docker,vault-identity@docker,vault-v02-secret@docker
+      - traefik.http.middlewares.vault-v02-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_V02}
+      - traefik.http.services.vault-v02.loadbalancer.server.port=4321
+      - traefik.http.routers.vault-v02-outpost.rule=Host(`v02.portal.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
+      - traefik.http.routers.vault-v02-outpost.entrypoints=web
+      - traefik.http.routers.vault-v02-outpost.service=authentik
+      - traefik.http.routers.vault-v02-admin.rule=PathPrefix(`/v02/api/config`)
+      - traefik.http.routers.vault-v02-admin.entrypoints=portal-admin
+      - traefik.http.routers.vault-v02-admin.service=vault-v02
+      - traefik.http.routers.vault-v02-admin.middlewares=portal-only@docker,vault-v02-admin-strip@docker,vault-v02-admin-hdr@docker
+      - traefik.http.middlewares.vault-v02-admin-strip.stripprefix.prefixes=/v02
+      - traefik.http.middlewares.vault-v02-admin-hdr.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_V02}
+      - traefik.http.middlewares.vault-v02-admin-hdr.headers.customrequestheaders.X-authentik-groups=lokyy-admins
+      - traefik.http.middlewares.vault-v02-admin-hdr.headers.customrequestheaders.X-authentik-username=lokyy-portal
+    networks:
+      web-v02: {}
+      mcp-v02: { aliases: [upstream.vault-v02] }
+
+  vault-firma:
+    <<: *vault
+    environment:
+      <<: *vault-env
+      MCP_HTTP_TOKEN: ${MCP_TOKEN_FIRMA}
+      MCP_HTTP_READONLY_TOKEN: ${MCP_READONLY_TOKEN_FIRMA}
+      MCP_HTTP_ALLOWED_HOSTS: mcp.vault-firma:4322
+      VAULT_PROXY_SECRET: ${PROXY_SECRET_FIRMA:?run test/e2e/run.sh}
+      VAULT_ADMIN_GROUPS: vault-firma-admin,lokyy-admins
+    volumes: [vault-firma:/data, models:/models:ro, ../../../../deploy/stack/models/offline.mjs:/lokyy/offline.mjs:ro]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=lokyy-portal_web-firma
+      - traefik.http.routers.vault-firma.rule=Host(`firma.portal.localhost`)
+      - traefik.http.routers.vault-firma.entrypoints=web
+      - traefik.http.routers.vault-firma.middlewares=authentik@docker,vault-identity@docker,vault-firma-secret@docker
+      - traefik.http.middlewares.vault-firma-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_FIRMA}
+      - traefik.http.services.vault-firma.loadbalancer.server.port=4321
+      - traefik.http.routers.vault-firma-outpost.rule=Host(`firma.portal.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
+      - traefik.http.routers.vault-firma-outpost.entrypoints=web
+      - traefik.http.routers.vault-firma-outpost.service=authentik
+      - traefik.http.routers.vault-firma-admin.rule=PathPrefix(`/firma/api/config`)
+      - traefik.http.routers.vault-firma-admin.entrypoints=portal-admin
+      - traefik.http.routers.vault-firma-admin.service=vault-firma
+      - traefik.http.routers.vault-firma-admin.middlewares=portal-only@docker,vault-firma-admin-strip@docker,vault-firma-admin-hdr@docker
+      - traefik.http.middlewares.vault-firma-admin-strip.stripprefix.prefixes=/firma
+      - traefik.http.middlewares.vault-firma-admin-hdr.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_FIRMA}
+      - traefik.http.middlewares.vault-firma-admin-hdr.headers.customrequestheaders.X-authentik-groups=lokyy-admins
+      - traefik.http.middlewares.vault-firma-admin-hdr.headers.customrequestheaders.X-authentik-username=lokyy-portal
+    networks:
+      web-firma: {}
+      mcp-firma: { aliases: [upstream.vault-firma] }
+
+  # ------------------------------------------------------------------ MetaMCP
+  metamcp-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: metamcp
+      POSTGRES_USER: metamcp
+      POSTGRES_PASSWORD: ${METAMCP_PG_PASS:?run test/e2e/run.sh}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d metamcp -U metamcp"]
+      interval: 5s
+      retries: 20
+    networks: [metamcp-internal]
+
+  metamcp:
+    image: ghcr.io/metatool-ai/metamcp:2.4.22
+    mem_limit: 1536m
+    depends_on:
+      metamcp-db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://metamcp:${METAMCP_PG_PASS}@metamcp-db:5432/metamcp
+      POSTGRES_HOST: metamcp-db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: metamcp
+      POSTGRES_PASSWORD: ${METAMCP_PG_PASS}
+      POSTGRES_DB: metamcp
+      APP_URL: http://mcp.portal.localhost:18380
+      NEXT_PUBLIC_APP_URL: http://mcp.portal.localhost:18380
+      BETTER_AUTH_SECRET: ${METAMCP_AUTH_SECRET:?run test/e2e/run.sh}
+      TRANSFORM_LOCALHOST_TO_DOCKER_INTERNAL: "false"
+    networks: [edge, metamcp-internal, mcp-upstream]
+
+  mcp-gate:
+    image: lokyy-mcp-gate:dev
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MODE: gate
+      GATE_UPSTREAM: http://metamcp:12008
+      GATE_MAX_BINDINGS: "100"
+    depends_on:
+      metamcp: { condition: service_healthy }
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=lokyy-portal_edge
+      - traefik.http.routers.metamcp-endpoints.rule=Host(`mcp.portal.localhost`) && PathRegexp(`^/metamcp/[a-z0-9-]+/mcp$`)
+      - traefik.http.routers.metamcp-endpoints.entrypoints=web
+      - traefik.http.routers.metamcp-endpoints.priority=100
+      - traefik.http.routers.metamcp-endpoints.service=mcp-gate
+      - traefik.http.services.mcp-gate.loadbalancer.server.port=8080
+      # as deploy/stack: uniform errors, 403/404 look like 401 (unknown endpoint = wrong key)
+      - traefik.http.routers.metamcp-endpoints.middlewares=metamcp-uniform-errors@docker
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.status=400-428,430-599
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.service=mcp-gate
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.query=/__error
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.statusRewrites.403=401
+      - traefik.http.middlewares.metamcp-uniform-errors.errors.statusRewrites.404=401
+    networks: [edge]
+
+  vault-connector:
+    image: lokyy-mcp-gate:dev
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MODE: connector
+      CONNECTOR_VAULTS: v01,v02,firma
+      CONNECTOR_LISTEN_HOST: 10.234.11.2
+    networks:
+      mcp-upstream:
+        ipv4_address: 10.234.11.2
+        aliases: [mcp.vault-v01, mcp.vault-v02, mcp.vault-firma]
+      mcp-v01: {}
+      mcp-v02: {}
+      mcp-firma: {}
+
+  metamcp-init:
+    image: postgres:16-alpine
+    restart: "no"
+    depends_on:
+      metamcp: { condition: service_healthy }
+    environment:
+      PGHOST: metamcp-db
+      PGUSER: metamcp
+      PGDATABASE: metamcp
+      PGPASSWORD: ${METAMCP_PG_PASS}
+      METAMCP_ADMIN_EMAIL: admin@lokyy.local
+      METAMCP_ADMIN_PASS: ${METAMCP_ADMIN_PASS:?run test/e2e/run.sh}
+    volumes:
+      - ../../../../deploy/stack/metamcp/init.sh:/init.sh:ro
+    entrypoint: ["/init.sh"]
+    networks: [metamcp-internal]
+
+  # Runs the integration/E2E tests inside the edge network (reaches Traefik as "traefik").
   tester:
     image: node:24-alpine
     profiles: [test]
@@ -89,9 +350,13 @@ services:
       # rw only because vitest writes a temporary config bundle next to vitest.config.ts; runs as the host user
       - ${REPO_DIR:?run test/e2e/run.sh}:${REPO_DIR}
     environment:
+      E2E: "1"
       AUTHENTIK_URL: http://authentik-server:9000
       AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN}
-      E2E: "1"
+      AUTHENTIK_ADMIN_PASS: ${AUTHENTIK_ADMIN_PASS}
+      TRAEFIK_URL: http://traefik:80
+      E2E_DOMAIN: portal.localhost
+      E2E_PUBLIC_PORT: "18380"
     networks: [edge]
 
 networks:
@@ -103,3 +368,34 @@ networks:
   portal-admin:
     internal: true
     ipam: { config: [{ subnet: 10.234.2.0/24 }] }
+  metamcp-internal:
+    internal: true
+    ipam: { config: [{ subnet: 10.234.3.0/24 }] }
+  web-v01:
+    internal: true
+    ipam: { config: [{ subnet: 10.234.4.0/24 }] }
+  web-v02:
+    internal: true
+    ipam: { config: [{ subnet: 10.234.5.0/24 }] }
+  web-firma:
+    internal: true
+    ipam: { config: [{ subnet: 10.234.6.0/24 }] }
+  mcp-v01:
+    internal: true
+    ipam: { config: [{ subnet: 10.234.7.0/24 }] }
+  mcp-v02:
+    internal: true
+    ipam: { config: [{ subnet: 10.234.8.0/24 }] }
+  mcp-firma:
+    internal: true
+    ipam: { config: [{ subnet: 10.234.9.0/24 }] }
+  mcp-upstream:
+    internal: true
+    ipam: { config: [{ subnet: 10.234.11.0/24 }] }
+
+volumes:
+  lokyy-state:
+  models:
+  vault-v01:
+  vault-v02:
+  vault-firma:
