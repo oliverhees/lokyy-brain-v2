@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import type { Context } from '../context.js';
 import { textResult, errorResult } from '../lib/error.js';
-import { guardLlmFetch, type MetaJson } from '@mindbase/core';
+import { EmbeddingStore, guardLlmFetch, remoteEmbedderFromEnv, type MetaJson } from '@mindbase/core';
 
 const inputSchema = z.object({
   query: z.string().min(1),
@@ -41,31 +41,61 @@ async function getEmbeddings(texts: string[], baseUrl: string, apiKey: string): 
   return data.data.map((d) => d.embedding);
 }
 
+interface Page { slug: string; title: string; content: string }
+
+async function listPages(ctx: Context): Promise<Page[]> {
+  const entries = await ctx.store.listDir('wiki/notes');
+  const pages: Page[] = [];
+  for (const entry of entries) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.md')) continue;
+    const slug = entry.name.replace(/\.md$/, '');
+    const body = await ctx.store.readText(`wiki/notes/${entry.name}`);
+    let title = slug;
+    try {
+      const m = await ctx.store.readJSON<MetaJson>(`wiki/notes/${slug}.meta.json`);
+      title = m.title;
+    } catch { /* ok */ }
+    pages.push({ slug, title, content: body });
+  }
+  return pages;
+}
+
+/**
+ * Shared embedding service (LBV2-26, MINDBASE_EMBED_URL + MINDBASE_EMBED_TOKEN): BGE-M3 like the vault
+ * server. Page vectors the server's indexer already cached in <dataDir>/embeddings are reused; only the
+ * query and pages without a cached vector are sent (as "<title>\n\n<body>", the indexer's format).
+ */
+async function scoreWithEmbedService(ctx: Context, query: string, pages: Page[]): Promise<Array<{ slug: string; title: string; score: number }>> {
+  const remote = remoteEmbedderFromEnv(process.env)!;
+  const cached = new Map((await new EmbeddingStore(ctx.dataDir).list()).map((e) => [e.slug, e.vector]));
+  const missing = pages.filter((p) => !cached.has(p.slug));
+  const [queryEmb, ...fresh] = await remote.embedMany([query, ...missing.map((p) => `${p.title}\n\n${p.content}`)]);
+  missing.forEach((p, i) => cached.set(p.slug, fresh[i]!));
+  return pages.map((p) => ({ slug: p.slug, title: p.title, score: cosineSim(queryEmb!, cached.get(p.slug)!) }));
+}
+
 export async function handle(ctx: Context, rawInput: unknown) {
   const parsed = inputSchema.safeParse(rawInput);
   if (!parsed.success) return errorResult(`Invalid input: ${parsed.error.issues[0]?.message ?? 'parse error'}`);
   const { query, limit } = parsed.data;
-  if (!ctx.config) return errorResult('LLM not configured', 'Open MindBase Settings to set up your LLM provider.');
+  const useEmbedService = Boolean(process.env['MINDBASE_EMBED_URL'] || process.env['MINDBASE_EMBED_TOKEN']);
+  if (!useEmbedService && !ctx.config) return errorResult('LLM not configured', 'Open MindBase Settings to set up your LLM provider.');
 
   try {
-    const entries = await ctx.store.listDir('wiki/notes');
-    const pages: Array<{ slug: string; title: string; content: string }> = [];
-    for (const entry of entries) {
-      if (entry.kind !== 'file' || !entry.name.endsWith('.md')) continue;
-      const slug = entry.name.replace(/\.md$/, '');
-      const body = await ctx.store.readText(`wiki/notes/${entry.name}`);
-      let title = slug;
-      try {
-        const m = await ctx.store.readJSON<MetaJson>(`wiki/notes/${slug}.meta.json`);
-        title = m.title;
-      } catch { /* ok */ }
-      pages.push({ slug, title, content: body.slice(0, 1000) });
+    if (useEmbedService) {
+      const pages = await listPages(ctx);
+      if (pages.length === 0) return textResult([]);
+      const scored = (await scoreWithEmbedService(ctx, query, pages)).map((p) => ({ ...p, one_liner: '' }));
+      scored.sort((a, b) => b.score - a.score);
+      return textResult(scored.slice(0, limit));
     }
+    const config = ctx.config!;
+    const pages = (await listPages(ctx)).map((p) => ({ ...p, content: p.content.slice(0, 1000) }));
     if (pages.length === 0) return textResult([]);
 
-    const baseUrl = ctx.config.baseUrl || 'https://api.openai.com';
+    const baseUrl = config.baseUrl || 'https://api.openai.com';
     const texts = [query, ...pages.map((p) => `${p.title}: ${p.content}`)];
-    const embeds = await getEmbeddings(texts, baseUrl, ctx.config.apiKey);
+    const embeds = await getEmbeddings(texts, baseUrl, config.apiKey);
     const queryEmb = embeds[0]!;
     const scored = pages.map((p, i) => ({
       slug: p.slug,
@@ -76,6 +106,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
     scored.sort((a, b) => b.score - a.score);
     return textResult(scored.slice(0, limit));
   } catch (e) {
+    if (useEmbedService) console.error(`[semantic_search] ${(e as Error).message}; using keyword search`);
     // Fallback to keyword search
     const keyword = ctx.searchIndex.search(query).slice(0, limit);
     const results = await Promise.all(keyword.map(async (h) => {
