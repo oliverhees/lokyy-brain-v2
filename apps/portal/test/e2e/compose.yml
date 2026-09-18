@@ -1,5 +1,7 @@
-# LBV2-28 — local E2E stack for the setup portal. Project name lokyy-portal, one host port
-# (127.0.0.1:18380, Traefik), subnets 10.234.0.0/16. Mirrors the network model of deploy/stack and the
+# LBV2-28 — local E2E stack for the setup portal. Default project lokyy-portal, one host port
+# (127.0.0.1:18380, Traefik), subnets 10.234.0-11.0/24. Parallel stacks (e.g. QA): run.sh -p <project>
+# --port <port> --net <n> sets E2E_PROJECT, E2E_PUBLIC_PORT and E2E_NET_0…11 = 10.234.(16n+0…11).
+# Mirrors the network model of deploy/stack and the
 # LBV2-28 compose contract: the portal is on edge + metamcp-internal + portal-admin, never on a vault
 # network; vault LLM config goes through Traefik's internal portal-admin entrypoint.
 #   http://auth.portal.localhost:18380   Authentik        http://app.portal.localhost:18380   portal
@@ -17,6 +19,9 @@ x-authentik-env: &authentik-env
   AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_ADMIN_PASS:?run test/e2e/run.sh}
   AUTHENTIK_BOOTSTRAP_EMAIL: admin@example.com
   AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_API_TOKEN:?run test/e2e/run.sh}
+  # Used by the blueprints: the portal's own least-privilege token and the public port
+  PORTAL_AUTHENTIK_TOKEN: ${PORTAL_AUTHENTIK_TOKEN:?run test/e2e/run.sh}
+  E2E_PUBLIC_PORT: ${E2E_PUBLIC_PORT:-18380}
   AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
   AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
   AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
@@ -42,19 +47,19 @@ services:
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
-      - --providers.docker.constraints=Label(`com.docker.compose.project`,`lokyy-portal`)
+      - --providers.docker.constraints=Label(`com.docker.compose.project`,`${E2E_PROJECT:-lokyy-portal}`)
       - --entrypoints.web.address=:80
       # Bound to Traefik's address on portal-admin only: edge members (Authentik, MetaMCP, gate) cannot reach it
-      - --entrypoints.portal-admin.address=10.234.2.2:8090
+      - --entrypoints.portal-admin.address=${E2E_NET_2:-10.234.2}.2:8090
       - --api.dashboard=false
       - --log.level=INFO
     ports:
-      - "127.0.0.1:18380:80"
+      - "127.0.0.1:${E2E_PUBLIC_PORT:-18380}:80"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       edge: {}
-      portal-admin: { ipv4_address: 10.234.2.2 }
+      portal-admin: { ipv4_address: "${E2E_NET_2:-10.234.2}.2" }
       web-v01: {}
       web-v02: {}
       web-firma: {}
@@ -82,7 +87,7 @@ services:
     shm_size: 512mb
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-portal_edge
+      - traefik.docker.network=${E2E_PROJECT:-lokyy-portal}_edge
       - traefik.http.routers.authentik.rule=Host(`auth.portal.localhost`)
       - traefik.http.routers.authentik.entrypoints=web
       - traefik.http.services.authentik.loadbalancer.server.port=9000
@@ -117,14 +122,17 @@ services:
     environment:
       LOKYY_DOMAIN: portal.localhost
       LOKYY_SLOTS: v01,v02
-      PORTAL_PROXY_SECRET: ${PORTAL_PROXY_SECRET:?run test/e2e/run.sh}
+      VAULT_PROXY_SECRET: ${PORTAL_PROXY_SECRET:?run test/e2e/run.sh}
+      LOKYY_STATE_DIR: /state
+      LOKYY_PACKAGE: e2e
       LOKYY_PUBLIC_SCHEME: http
-      LOKYY_PUBLIC_PORT: "18380"
+      LOKYY_PUBLIC_PORT: ${E2E_PUBLIC_PORT:-18380}
       AUTHENTIK_URL: http://authentik-server:9000
-      AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN}
+      # least-privilege service account token (blueprint), not the bootstrap token
+      AUTHENTIK_API_TOKEN: ${PORTAL_AUTHENTIK_TOKEN}
       METAMCP_URL: http://metamcp:12008
       METAMCP_DATABASE_URL: postgresql://metamcp:${METAMCP_PG_PASS}@metamcp-db:5432/metamcp
-      VAULT_ADMIN_URL: http://10.234.2.2:8090
+      VAULT_ADMIN_URL: http://${E2E_NET_2:-10.234.2}.2:8090
       MCP_TOKEN_V01: ${MCP_TOKEN_V01:?run test/e2e/run.sh}
       MCP_TOKEN_V02: ${MCP_TOKEN_V02:?run test/e2e/run.sh}
       MCP_TOKEN_FIRMA: ${MCP_TOKEN_FIRMA:?run test/e2e/run.sh}
@@ -132,21 +140,21 @@ services:
     volumes: [lokyy-state:/state]
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-portal_edge
+      - traefik.docker.network=${E2E_PROJECT:-lokyy-portal}_edge
       - traefik.http.routers.portal.rule=Host(`app.portal.localhost`)
       - traefik.http.routers.portal.entrypoints=web
       - traefik.http.routers.portal.middlewares=authentik@docker,portal-secret@docker
-      - traefik.http.middlewares.portal-secret.headers.customrequestheaders.X-Portal-Proxy-Secret=${PORTAL_PROXY_SECRET}
+      - traefik.http.middlewares.portal-secret.headers.customrequestheaders.X-Vault-Proxy-Secret=${PORTAL_PROXY_SECRET}
       - traefik.http.services.portal.loadbalancer.server.port=3000
       # Second layer for the portal-admin entrypoint: only the portal's fixed address
-      - traefik.http.middlewares.portal-only.ipallowlist.sourcerange=10.234.2.3/32
+      - traefik.http.middlewares.portal-only.ipallowlist.sourcerange=${E2E_NET_2:-10.234.2}.3/32
       - traefik.http.routers.portal-outpost.rule=Host(`app.portal.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.portal-outpost.entrypoints=web
       - traefik.http.routers.portal-outpost.service=authentik
     networks:
       edge: {}
       metamcp-internal: {}
-      portal-admin: { ipv4_address: 10.234.2.3 }
+      portal-admin: { ipv4_address: "${E2E_NET_2:-10.234.2}.3" }
 
   # ------------------------------------------------------------------- Vaults
   vault-v01:
@@ -160,7 +168,7 @@ services:
     volumes: [vault-v01:/data, models:/models:ro, ../../../../deploy/stack/models/offline.mjs:/lokyy/offline.mjs:ro]
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-portal_web-v01
+      - traefik.docker.network=${E2E_PROJECT:-lokyy-portal}_web-v01
       - traefik.http.routers.vault-v01.rule=Host(`v01.portal.localhost`)
       - traefik.http.routers.vault-v01.entrypoints=web
       - traefik.http.routers.vault-v01.middlewares=authentik@docker,vault-identity@docker,vault-v01-secret@docker
@@ -170,7 +178,8 @@ services:
       - traefik.http.routers.vault-v01-outpost.entrypoints=web
       - traefik.http.routers.vault-v01-outpost.service=authentik
       # portal-admin: only the config API, identity and secret set by Traefik
-      - traefik.http.routers.vault-v01-admin.rule=PathPrefix(`/v01/api/config`)
+      # only GET/PUT /api/config and POST /api/config/test
+      - traefik.http.routers.vault-v01-admin.rule=(Path(`/v01/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v01/api/config/test`) && Method(`POST`))
       - traefik.http.routers.vault-v01-admin.entrypoints=portal-admin
       - traefik.http.routers.vault-v01-admin.service=vault-v01
       - traefik.http.routers.vault-v01-admin.middlewares=portal-only@docker,vault-v01-admin-strip@docker,vault-v01-admin-hdr@docker
@@ -178,6 +187,8 @@ services:
       - traefik.http.middlewares.vault-v01-admin-hdr.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_V01}
       - traefik.http.middlewares.vault-v01-admin-hdr.headers.customrequestheaders.X-authentik-groups=lokyy-admins
       - traefik.http.middlewares.vault-v01-admin-hdr.headers.customrequestheaders.X-authentik-username=lokyy-portal
+      - traefik.http.middlewares.vault-v01-admin-hdr.headers.customrequestheaders.X-authentik-email=
+      - traefik.http.middlewares.vault-v01-admin-hdr.headers.customrequestheaders.X-authentik-uid=
     networks:
       web-v01: {}
       mcp-v01: { aliases: [upstream.vault-v01] }
@@ -193,7 +204,7 @@ services:
     volumes: [vault-v02:/data, models:/models:ro, ../../../../deploy/stack/models/offline.mjs:/lokyy/offline.mjs:ro]
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-portal_web-v02
+      - traefik.docker.network=${E2E_PROJECT:-lokyy-portal}_web-v02
       - traefik.http.routers.vault-v02.rule=Host(`v02.portal.localhost`)
       - traefik.http.routers.vault-v02.entrypoints=web
       - traefik.http.routers.vault-v02.middlewares=authentik@docker,vault-identity@docker,vault-v02-secret@docker
@@ -202,7 +213,8 @@ services:
       - traefik.http.routers.vault-v02-outpost.rule=Host(`v02.portal.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.vault-v02-outpost.entrypoints=web
       - traefik.http.routers.vault-v02-outpost.service=authentik
-      - traefik.http.routers.vault-v02-admin.rule=PathPrefix(`/v02/api/config`)
+      # only GET/PUT /api/config and POST /api/config/test
+      - traefik.http.routers.vault-v02-admin.rule=(Path(`/v02/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v02/api/config/test`) && Method(`POST`))
       - traefik.http.routers.vault-v02-admin.entrypoints=portal-admin
       - traefik.http.routers.vault-v02-admin.service=vault-v02
       - traefik.http.routers.vault-v02-admin.middlewares=portal-only@docker,vault-v02-admin-strip@docker,vault-v02-admin-hdr@docker
@@ -210,6 +222,8 @@ services:
       - traefik.http.middlewares.vault-v02-admin-hdr.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_V02}
       - traefik.http.middlewares.vault-v02-admin-hdr.headers.customrequestheaders.X-authentik-groups=lokyy-admins
       - traefik.http.middlewares.vault-v02-admin-hdr.headers.customrequestheaders.X-authentik-username=lokyy-portal
+      - traefik.http.middlewares.vault-v02-admin-hdr.headers.customrequestheaders.X-authentik-email=
+      - traefik.http.middlewares.vault-v02-admin-hdr.headers.customrequestheaders.X-authentik-uid=
     networks:
       web-v02: {}
       mcp-v02: { aliases: [upstream.vault-v02] }
@@ -226,7 +240,7 @@ services:
     volumes: [vault-firma:/data, models:/models:ro, ../../../../deploy/stack/models/offline.mjs:/lokyy/offline.mjs:ro]
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-portal_web-firma
+      - traefik.docker.network=${E2E_PROJECT:-lokyy-portal}_web-firma
       - traefik.http.routers.vault-firma.rule=Host(`firma.portal.localhost`)
       - traefik.http.routers.vault-firma.entrypoints=web
       - traefik.http.routers.vault-firma.middlewares=authentik@docker,vault-identity@docker,vault-firma-secret@docker
@@ -235,7 +249,8 @@ services:
       - traefik.http.routers.vault-firma-outpost.rule=Host(`firma.portal.localhost`) && PathPrefix(`/outpost.goauthentik.io/`)
       - traefik.http.routers.vault-firma-outpost.entrypoints=web
       - traefik.http.routers.vault-firma-outpost.service=authentik
-      - traefik.http.routers.vault-firma-admin.rule=PathPrefix(`/firma/api/config`)
+      # only GET/PUT /api/config and POST /api/config/test
+      - traefik.http.routers.vault-firma-admin.rule=(Path(`/firma/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/firma/api/config/test`) && Method(`POST`))
       - traefik.http.routers.vault-firma-admin.entrypoints=portal-admin
       - traefik.http.routers.vault-firma-admin.service=vault-firma
       - traefik.http.routers.vault-firma-admin.middlewares=portal-only@docker,vault-firma-admin-strip@docker,vault-firma-admin-hdr@docker
@@ -243,6 +258,8 @@ services:
       - traefik.http.middlewares.vault-firma-admin-hdr.headers.customrequestheaders.X-Vault-Proxy-Secret=${PROXY_SECRET_FIRMA}
       - traefik.http.middlewares.vault-firma-admin-hdr.headers.customrequestheaders.X-authentik-groups=lokyy-admins
       - traefik.http.middlewares.vault-firma-admin-hdr.headers.customrequestheaders.X-authentik-username=lokyy-portal
+      - traefik.http.middlewares.vault-firma-admin-hdr.headers.customrequestheaders.X-authentik-email=
+      - traefik.http.middlewares.vault-firma-admin-hdr.headers.customrequestheaders.X-authentik-uid=
     networks:
       web-firma: {}
       mcp-firma: { aliases: [upstream.vault-firma] }
@@ -272,8 +289,8 @@ services:
       POSTGRES_USER: metamcp
       POSTGRES_PASSWORD: ${METAMCP_PG_PASS}
       POSTGRES_DB: metamcp
-      APP_URL: http://mcp.portal.localhost:18380
-      NEXT_PUBLIC_APP_URL: http://mcp.portal.localhost:18380
+      APP_URL: http://mcp.portal.localhost:${E2E_PUBLIC_PORT:-18380}
+      NEXT_PUBLIC_APP_URL: http://mcp.portal.localhost:${E2E_PUBLIC_PORT:-18380}
       BETTER_AUTH_SECRET: ${METAMCP_AUTH_SECRET:?run test/e2e/run.sh}
       TRANSFORM_LOCALHOST_TO_DOCKER_INTERNAL: "false"
     networks: [edge, metamcp-internal, mcp-upstream]
@@ -291,7 +308,7 @@ services:
       metamcp: { condition: service_healthy }
     labels:
       - traefik.enable=true
-      - traefik.docker.network=lokyy-portal_edge
+      - traefik.docker.network=${E2E_PROJECT:-lokyy-portal}_edge
       - traefik.http.routers.metamcp-endpoints.rule=Host(`mcp.portal.localhost`) && PathRegexp(`^/metamcp/[a-z0-9-]+/mcp$`)
       - traefik.http.routers.metamcp-endpoints.entrypoints=web
       - traefik.http.routers.metamcp-endpoints.priority=100
@@ -314,10 +331,10 @@ services:
     environment:
       MODE: connector
       CONNECTOR_VAULTS: v01,v02,firma
-      CONNECTOR_LISTEN_HOST: 10.234.11.2
+      CONNECTOR_LISTEN_HOST: ${E2E_NET_11:-10.234.11}.2
     networks:
       mcp-upstream:
-        ipv4_address: 10.234.11.2
+        ipv4_address: "${E2E_NET_11:-10.234.11}.2"
         aliases: [mcp.vault-v01, mcp.vault-v02, mcp.vault-firma]
       mcp-v01: {}
       mcp-v02: {}
@@ -352,46 +369,49 @@ services:
     environment:
       E2E: "1"
       AUTHENTIK_URL: http://authentik-server:9000
-      AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN}
+      # restricted token (what the portal uses) and the bootstrap token (only for negative checks)
+      AUTHENTIK_API_TOKEN: ${PORTAL_AUTHENTIK_TOKEN}
+      AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_API_TOKEN}
       AUTHENTIK_ADMIN_PASS: ${AUTHENTIK_ADMIN_PASS}
       TRAEFIK_URL: http://traefik:80
       E2E_DOMAIN: portal.localhost
-      E2E_PUBLIC_PORT: "18380"
+      E2E_PUBLIC_PORT: ${E2E_PUBLIC_PORT:-18380}
+      E2E_NET_2: ${E2E_NET_2:-10.234.2}
     networks: [edge]
 
 networks:
   edge:
-    ipam: { config: [{ subnet: 10.234.0.0/24 }] }
+    ipam: { config: [{ subnet: "${E2E_NET_0:-10.234.0}.0/24" }] }
   authentik-internal:
     internal: true
-    ipam: { config: [{ subnet: 10.234.1.0/24 }] }
+    ipam: { config: [{ subnet: "${E2E_NET_1:-10.234.1}.0/24" }] }
   portal-admin:
     internal: true
-    ipam: { config: [{ subnet: 10.234.2.0/24 }] }
+    ipam: { config: [{ subnet: "${E2E_NET_2:-10.234.2}.0/24" }] }
   metamcp-internal:
     internal: true
-    ipam: { config: [{ subnet: 10.234.3.0/24 }] }
+    ipam: { config: [{ subnet: "${E2E_NET_3:-10.234.3}.0/24" }] }
   web-v01:
     internal: true
-    ipam: { config: [{ subnet: 10.234.4.0/24 }] }
+    ipam: { config: [{ subnet: "${E2E_NET_4:-10.234.4}.0/24" }] }
   web-v02:
     internal: true
-    ipam: { config: [{ subnet: 10.234.5.0/24 }] }
+    ipam: { config: [{ subnet: "${E2E_NET_5:-10.234.5}.0/24" }] }
   web-firma:
     internal: true
-    ipam: { config: [{ subnet: 10.234.6.0/24 }] }
+    ipam: { config: [{ subnet: "${E2E_NET_6:-10.234.6}.0/24" }] }
   mcp-v01:
     internal: true
-    ipam: { config: [{ subnet: 10.234.7.0/24 }] }
+    ipam: { config: [{ subnet: "${E2E_NET_7:-10.234.7}.0/24" }] }
   mcp-v02:
     internal: true
-    ipam: { config: [{ subnet: 10.234.8.0/24 }] }
+    ipam: { config: [{ subnet: "${E2E_NET_8:-10.234.8}.0/24" }] }
   mcp-firma:
     internal: true
-    ipam: { config: [{ subnet: 10.234.9.0/24 }] }
+    ipam: { config: [{ subnet: "${E2E_NET_9:-10.234.9}.0/24" }] }
   mcp-upstream:
     internal: true
-    ipam: { config: [{ subnet: 10.234.11.0/24 }] }
+    ipam: { config: [{ subnet: "${E2E_NET_11:-10.234.11}.0/24" }] }
 
 volumes:
   lokyy-state:

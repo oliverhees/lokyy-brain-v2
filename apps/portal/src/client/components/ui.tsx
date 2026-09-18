@@ -111,7 +111,7 @@ export function RadioGroup<T extends string>({ legend, name, value, options, onC
             className="focus-ring mt-0.5 h-4 w-4 accent-[var(--portal-accent)]" />
           <span className="flex flex-col">
             <span className="text-sm font-medium text-fg">{o.label}</span>
-            {o.hint && <span className="text-xs text-muted">{o.hint}</span>}
+            {o.hint && <span className="text-xs text-fg">{o.hint}</span>}
           </span>
         </label>
       ))}

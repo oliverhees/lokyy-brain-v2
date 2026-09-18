@@ -29,7 +29,7 @@ app.use((req, res, next) => {
   const q = typeof req.query['as'] === 'string' ? req.query['as'] : null;
   const who = q ?? m?.[1] ?? 'akadmin';
   if (q) res.cookie('dev_as', q, { sameSite: 'strict' });
-  req.headers['x-portal-proxy-secret'] = PROXY;
+  req.headers['x-vault-proxy-secret'] = PROXY;
   req.headers['x-authentik-username'] = who;
   req.headers['x-authentik-groups'] = who === 'akadmin' ? 'authentik Admins|lokyy-admins' : 'vault-v01';
   next();

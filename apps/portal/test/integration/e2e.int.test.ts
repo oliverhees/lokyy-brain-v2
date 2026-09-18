@@ -14,6 +14,22 @@ const admin = { username: 'akadmin', password: process.env['AUTHENTIK_ADMIN_PASS
 const user = 'e2e-anna';
 const annaPass = `Pw-${Math.random().toString(36).slice(2)}-e2e-long`;
 
+/** POST that honours one Retry-After (back-to-back runs share the per-user limit of 10 key actions/min). */
+async function postLimited(b: Browser, url: string, csrf: string, body?: unknown): Promise<Res> {
+  const send = () => b.request(url, { method: 'POST', body, headers: { 'x-csrf-token': csrf } });
+  const r = await send();
+  if (r.status !== 429) return r;
+  await new Promise((res) => setTimeout(res, (Number(r.headers['retry-after']) + 1) * 1000));
+  return send();
+}
+
+async function revealKey(b: Browser): Promise<string> {
+  const session = (await b.visit(`${APP}/api/session`)).json<{ csrfToken: string }>();
+  const r = await postLimited(b, `${APP}/api/me/key/reveal`, session.csrfToken);
+  expect(r.status).toBe(200);
+  return r.json<{ apiKey: string }>().apiKey;
+}
+
 async function portalApi(b: Browser, method: string, path: string, body?: unknown): Promise<Res> {
   const session = (await b.visit(`${APP}/api/session`, admin)).json<{ csrfToken: string }>();
   return b.request(`${APP}${path}`, { method, body, headers: { 'x-csrf-token': session.csrfToken, accept: 'application/json' } });
@@ -32,19 +48,26 @@ describe.runIf(enabled)('E2E: invite → accept → vault login → MCP tools/li
     expect(r.json()).toMatchObject({ username: 'akadmin', isAdmin: true });
   });
 
+  it('the vault config entrypoint is not reachable from the edge network', async () => {
+    const ip = `${process.env['E2E_NET_2'] ?? '10.234.2'}.2`;
+    await expect(fetch(`http://${ip}:8090/v01/api/config`, { signal: AbortSignal.timeout(3000) })).rejects.toThrow();
+  });
+
   it('the portal is not reachable without the proxy (forged identity headers are replaced)', async () => {
     const anon = new Browser();
     const r = await anon.request(`${APP}/api/session`, { headers: { 'x-authentik-username': 'akadmin', 'x-authentik-groups': 'lokyy-admins' } });
     expect(r.status).toBe(302); // forward-auth redirects to the login; nothing reaches the portal
   });
 
-  it('setup: company + EUrouter key are applied to every vault through the portal-admin entrypoint', async () => {
+  it('setup: company name; the EUrouter key is checked live (real API) and a fake key never reaches a vault', async () => {
     expect((await portalApi(adminB, 'PUT', '/api/admin/setup/company', { name: 'E2E GmbH' })).status).toBe(204);
-    const llm = await portalApi(adminB, 'PUT', '/api/admin/setup/llm', { mode: 'shared', model: 'mistral/mistral-small-3.2', sharedKey: 'sk-e2e-not-a-real-key-1234' });
-    expect(llm.status).toBe(200);
-    expect(llm.json()).toEqual({ failed: [] });
-    const setup = (await portalApi(adminB, 'GET', '/api/admin/setup')).json<{ llm: { keyHints: Record<string, string> } }>();
-    expect(setup.llm.keyHints).toEqual({ firma: '••••1234', v01: '••••1234', v02: '••••1234' });
+    const routes = await portalApi(adminB, 'POST', '/api/admin/setup/llm/routes', { apiKey: 'sk-e2e-not-a-real-key-1234' });
+    expect(routes.status).toBe(400);
+    expect(routes.json()).toMatchObject({ fields: { apiKey: 'invalid_key' } });
+    const llm = await portalApi(adminB, 'PUT', '/api/admin/setup/llm', { mode: 'shared', apiKey: 'sk-e2e-not-a-real-key-1234', ruleId: '00000000-0000-4000-8000-000000000000' });
+    expect(llm.status).toBe(400);
+    const session = (await adminB.visit(`${APP}/api/session`)).json<{ package: string }>();
+    expect(session.package).toBe('e2e');
   });
 
   it('admin invites a reader: slot, Authentik groups, MetaMCP provisioning, invitation link', async () => {
@@ -58,6 +81,13 @@ describe.runIf(enabled)('E2E: invite → accept → vault login → MCP tools/li
     expect(link.startsWith(`${site('auth')}/if/flow/lokyy-set-password/?flow_token=`)).toBe(true);
   });
 
+  it('resend keeps a single valid invitation link per user (audit L2)', async () => {
+    const r = await portalApi(adminB, 'POST', `/api/admin/users/${user}/invite`);
+    expect(r.status).toBe(200);
+    // Authentik re-issues the one recovery token of the user (new expiry); no second valid link exists.
+    expect(r.json<{ inviteLink: string }>().inviteLink).toBe(link);
+  });
+
   it('the employee sets a password with the link and is logged in', async () => {
     const after = await annaB.visit(link, { username: user, password: annaPass, newPassword: annaPass });
     expect(after.status).toBeLessThan(400);
@@ -65,16 +95,17 @@ describe.runIf(enabled)('E2E: invite → accept → vault login → MCP tools/li
     await expect(new Browser().visit(link, { username: user, password: 'x', newPassword: 'another-password-123' })).rejects.toThrow();
   });
 
-  it('the employee sees "Mein Zugang" (and becomes active) and reveals the MCP key', async () => {
+  it('the employee sees "Mein Zugang", activates explicitly and reveals the MCP key', async () => {
     const me = await annaB.visit(`${APP}/api/me`, { username: user, password: annaPass });
     expect(me.status).toBe(200);
     expect(me.json()).toMatchObject({ username: user, slot, vaultUrl: site(slot), companyVaultUrl: null, mcpUrl: `${site('mcp')}/metamcp/${user}/mcp` });
     const session = (await annaB.visit(`${APP}/api/session`)).json<{ csrfToken: string; isAdmin: boolean }>();
     expect(session.isAdmin).toBe(false);
     expect((await annaB.request(`${APP}/api/admin/users`)).status).toBe(403);
-    const reveal = await annaB.request(`${APP}/api/me/key/reveal`, { method: 'POST', headers: { 'x-csrf-token': session.csrfToken } });
-    expect(reveal.status).toBe(200);
-    key = reveal.json<{ apiKey: string }>().apiKey;
+    expect((await annaB.request(`${APP}/api/me/activate`, { method: 'POST', headers: { 'x-csrf-token': session.csrfToken } })).status).toBe(204);
+    const list = (await portalApi(adminB, 'GET', '/api/admin/users')).json<{ users: { username: string; status: string }[] }>();
+    expect(list.users.find((u) => u.username === user)?.status).toBe('active');
+    key = await revealKey(annaB);
     expect(key).toMatch(/^sk_mt_/);
   });
 
@@ -104,8 +135,8 @@ describe.runIf(enabled)('E2E: invite → accept → vault login → MCP tools/li
   it('role change to writer rotates the key: old key 401, new key sees company write tools', async () => {
     expect((await portalApi(adminB, 'PATCH', `/api/admin/users/${user}`, { role: 'writer' })).status).toBe(200);
     expect(await mcpTools(annaB, `${site('mcp')}/metamcp/${user}/mcp`, key)).toBe(401);
-    const session = (await annaB.visit(`${APP}/api/session`, { username: user, password: annaPass })).json<{ csrfToken: string }>();
-    key = (await annaB.request(`${APP}/api/me/key/reveal`, { method: 'POST', headers: { 'x-csrf-token': session.csrfToken } })).json<{ apiKey: string }>().apiKey;
+    await annaB.visit(`${APP}/api/session`, { username: user, password: annaPass });
+    key = await revealKey(annaB);
     const names = await mcpTools(annaB, `${site('mcp')}/metamcp/${user}/mcp`, key) as string[];
     expect(names.filter((n) => n.startsWith(`${user}-firma__`)).length).toBeGreaterThan(13);
   });
@@ -113,6 +144,8 @@ describe.runIf(enabled)('E2E: invite → accept → vault login → MCP tools/li
   it('disable: MCP key revoked and login refused', async () => {
     expect((await portalApi(adminB, 'POST', `/api/admin/users/${user}/disable`)).status).toBe(204);
     expect(await mcpTools(new Browser(), `${site('mcp')}/metamcp/${user}/mcp`, key)).toBe(401);
+    const audit = (await portalApi(adminB, 'GET', '/api/admin/audit')).json<{ entries: { action: string; target?: string; details?: { revoked?: boolean } }[] }>();
+    expect(audit.entries.find((e) => e.action === 'user.disable' && e.target === user)?.details?.revoked).toBe(true);
     await expect(new Browser().visit(`${site(slot)}/`, { username: user, password: annaPass })).rejects.toThrow();
   });
 
@@ -124,5 +157,7 @@ describe.runIf(enabled)('E2E: invite → accept → vault login → MCP tools/li
     const audit = (await portalApi(adminB, 'GET', '/api/admin/audit')).json<{ entries: { action: string; target?: string }[] }>();
     for (const a of ['user.invite', 'user.role', 'user.disable', 'user.remove']) expect(audit.entries.some((e) => e.action === a && e.target === user)).toBe(true);
     expect(JSON.stringify(audit)).not.toContain(key);
+    // explicit release: the next run starts with a free slot again
+    expect((await portalApi(adminB, 'POST', `/api/admin/slots/${slot}/release`, { confirm: slot })).status).toBe(204);
   });
 });

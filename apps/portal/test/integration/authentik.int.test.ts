@@ -15,14 +15,14 @@ describe.runIf(enabled)('AuthentikClient against Authentik 2026.8.2', () => {
   it('creates the portal user with the contract groups', async () => {
     pk = await client.ensureUser({ username, name: 'Int Test', email: `${username}@example.com`, slot: 'v02', groups: managedGroupsFor('v02', 'reader') });
     const u = await client.getUser(pk);
-    expect(u?.groups.map((g) => g.name).sort()).toEqual(['vault-firma-read', 'vault-v02']);
+    expect(u?.groups.map((g) => g.name).sort()).toEqual(['lokyy-users', 'vault-firma-read', 'vault-v02']);
     expect(u?.attributes).toMatchObject({ lokyy_managed: true, lokyy_slot: 'v02' });
   });
 
   it('is idempotent and switches the role groups', async () => {
     const again = await client.ensureUser({ username, name: 'Int Test 2', email: `${username}@example.com`, slot: 'v02', groups: managedGroupsFor('v02', 'writer') });
     expect(again).toBe(pk);
-    expect((await client.getUser(pk!))?.groups.map((g) => g.name).sort()).toEqual(['vault-firma-write', 'vault-v02']);
+    expect((await client.getUser(pk!))?.groups.map((g) => g.name).sort()).toEqual(['lokyy-users', 'vault-firma-write', 'vault-v02']);
   });
 
   it('refuses to adopt akadmin', async () => {
@@ -42,6 +42,31 @@ describe.runIf(enabled)('AuthentikClient against Authentik 2026.8.2', () => {
     expect((await client.getUser(pk!))?.isActive).toBe(false);
     await client.setActive(pk!, true);
     expect((await client.getUser(pk!))?.isActive).toBe(true);
+  });
+
+  it('there is only ever one invitation link per user: resend re-issues the same token with a new expiry', async () => {
+    // Authentik keeps one recovery FlowToken per user (update_or_create on "<uid>-password-reset").
+    const a = await client.inviteLink(pk!, 'days=1');
+    const b = await client.inviteLink(pk!, 'days=1');
+    expect(b).toBe(a);
+  });
+
+  it('the portal token is least privilege: no recovery link for akadmin, no superuser group, no tokens', async () => {
+    const admin = await client.findUser('akadmin');
+    expect(admin).not.toBeNull();
+    await expect(client.inviteLink(admin!.pk, 'days=1')).rejects.toBeTruthy();
+    const base = process.env['AUTHENTIK_URL'];
+    const auth = { authorization: `Bearer ${process.env['AUTHENTIK_API_TOKEN']}`, 'content-type': 'application/json' };
+    const groups = await (await fetch(`${base}/api/v3/core/groups/?name=authentik%20Admins`, { headers: auth })).json() as { results: { pk: string }[] };
+    const su = groups.results[0]?.pk;
+    expect(su).toBeTruthy();
+    const patch = await fetch(`${base}/api/v3/core/users/${pk}/`, { method: 'PATCH', headers: auth, body: JSON.stringify({ groups: [su] }) });
+    expect(patch.status).toBe(400);
+    const tokens = await (await fetch(`${base}/api/v3/core/tokens/`, { headers: auth })).json() as { results: { identifier: string }[] };
+    expect(tokens.results.map((t) => t.identifier)).toEqual(['lokyy-portal-api']); // only its own token
+    expect((await fetch(`${base}/api/v3/providers/proxy/`, { headers: auth })).status).toBe(403);
+    expect((await fetch(`${base}/api/v3/rbac/roles/`, { headers: auth })).status).toBe(403);
+    expect((await fetch(`${base}/api/v3/flows/instances/`, { method: 'POST', headers: auth, body: '{}' })).status).toBe(403);
   });
 
   it('reports a missing group', async () => {

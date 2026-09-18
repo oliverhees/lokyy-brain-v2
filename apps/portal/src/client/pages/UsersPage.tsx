@@ -192,7 +192,7 @@ export function UsersPage() {
                   <td className="px-4 py-3 text-fg">{de.roles[u.role]}</td>
                   <td className="px-4 py-3"><StatusBadge u={u} /></td>
                   <td className="px-4 py-3">
-                    <div role="group" aria-label={t.actions.menu(u.displayName)} className="flex flex-wrap gap-1">
+                    <div role="group" aria-label={t.actions.menu(u.displayName)} className="flex flex-nowrap gap-1 lg:flex-wrap">
                       {u.status === 'invited' && (
                         <Button variant="ghost" aria-describedby={`row-${u.username}`} busy={busyKey === `resend-${u.username}`}
                           onClick={() => act(`resend-${u.username}`, async () => setLink((await api.post<{ inviteLink: string }>(`${path(u)}/invite`)).inviteLink), t.done.resent)}>

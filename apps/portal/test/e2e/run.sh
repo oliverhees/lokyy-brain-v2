@@ -1,29 +1,46 @@
 #!/usr/bin/env bash
-# LBV2-28 — portal E2E stack (project lokyy-portal, 127.0.0.1:18380, 10.234.0.0/16).
-#   test/e2e/run.sh up          generate .env (random secrets, once), build the portal image, start
-#   test/e2e/run.sh test        run test/integration inside the stack network (tester service)
-#   test/e2e/run.sh down        stop and delete the stack incl. volumes
+# LBV2-28 — portal E2E stack.
+#   test/e2e/run.sh [-p project] [--port 18380] [--net TAG] up|test|down
+# Defaults: project lokyy-portal, 127.0.0.1:18380, subnets 10.234.0-11.0/24. For a parallel stack (e.g.
+# QA) choose another project, port and net block: -p lokyy-portal-qa --port 18382 --net 3 uses subnets
+# 10.234.48-59.0/24 (block n = 16n…16n+11, n = 0…15). Secrets are generated once per project in
+# test/e2e/.env.<project> (gitignored).
 set -euo pipefail
 cd "$(dirname "$0")"
 repo=$(git rev-parse --show-toplevel)
-compose=(docker compose -p lokyy-portal -f compose.yml --env-file .env)
 
+project=lokyy-portal port=18380 net=0
+while (($#)); do
+  case $1 in
+    -p|--project) project=$2; shift 2 ;;
+    --port) port=$2; shift 2 ;;
+    --net) net=$2; shift 2 ;;
+    up|test|down) cmd=$1; shift ;;
+    *) echo "usage: $0 [-p project] [--port port] [--net tag] up|test|down" >&2; exit 2 ;;
+  esac
+done
+[[ -n ${cmd:-} ]] || { echo "usage: $0 [-p project] [--port port] [--net tag] up|test|down" >&2; exit 2; }
+[[ $project =~ ^[a-z0-9][a-z0-9_-]*$ && $port =~ ^[0-9]+$ && $net =~ ^[0-9]+$ ]] && ((net <= 15)) || { echo "invalid project, port or net block (0-15)" >&2; exit 2; }
+
+envfile=.env.$project
+[[ $project == lokyy-portal && -f .env && ! -f $envfile ]] && cp .env "$envfile"
 gen() { openssl rand -hex 32; }
-if [[ ! -f .env ]]; then
+if [[ ! -f $envfile ]]; then
   umask 077
   {
-    for v in AUTHENTIK_PG_PASS AUTHENTIK_SECRET_KEY AUTHENTIK_ADMIN_PASS AUTHENTIK_API_TOKEN PORTAL_PROXY_SECRET \
+    for v in AUTHENTIK_PG_PASS AUTHENTIK_SECRET_KEY AUTHENTIK_ADMIN_PASS AUTHENTIK_API_TOKEN PORTAL_AUTHENTIK_TOKEN PORTAL_PROXY_SECRET \
              METAMCP_PG_PASS METAMCP_AUTH_SECRET METAMCP_ADMIN_PASS \
              MCP_TOKEN_V01 MCP_TOKEN_V02 MCP_TOKEN_FIRMA MCP_READONLY_TOKEN_FIRMA \
              PROXY_SECRET_V01 PROXY_SECRET_V02 PROXY_SECRET_FIRMA; do
       echo "$v=$(gen)"
     done
-    echo "REPO_DIR=$repo"
-    echo "PORTAL_DIR=$repo/apps/portal"
-    echo "HOST_UID=$(id -u)"
-    echo "HOST_GID=$(id -g)"
-  } >.env
+  } >"$envfile"
 fi
+grep -q '^PORTAL_AUTHENTIK_TOKEN=' "$envfile" || echo "PORTAL_AUTHENTIK_TOKEN=$(gen)" >>"$envfile"
+export E2E_PROJECT=$project E2E_PUBLIC_PORT=$port
+for i in $(seq 0 11); do export "E2E_NET_$i=10.234.$((net * 16 + i))"; done
+export REPO_DIR=$repo PORTAL_DIR=$repo/apps/portal HOST_UID=$(id -u) HOST_GID=$(id -g)
+compose=(docker compose -p "$project" -f compose.yml --env-file "$envfile")
 
 wait_for() { # wait_for <description> <command...>
   local what=$1; shift
@@ -34,24 +51,36 @@ wait_for() { # wait_for <description> <command...>
   done
 }
 
-case ${1:-} in
+case $cmd in
   up)
     "${compose[@]}" build portal
     "${compose[@]}" up -d
     wait_for "authentik blueprints" "${compose[@]}" exec -T authentik-server ak shell -c \
-      'from authentik.flows.models import Flow; import sys; sys.exit(0 if Flow.objects.filter(slug="lokyy-set-password").exists() else 1)'
+      'from authentik.flows.models import Flow; from authentik.core.models import Token; import sys; sys.exit(0 if Flow.objects.filter(slug="lokyy-set-password").exists() and Token.objects.filter(identifier="lokyy-portal-api").exists() else 1)'
     wait_for "portal" sh -c "[ \"\$(docker inspect -f '{{.State.Health.Status}}' \$(${compose[*]} ps -q portal))\" = healthy ]"
-    # The embedded outpost picks up the blueprint providers with a delay; until then forward-auth answers 404.
-    for h in app v01 v02 firma; do
-      wait_for "forward-auth for $h" sh -c "[ \"\$(curl -s -o /dev/null -w %{http_code} -H 'Host: $h.portal.localhost:18380' http://127.0.0.1:18380/)\" = 302 ]"
-    done
-    echo "stack up: http://app.portal.localhost:18380 (akadmin, password AUTHENTIK_ADMIN_PASS in test/e2e/.env)"
+    # Forward-auth must deliver a real identity to the portal, not just redirect (QA HIGH 1).
+    "${compose[@]}" --profile test run --rm tester node test/e2e/ready.ts
+    echo "stack $project up: http://app.portal.localhost:$port (akadmin, password AUTHENTIK_ADMIN_PASS in test/e2e/$envfile)"
     ;;
   test)
     "${compose[@]}" --profile test run --rm tester npx vitest run test/integration
+    # Vault config entrypoint, seen from the portal: only GET/PUT /api/config and POST /api/config/test
+    "${compose[@]}" exec -T portal node -e '
+      const base = process.env.VAULT_ADMIN_URL;
+      const cases = [["GET", "/v01/api/config", 200], ["POST", "/v01/api/config", 404], ["DELETE", "/v01/api/config", 404],
+        ["GET", "/v01/api/wiki", 404], ["GET", "/v01/api/config/../server", 404], ["POST", "/firma/api/config/test", 400], ["GET", "/v09/api/config", 404]];
+      let bad = 0;
+      (async () => {
+        for (const [m, p, want] of cases) {
+          const r = await fetch(base + p, { method: m, headers: { "content-type": "application/json" }, body: m === "POST" ? "{}" : undefined });
+          const ok = want === 400 ? r.status >= 400 && r.status < 500 && r.status !== 404 : r.status === want;
+          console.log((ok ? "ok  " : "FAIL") + " " + m + " " + p + " -> " + r.status);
+          if (!ok) bad++;
+        }
+        process.exit(bad ? 1 : 0);
+      })();'
     ;;
   down)
     "${compose[@]}" --profile test down -v --remove-orphans
     ;;
-  *) echo "usage: $0 up|test|down" >&2; exit 2 ;;
 esac

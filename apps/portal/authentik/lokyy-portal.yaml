@@ -3,7 +3,10 @@
 # The portal creates each employee in Authentik (with groups) and hands out a recovery link
 # (POST /api/v3/core/users/<pk>/recovery/). That link runs the brand's recovery flow, so this
 # blueprint sets "lokyy-set-password" as recovery flow of the default brand. The flow asks for a new
-# password (twice, min. 12 characters), stores it and logs the user in.
+# password (twice, min. 12 characters), stores it and logs the user in. A policy restricts the flow to
+# portal-managed employees: the portal's API token (change_user + reset_user_password) can therefore not
+# be used to take over superusers or lokyy-admins via a recovery link.
+# The default brand is also set to German (login pages).
 # Mount next to the stack blueprint into /blueprints/custom. Groups, vault providers and the portal's
 # own forward-auth provider (app.<domain>) belong to the stack blueprint (embedded outpost list).
 version: 1
@@ -29,6 +32,23 @@ entries:
       designation: recovery
       # Opened from a link that already identifies the user (flow token); no login required first
       authentication: none
+
+  - model: authentik_policies_expression.expressionpolicy
+    id: policy-portal-users-only
+    identifiers: { name: lokyy-set-password-portal-users-only }
+    attrs:
+      name: lokyy-set-password-portal-users-only
+      expression: |
+        # Recovery links are created with the target user as pending_user.
+        user = request.context.get("pending_user")
+        if user is None or not user.attributes.get("lokyy_managed", False):
+            return False
+        if user.is_superuser or user.groups.filter(name="lokyy-admins").exists():
+            return False
+        return True
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf flow, policy: !KeyOf policy-portal-users-only }
+    attrs: { target: !KeyOf flow, policy: !KeyOf policy-portal-users-only, order: 0 }
 
   - model: authentik_policies_password.passwordpolicy
     id: password-policy
@@ -106,3 +126,7 @@ entries:
     state: present
     attrs:
       flow_recovery: !KeyOf flow
+      # German login and flow pages (users can still pick another language in their settings)
+      attributes:
+        settings:
+          locale: de
