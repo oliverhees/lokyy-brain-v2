@@ -238,58 +238,89 @@ describe('OpenAIAdapter — EUrouter routing rules (LBV2-30)', () => {
     return JSON.parse((fetchImpl.mock.calls[0]![1] as RequestInit).body as string) as Record<string, unknown>;
   }
 
-  it('sends rule_id next to model when a rule is configured', async () => {
+  it('sends rule_id only, never model, when a route is configured', async () => {
     const body = await sentBody({ baseUrl: EU, ruleId: RULE });
     expect(body['rule_id']).toBe(RULE);
+    expect('model' in body).toBe(false);
+  });
+
+  it('sends model (legacy EUrouter setup without a route) and no rule_id', async () => {
+    const body = await sentBody({ baseUrl: EU });
+    expect('rule_id' in body).toBe(false);
     expect(body['model']).toBe('qwen3.6-27b');
   });
 
-  it('keeps model in the body with a rule (EUrouter requires it; the rule filters providers)', async () => {
-    const body = await sentBody({ baseUrl: EU, ruleId: RULE, model: '' }, '');
-    expect(body['rule_id']).toBe(RULE);
-    expect('model' in body).toBe(true);
-  });
-
-  it('sends no rule_id without a configured rule', async () => {
-    expect('rule_id' in (await sentBody({ baseUrl: EU }))).toBe(false);
-  });
-
   it('never sends rule_id to a non-EUrouter host', async () => {
-    expect('rule_id' in (await sentBody({ baseUrl: 'https://api.openai.com', ruleId: RULE }))).toBe(false);
+    const body = await sentBody({ baseUrl: 'https://api.openai.com', ruleId: RULE });
+    expect('rule_id' in body).toBe(false);
+    expect(body['model']).toBe('qwen3.6-27b');
   });
 
   it('rejects a rule id that is not a UUID', () => {
     expect(() => new OpenAIAdapter({ apiKey: 'k', model: 'm', baseUrl: EU, ruleId: 'my-rule' })).toThrow('Invalid EUrouter rule id');
   });
 
-  it('testConnection on EUrouter validates the key via /routing-rules, not the public /models', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(json({ data: [] }));
-    const adapter = new OpenAIAdapter({ apiKey: 'eur_k', model: 'm', baseUrl: EU, fetchImpl: fetchImpl as unknown as typeof fetch });
-    expect(await adapter.testConnection()).toEqual({ ok: true });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(fetchImpl.mock.calls[0]![0]).toBe(`${EU}/routing-rules`);
+  async function chatError(status: number, body: unknown): Promise<string | undefined> {
+    const fetchImpl = vi.fn().mockResolvedValue(json(body, status));
+    const adapter = new OpenAIAdapter({ apiKey: 'k', model: '', baseUrl: EU, ruleId: RULE, fetchImpl: fetchImpl as unknown as typeof fetch });
+    for await (const c of adapter.chat({ model: '', messages: [{ role: 'user', content: 'hi' }] })) {
+      if (c.kind === 'error') return c.error;
+    }
+    return undefined;
+  }
+
+  it('turns an unknown or disabled route at chat time into a friendly message', async () => {
+    expect(await chatError(400, { error: { code: 400, message: `Routing rule with ID '${RULE}' not found or not accessible`, type: 'invalid_request_error' } }))
+      .toBe('Route not found or disabled — choose a route again in Settings');
   });
 
-  it('testConnection on EUrouter fails for a wrong key', async () => {
-    const fetchImpl = vi.fn().mockImplementation(async (url: string) =>
-      (url.endsWith('/models') ? json({ data: [{ id: 'm' }] }) : json({ error: 'unauthorized' }, 401)));
-    const adapter = new OpenAIAdapter({ apiKey: 'wrong', model: 'm', baseUrl: EU, fetchImpl: fetchImpl as unknown as typeof fetch });
+  it('says the key is invalid on a 401 at chat time', async () => {
+    expect(await chatError(401, { error: { code: 401, message: 'Invalid credentials' } })).toBe('EUrouter key invalid or not authorised');
+  });
+
+  it('keeps other upstream errors as they are', async () => {
+    expect(await chatError(400, { error: { message: 'No providers available' } })).toMatch(/^HTTP 400: .*No providers available/);
+  });
+
+  function connection(handler: (url: string, init: RequestInit) => Response, ruleId: string | undefined = RULE) {
+    const fetchImpl = vi.fn().mockImplementation(async (url: string, init: RequestInit) => handler(url, init));
+    const adapter = new OpenAIAdapter({ apiKey: 'k', model: '', baseUrl: EU, ruleId, fetchImpl: fetchImpl as unknown as typeof fetch });
+    return { fetchImpl, adapter };
+  }
+  const rulesOk = json({ data: [{ id: RULE.toUpperCase(), name: 'EU only' }] });
+  const chatOk = () => json({ choices: [{ message: { content: '' }, finish_reason: 'length' }] });
+
+  it('testConnection: key via /routing-rules, then a minimal rule-only chat (empty text on 200 is success)', async () => {
+    const { fetchImpl, adapter } = connection((url) => (url.endsWith('/routing-rules') ? rulesOk.clone() : chatOk()));
+    expect(await adapter.testConnection()).toEqual({ ok: true });
+    expect(fetchImpl.mock.calls.map((c) => c[0])).toEqual([`${EU}/routing-rules`, `${EU}/chat/completions`]);
+    const body = JSON.parse(String((fetchImpl.mock.calls[1]![1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body).toEqual({ rule_id: RULE, messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 });
+  });
+
+  it('testConnection: wrong key', async () => {
+    const { fetchImpl, adapter } = connection(() => json({ error: 'unauthorized' }, 401));
+    expect(await adapter.testConnection()).toEqual({ ok: false, error: 'EUrouter key invalid or not authorised' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('testConnection: route missing from the list', async () => {
+    const { fetchImpl, adapter } = connection(() => json({ data: [{ id: '11111111-2222-4333-8444-555555555555', name: 'Other' }] }));
+    expect(await adapter.testConnection()).toEqual({ ok: false, error: 'EUrouter routing rule not found or disabled' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('testConnection: the route cannot answer (e.g. no provider)', async () => {
+    const { adapter } = connection((url) => (url.endsWith('/routing-rules') ? rulesOk.clone() : json({ error: { message: 'No providers available' } }, 400)));
     const r = await adapter.testConnection();
     expect(r.ok).toBe(false);
-    expect(r.error).toBe('EUrouter routing rules request failed (HTTP 401)');
-    expect(r.error).not.toContain('wrong');
+    expect(r.error).toMatch(/^HTTP 400: /);
   });
 
-  it('testConnection on EUrouter fails when the configured rule is not in the list', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(json({ data: [{ id: '11111111-2222-4333-8444-555555555555', name: 'Other' }] }));
-    const adapter = new OpenAIAdapter({ apiKey: 'k', model: 'm', baseUrl: EU, ruleId: RULE, fetchImpl: fetchImpl as unknown as typeof fetch });
-    expect(await adapter.testConnection()).toEqual({ ok: false, error: 'EUrouter routing rule not found or disabled' });
-  });
-
-  it('testConnection on EUrouter passes when the configured rule exists (case-insensitive id)', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(json({ data: [{ id: RULE.toUpperCase(), name: 'EU only' }] }));
-    const adapter = new OpenAIAdapter({ apiKey: 'k', model: 'm', baseUrl: EU, ruleId: RULE, fetchImpl: fetchImpl as unknown as typeof fetch });
-    expect(await adapter.testConnection()).toEqual({ ok: true });
+  it('testConnection: EUrouter needs a route', async () => {
+    const { fetchImpl, adapter } = connection(() => json({ data: [] }), '');
+    expect(await adapter.testConnection()).toEqual({ ok: false, error: 'Select an EUrouter route' });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
@@ -317,14 +348,14 @@ describe('OpenAIAdapter — PDF chat through EUrouter (LBV2-30)', () => {
     return { fetchImpl, chunks };
   }
 
-  it('extracts the PDF text locally and sends it via chat/completions with model and rule_id, never /responses', async () => {
+  it('extracts the PDF text locally and sends it via chat/completions with rule_id only, never /responses', async () => {
     const extract = vi.fn(async (d: Uint8Array) => { expect(Buffer.from(d).toString()).toBe('%PDF-fake'); return 'Hello EU PDF'; });
     const { fetchImpl, chunks } = await run({ extractPdfText: extract });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(`${EU}/chat/completions`);
     const body = JSON.parse(String(init.body)) as { model: string; rule_id: string; messages: Array<{ content: string }> };
-    expect(body.model).toBe('gpt-4o');
+    expect('model' in body).toBe(false);
     expect(body.rule_id).toBe(RULE);
     expect(body.messages[0]!.content).toContain('Summarize the attached PDF.');
     expect(body.messages[0]!.content).toContain('Hello EU PDF');

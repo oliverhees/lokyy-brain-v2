@@ -10,6 +10,16 @@ export const EUROUTER_HOST = 'api.eurouter.ai';
 const RULE_ID = /^([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/i;
 
 export const EUROUTER_RULE_NOT_FOUND = 'EUrouter routing rule not found or disabled';
+export const EUROUTER_KEY_INVALID = 'EUrouter key invalid or not authorised';
+export const EUROUTER_ROUTE_REQUIRED = 'Select an EUrouter route';
+export const EUROUTER_ROUTE_UNAVAILABLE = 'Route not found or disabled — choose a route again in Settings';
+
+/** A friendly message for EUrouter chat errors the user can fix in Settings; null keeps the raw error. */
+export function eurouterChatError(status: number, body: string): string | null {
+  if (status === 401 || status === 403) return EUROUTER_KEY_INVALID;
+  if ((status === 400 || status === 404) && /routing rule\b.*\b(not found|not accessible|disabled)/i.test(body)) return EUROUTER_ROUTE_UNAVAILABLE;
+  return null;
+}
 
 /** A non-2xx answer from EUrouter; `status` lets callers tell a rejected key (401/403) apart. */
 export class EurouterHttpError extends Error {

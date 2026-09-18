@@ -2,7 +2,10 @@ import type { ChatChunk, ChatMessage, ChatRequest, ContentBlock, ToolCall, ToolD
 import type { AdapterConfig, LLMAdapter } from './types';
 import { RequestDeadline, readLlmTimeoutMs } from './timeout';
 import { guardLlmFetch } from '../net/llm-host-policy';
-import { EUROUTER_RULE_NOT_FOUND, isEurouterBaseUrl, isEurouterRuleId, listEurouterRules } from './eurouter';
+import {
+  EUROUTER_KEY_INVALID, EUROUTER_ROUTE_REQUIRED, EUROUTER_RULE_NOT_FOUND, EurouterHttpError,
+  eurouterChatError, isEurouterBaseUrl, isEurouterRuleId, listEurouterRules,
+} from './eurouter';
 
 interface OpenAIToolCallDelta {
   index: number;
@@ -127,9 +130,9 @@ export class OpenAIAdapter implements LLMAdapter {
     this.ruleId = config.ruleId && isEurouterBaseUrl(this.baseUrl) ? config.ruleId : undefined;
   }
 
-  /** `model` + `rule_id` for chat bodies. EUrouter still needs the model; the rule filters and prioritizes providers. */
+  /** With an EUrouter route the body names the route only: the rule brings its models (LBV2-30). */
   private routing(model: string): Record<string, string> {
-    return this.ruleId ? { model, rule_id: this.ruleId } : { model };
+    return this.ruleId ? { rule_id: this.ruleId } : { model };
   }
 
   /** Build the chat completions URL, handling various baseUrl formats:
@@ -281,7 +284,8 @@ export class OpenAIAdapter implements LLMAdapter {
     if (!response.ok) {
       const text = await deadline.race(response.text()).catch((e: unknown) => deadline.message(e));
       deadline.clear();
-      yield { kind: 'error', error: `HTTP ${response.status}: ${text}` };
+      const friendly = isEurouterBaseUrl(this.baseUrl) ? eurouterChatError(response.status, text) : null;
+      yield { kind: 'error', error: friendly ?? `HTTP ${response.status}: ${text}` };
       return;
     }
 
@@ -486,18 +490,7 @@ export class OpenAIAdapter implements LLMAdapter {
   }
 
   async testConnection(): Promise<{ ok: boolean; error?: string }> {
-    // EUrouter's /models is public, so it proves nothing about the key; the
-    // routing-rules list needs the key and also shows whether the rule exists.
-    if (isEurouterBaseUrl(this.baseUrl)) {
-      try {
-        const rules = await listEurouterRules({ apiKey: this.config.apiKey, baseUrl: this.baseUrl, fetchImpl: this.fetchImpl });
-        const wanted = this.ruleId?.toLowerCase();
-        if (wanted && !rules.some((r) => r.id.toLowerCase() === wanted)) return { ok: false, error: EUROUTER_RULE_NOT_FOUND };
-        return { ok: true };
-      } catch (e) {
-        return { ok: false, error: (e as Error).message };
-      }
-    }
+    if (isEurouterBaseUrl(this.baseUrl)) return this.testEurouter();
 
     // Try /models first; if proxy doesn't support it, try a minimal chat request
     try {
@@ -526,6 +519,32 @@ export class OpenAIAdapter implements LLMAdapter {
       const text = await r.text();
       return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, 200)}` };
     } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
+  /**
+   * EUrouter's /models is public, so it proves nothing about the key. The
+   * routing-rules list checks the key and the route; a tiny rule-only chat
+   * then proves the route can answer. HTTP 200 counts even with empty text
+   * (reasoning models may spend the few tokens on reasoning).
+   */
+  private async testEurouter(): Promise<{ ok: boolean; error?: string }> {
+    const ruleId = this.ruleId;
+    if (!ruleId) return { ok: false, error: EUROUTER_ROUTE_REQUIRED };
+    try {
+      const rules = await listEurouterRules({ apiKey: this.config.apiKey, baseUrl: this.baseUrl, fetchImpl: this.fetchImpl });
+      if (!rules.some((r) => r.id.toLowerCase() === ruleId.toLowerCase())) return { ok: false, error: EUROUTER_RULE_NOT_FOUND };
+      const r = await this.fetchImpl(this.chatUrl(), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${this.config.apiKey}` },
+        body: JSON.stringify({ rule_id: ruleId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 }),
+      });
+      if (r.ok) return { ok: true };
+      const text = await r.text();
+      return { ok: false, error: eurouterChatError(r.status, text) ?? `HTTP ${r.status}: ${text.slice(0, 200)}` };
+    } catch (e) {
+      if (e instanceof EurouterHttpError && (e.status === 401 || e.status === 403)) return { ok: false, error: EUROUTER_KEY_INVALID };
       return { ok: false, error: (e as Error).message };
     }
   }
