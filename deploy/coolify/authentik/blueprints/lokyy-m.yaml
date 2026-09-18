@@ -21,6 +21,8 @@ entries:
     attrs: { identifiers: { name: "Default - TOTP MFA setup flow" }, required: true }
   - model: authentik_blueprints.metaapplyblueprint
     attrs: { identifiers: { name: "Default - WebAuthn MFA setup flow" }, required: true }
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs: { identifiers: { name: "Default - Brand" }, required: true }
   # Web access to a personal vault slot (exactly one user per group)
   - { model: authentik_core.group, id: group-v01, identifiers: { name: vault-v01 }, attrs: { name: vault-v01 } }
   - { model: authentik_core.group, id: group-v02, identifiers: { name: vault-v02 }, attrs: { name: vault-v02 } }
@@ -604,16 +606,44 @@ entries:
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa }
     attrs: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa, order: 0 }
+  - model: authentik_flows.flow
+    id: flow-lokyy-authentication
+    identifiers: { slug: lokyy-authentication }
+    attrs:
+      name: Lokyy Brain
+      title: Lokyy Brain
+      designation: authentication
+      authentication: none
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf flow-lokyy-authentication, stage: !Find [authentik_stages_identification.identificationstage, [name, default-authentication-identification]], order: 10 }
+  - model: authentik_flows.flowstagebinding
+    id: binding-lokyy-20
+    identifiers: { target: !KeyOf flow-lokyy-authentication, stage: !Find [authentik_stages_password.passwordstage, [name, default-authentication-password]], order: 20 }
+    attrs:
+      re_evaluate_policies: true
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf flow-lokyy-authentication, stage: !Find [authentik_stages_authenticator_validate.authenticatorvalidatestage, [name, default-authentication-mfa-validation]], order: 30 }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf flow-lokyy-authentication, stage: !Find [authentik_stages_user_login.userloginstage, [name, default-authentication-login]], order: 100 }
+  - model: authentik_policies.policybinding
+    identifiers: { order: 10, target: !KeyOf binding-lokyy-20, policy: !Find [authentik_policies_expression.expressionpolicy, [name, default-authentication-flow-password-stage]] }
+    attrs: { failure_result: true }
+  - model: authentik_flows.flowstagebinding
+    id: binding-admin-mfa-lokyy
+    identifiers: { target: !KeyOf flow-lokyy-authentication, stage: !KeyOf stage-admin-mfa, order: 35 }
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+      invalid_response_action: retry
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf binding-admin-mfa-lokyy, policy: !KeyOf policy-admin-mfa }
+    attrs: { target: !KeyOf binding-admin-mfa-lokyy, policy: !KeyOf policy-admin-mfa, order: 0 }
   - model: authentik_brands.brand
     identifiers: { domain: authentik-default }
     state: present
     attrs:
       branding_title: Lokyy Brain
-  - model: authentik_flows.flow
-    identifiers: { slug: default-authentication-flow }
-    state: present
-    attrs:
-      title: Lokyy Brain
+      flow_authentication: !KeyOf flow-lokyy-authentication
   - model: authentik_outposts.outpost
     identifiers: { managed: goauthentik.io/outposts/embedded }
     state: present

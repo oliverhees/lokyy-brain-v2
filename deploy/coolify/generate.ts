@@ -676,6 +676,8 @@ const BLUEPRINT_DEPS = [
   "    attrs: { identifiers: { name: \"Default - TOTP MFA setup flow\" }, required: true }",
   "  - model: authentik_blueprints.metaapplyblueprint",
   "    attrs: { identifiers: { name: \"Default - WebAuthn MFA setup flow\" }, required: true }",
+  "  - model: authentik_blueprints.metaapplyblueprint",
+  "    attrs: { identifiers: { name: \"Default - Brand\" }, required: true }",
 ];
 // Explicit scope mappings: a provider created before the managed mappings exist would otherwise get none
 // and the outpost would send an empty X-authentik-username (401 everywhere)
@@ -696,6 +698,21 @@ const PORTAL_PERMISSIONS = ['view_user', 'add_user', 'change_user', 'delete_user
 // (vault / lokyy-users groups) are not affected. The policy runs when the stage is reached (the user is
 // known then). Recovery links cannot skip it for admins: the portal's set-password flow refuses superusers
 // and lokyy-admins (apps/portal/authentik/lokyy-portal.yaml).
+function ADMIN_MFA_BINDING(suffix: string, flow: string): string[] {
+  const id = `binding-admin-mfa${suffix ? `-${suffix}` : ''}`;
+  return [
+    '  - model: authentik_flows.flowstagebinding',
+    `    id: ${id}`,
+    `    identifiers: { target: ${flow}, stage: !KeyOf stage-admin-mfa, order: 35 }`,
+    '    attrs:',
+    '      evaluate_on_plan: false',
+    '      re_evaluate_policies: true',
+    '      invalid_response_action: retry',
+    '  - model: authentik_policies.policybinding',
+    `    identifiers: { target: !KeyOf ${id}, policy: !KeyOf policy-admin-mfa }`,
+    `    attrs: { target: !KeyOf ${id}, policy: !KeyOf policy-admin-mfa, order: 0 }`,
+  ];
+}
 const ADMIN_MFA = [
   '  - model: authentik_stages_authenticator_validate.authenticatorvalidatestage',
   '    id: stage-admin-mfa',
@@ -719,16 +736,8 @@ const ADMIN_MFA = [
   '        if user.is_superuser:',
   '            return True',
   '        return user.groups.filter(name__in=["lokyy-admins", "authentik Admins"]).exists()',
-  '  - model: authentik_flows.flowstagebinding',
-  '    id: binding-admin-mfa',
-  '    identifiers: { target: !Find [authentik_flows.flow, [slug, default-authentication-flow]], stage: !KeyOf stage-admin-mfa, order: 35 }',
-  '    attrs:',
-  '      evaluate_on_plan: false',
-  '      re_evaluate_policies: true',
-  '      invalid_response_action: retry',
-  '  - model: authentik_policies.policybinding',
-  '    identifiers: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa }',
-  '    attrs: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa, order: 0 }',
+  // On the default flow too: it stays reachable by its slug
+  ...ADMIN_MFA_BINDING('', '!Find [authentik_flows.flow, [slug, default-authentication-flow]]'),
 ];
 
 // Authentik blueprint: groups, one forward-auth proxy provider + application + group binding per vault,
@@ -825,20 +834,42 @@ export function renderBlueprint(pkg: PackageName): string {
   L.push('  # MetaMCP admin UI: operators only');
   app('metamcp', 'metamcp-admin', '"Lokyy Brain · MetaMCP Admin"', 'mcp', 'admins');
   L.push('  # Mandatory MFA for operators', ...ADMIN_MFA);
-  // Brand (LBV2-35): what users see on the login pages. Only these fields; the portal's blueprint sets the
-  // recovery flow and locale of the same brand.
+  // Brand (LBV2-35): the login pages say "Lokyy Brain". An own login flow with the default stages, because
+  // "Default - Brand" re-applies "Default - Authentication flow" (and its title) whenever it runs. The
+  // brand points to it; the portal's blueprint sets recovery flow and locale of the same brand.
+  const find = (model: string, name: string) => `!Find [${model}, [name, ${name}]]`;
+  const bind = (stage: string, order: number, extra: string[] = []) => [
+    '  - model: authentik_flows.flowstagebinding',
+    ...(extra.length ? [`    id: binding-lokyy-${order}`] : []),
+    `    identifiers: { target: !KeyOf flow-lokyy-authentication, stage: ${stage}, order: ${order} }`,
+    ...(extra.length ? ['    attrs:', ...extra] : []),
+  ];
   L.push(
+    '  - model: authentik_flows.flow',
+    '    id: flow-lokyy-authentication',
+    '    identifiers: { slug: lokyy-authentication }',
+    '    attrs:',
+    '      name: Lokyy Brain',
+    '      title: Lokyy Brain',
+    '      designation: authentication',
+    '      authentication: none',
+    ...bind(find('authentik_stages_identification.identificationstage', 'default-authentication-identification'), 10),
+    ...bind(find('authentik_stages_password.passwordstage', 'default-authentication-password'), 20, ['      re_evaluate_policies: true']),
+    ...bind(find('authentik_stages_authenticator_validate.authenticatorvalidatestage', 'default-authentication-mfa-validation'), 30),
+    ...bind(find('authentik_stages_user_login.userloginstage', 'default-authentication-login'), 100),
+    // Same optional-stage policies as the default flow (password skipped after passwordless WebAuthn)
+    '  - model: authentik_policies.policybinding',
+    '    identifiers: { order: 10, target: !KeyOf binding-lokyy-20, policy: !Find [authentik_policies_expression.expressionpolicy, [name, default-authentication-flow-password-stage]] }',
+    '    attrs: { failure_result: true }',
+    ...ADMIN_MFA_BINDING('lokyy', '!KeyOf flow-lokyy-authentication'),
     '  - model: authentik_brands.brand',
     '    identifiers: { domain: authentik-default }',
     '    state: present',
     '    attrs:',
     '      branding_title: Lokyy Brain',
-    '  - model: authentik_flows.flow',
-    '    identifiers: { slug: default-authentication-flow }',
-    '    state: present',
-    '    attrs:',
-    '      title: Lokyy Brain',
+    '      flow_authentication: !KeyOf flow-lokyy-authentication',
   );
+
   L.push(
     '  - model: authentik_outposts.outpost',
     '    identifiers: { managed: goauthentik.io/outposts/embedded }',

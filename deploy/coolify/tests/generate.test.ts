@@ -477,7 +477,7 @@ test('authentik-gate (LBV2-28): only holder of the service-account token, two in
 test('mandatory MFA for admins only (Oliver): policy-bound validation stage in the default authentication flow', () => {
   for (const pkg of pkgs) {
     const b = renderBlueprint(pkg);
-    for (const dep of ['Default - Authentication flow', 'Default - TOTP MFA setup flow', 'Default - WebAuthn MFA setup flow']) {
+    for (const dep of ['Default - Authentication flow', 'Default - TOTP MFA setup flow', 'Default - WebAuthn MFA setup flow', 'Default - Brand']) {
       assert.ok(b.includes(`attrs: { identifiers: { name: "${dep}" }, required: true }`), dep);
     }
     assert.ok(b.includes('model: authentik_stages_authenticator_validate.authenticatorvalidatestage'));
@@ -486,6 +486,9 @@ test('mandatory MFA for admins only (Oliver): policy-bound validation stage in t
     assert.ok(b.includes('!Find [authentik_stages_authenticator_totp.authenticatortotpstage, [name, default-authenticator-totp-setup]]'));
     assert.ok(b.includes('!Find [authentik_stages_authenticator_webauthn.authenticatorwebauthnstage, [name, default-authenticator-webauthn-setup]]'));
     assert.ok(b.includes('    identifiers: { target: !Find [authentik_flows.flow, [slug, default-authentication-flow]], stage: !KeyOf stage-admin-mfa, order: 35 }'));
+    // also on the Lokyy login flow (the brand's), so no login path skips it
+    assert.ok(b.includes('    identifiers: { target: !KeyOf flow-lokyy-authentication, stage: !KeyOf stage-admin-mfa, order: 35 }'));
+    assert.ok(b.includes('    identifiers: { target: !KeyOf binding-admin-mfa-lokyy, policy: !KeyOf policy-admin-mfa }'));
     assert.ok(b.includes('      re_evaluate_policies: true'), 'decided when the user is known (after the password)');
     // the policy: superusers, lokyy-admins and "authentik Admins" only
     const expr = b.slice(b.indexOf('lokyy-admin-mfa-required'));
@@ -506,7 +509,14 @@ test('brand (LBV2-35): user-visible names say "Lokyy Brain"; no old product name
   for (const pkg of pkgs) {
     const b = renderBlueprint(pkg);
     assert.ok(b.includes('      branding_title: Lokyy Brain\n'), 'Authentik brand title');
+    // Own login flow: the default flow's title is reset whenever "Default - Brand" re-applies it
+    assert.ok(b.includes('    identifiers: { slug: lokyy-authentication }\n'));
     assert.ok(b.includes('      title: Lokyy Brain\n'), 'login flow title');
+    assert.ok(b.includes('      flow_authentication: !KeyOf flow-lokyy-authentication\n'), 'brand uses the Lokyy login flow');
+    assert.ok(!b.includes('identifiers: { slug: default-authentication-flow }'), 'never edit the default flow itself');
+    for (const [order, stage] of [[10, 'default-authentication-identification'], [20, 'default-authentication-password'], [30, 'default-authentication-mfa-validation'], [100, 'default-authentication-login']] as const) {
+      assert.ok(b.includes(`name, ${stage}]], order: ${order} }`), `${stage} at ${order}`);
+    }
     for (const name of ['"Lokyy Brain · Vault v01"', '"Lokyy Brain · Firmen-Vault"', '"Lokyy Brain · Portal"', '"Lokyy Brain · MetaMCP Admin"']) {
       assert.ok(b.includes(`attrs: { name: ${name},`), name);
     }
