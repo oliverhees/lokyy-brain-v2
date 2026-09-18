@@ -14,6 +14,7 @@ P=${STACK_HTTP_PORT:-18080}
 TAG=${IMAGE_TAG:-dev}
 LIMIT_MIB=${VAULT_RSS_LIMIT_MIB:-400}
 PAGES=${EMBED_TEST_PAGES:-200}
+tests/port-gate.sh || exit 1
 tests/wait-ready.sh "${WAIT_TIMEOUT:-300}" || exit 1
 
 pass=0 fail=0

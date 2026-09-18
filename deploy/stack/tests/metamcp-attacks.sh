@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # LBV2-4 — attack tests for the per-user MetaMCP endpoints (provisioned by metamcp/provision.sh).
-# Everything goes through Traefik like a real AI client: http://mcp.localhost:18080/metamcp/<user>/mcp
+# Everything goes through Traefik like a real AI client: $MCP_HOST/metamcp/<user>/mcp
 # Run from deploy/stack/ with the stack up: tests/metamcp-attacks.sh
 # Side effects: rotates anna's API key, temporarily deprovisions ben, writes test notes into
 # anna's and the company vault (slugs mcpattack-*). secrets/metamcp-clients.json is rewritten.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 set -a; . ./.env; set +a
+tests/port-gate.sh || exit 1
 tests/wait-ready.sh "${WAIT_TIMEOUT:-300}" || exit 1
 
 pass=0 fail=0
@@ -23,7 +24,8 @@ expect() { # expect <name> <actual> <allowed-regex>
   if [[ "$2" =~ ^($3)$ ]]; then ok "$1 → $2"; else bad "$1 → $2 (expected $3)"; fi
 }
 CLIENTS=secrets/metamcp-clients.json
-BASE=http://mcp.localhost:${STACK_HTTP_PORT:-18080}/metamcp
+MCP_HOST=http://mcp.localhost:${STACK_HTTP_PORT:-18080}
+BASE=$MCP_HOST/metamcp
 key() { jq -r --arg u "$1" '.users[] | select(.username == $u) | .apiKey' "$CLIENTS"; }
 umask 077
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -247,11 +249,11 @@ BEN=$(key ben) ANNA=$(key anna)
 echo "== 7b. A user key cannot create more MetaMCP keys (bounds the gate's global cap)"
 keycfg() { printf 'header = "x-api-key: %s"\n' "$ANNA"; }
 # Provisioning may just have restarted MetaMCP; wait until Traefik routes the admin host again.
-for _ in $(seq 1 30); do [[ $(curl -s -o /dev/null -w '%{http_code}' http://mcp.localhost:18080/) == 302 ]] && break; sleep 1; done
+for _ in $(seq 1 30); do [[ $(curl -s -o /dev/null -w '%{http_code}' $MCP_HOST/) == 302 ]] && break; sleep 1; done
 expect "user key → MetaMCP key management (tRPC apiKeys.create) needs the admin login" \
-  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' http://mcp.localhost:18080/trpc/frontend.apiKeys.create)" "302"
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' $MCP_HOST/trpc/frontend.apiKeys.create)" "302"
 expect "user key → tRPC through the gate path (path traversal)" \
-  "$(curl -s --path-as-is -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' 'http://mcp.localhost:18080/metamcp/anna/mcp/../../../trpc/frontend.apiKeys.create')" "302|400|401|404"
+  "$(curl -s --path-as-is -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' '$MCP_HOST/metamcp/anna/mcp/../../../trpc/frontend.apiKeys.create')" "302|400|401|404"
 expect "user key did not create an API key" "$(count "select count(*) from api_keys where name = 'x'")" "0"
 
 echo "== 8. Session binding in mcp-gate (M2)"

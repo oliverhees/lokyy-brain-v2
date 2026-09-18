@@ -7,6 +7,7 @@ set -a; . ./.env; set +a
 STACK=${STACK_NAME:-lokyy-stack}
 P=${STACK_HTTP_PORT:-18080}
 TAG=${IMAGE_TAG:-dev}
+tests/port-gate.sh || exit 1
 tests/wait-ready.sh "${WAIT_TIMEOUT:-300}" || exit 1
 
 pass=0 fail=0
