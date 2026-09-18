@@ -23,7 +23,7 @@ expect() { # expect <name> <actual> <allowed-regex>
   if [[ "$2" =~ ^($3)$ ]]; then ok "$1 → $2"; else bad "$1 → $2 (expected $3)"; fi
 }
 CLIENTS=secrets/metamcp-clients.json
-BASE=http://mcp.localhost:18080/metamcp
+BASE=http://mcp.localhost:${STACK_HTTP_PORT:-18080}/metamcp
 key() { jq -r --arg u "$1" '.users[] | select(.username == $u) | .apiKey' "$CLIENTS"; }
 umask 077
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
