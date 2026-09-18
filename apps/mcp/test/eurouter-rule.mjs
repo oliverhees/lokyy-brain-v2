@@ -30,7 +30,7 @@ try {
   const sent = bodies[0];
   if (sent?.url === 'https://api.eurouter.ai/api/v1/chat/completions') ok('chat goes to EUrouter'); else fail(`unexpected url ${sent?.url}`);
   if (sent?.body.rule_id === RULE) ok('rule_id sent'); else fail(`rule_id missing: ${JSON.stringify(sent?.body)}`);
-  if (sent?.body.model === 'qwen3.6-27b') ok('model sent next to rule_id'); else fail('model missing');
+  if (!('model' in (sent?.body ?? {}))) ok('no model with a route (rule brings its models)'); else fail('model sent with a route');
   // PDF chat: extracted locally, sent via chat/completions with rule_id, never /responses.
   const pdf = ['%PDF-1.4', '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj', '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
     '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 100]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj',

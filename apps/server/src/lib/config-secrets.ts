@@ -5,7 +5,7 @@
 // going to the same destination. Pointing a kept secret at a new provider,
 // endpoint or SMTP host would let anyone with UI access exfiltrate it, so that
 // requires re-entering the secret (KeyReentryError → 400).
-import { isEurouterBaseUrl, isEurouterRuleId } from '@mindbase/core';
+import { EUROUTER_ROUTE_REQUIRED, isEurouterBaseUrl, isEurouterRuleId } from '@mindbase/core';
 import type { AtlasConfig } from '../config';
 
 export const MASKED_SECRET = '********';
@@ -186,11 +186,20 @@ export function mergeSecrets(incoming: Record<string, unknown>, stored: AtlasCon
   else delete merged.googleTokens;
 
   // The rule is not part of the destination, so changing it alone needs no key re-entry.
-  if (merged.ruleId === undefined || merged.ruleId === null || merged.ruleId === '' || !isEurouterBaseUrl(merged.baseUrl)) {
+  const eurouter = isEurouterBaseUrl(merged.baseUrl);
+  if (merged.ruleId === undefined || merged.ruleId === null || merged.ruleId === '' || !eurouter) {
     delete merged.ruleId;
   } else if (!isEurouterRuleId(merged.ruleId)) {
     throw new ConfigInputError(INVALID_RULE_ID_ERROR);
   }
+  // EUrouter is configured by route only (LBV2-30). Only a new EUrouter destination or an
+  // explicit route change is checked, so legacy route-less configs stay savable.
+  const destinationChanged = merged.provider !== stored.provider || normalizeEndpoint(merged.baseUrl) !== normalizeEndpoint(stored.baseUrl);
+  if (eurouter && !merged.ruleId && (destinationChanged || 'ruleId' in body)) {
+    throw new ConfigInputError(EUROUTER_ROUTE_REQUIRED);
+  }
+  // Display name of the route; never trusted for routing.
+  if (!merged.ruleId || typeof merged.ruleName !== 'string' || merged.ruleName.length > 255) delete merged.ruleName;
   return merged;
 }
 

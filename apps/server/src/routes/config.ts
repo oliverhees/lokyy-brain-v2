@@ -1,7 +1,7 @@
 import { Router, type Response } from 'express';
 import {
   createAdapter, effectiveLlmBaseUrl, isLlmUrlAllowed, LLM_HOST_NOT_ALLOWED_ERROR,
-  EurouterHttpError, EUROUTER_RULE_NOT_FOUND, isEurouterBaseUrl, isEurouterRuleId, listEurouterRules,
+  EurouterHttpError, EUROUTER_KEY_INVALID, EUROUTER_ROUTE_REQUIRED, EUROUTER_ROUTE_UNAVAILABLE, EUROUTER_RULE_NOT_FOUND, isEurouterBaseUrl, isEurouterRuleId, listEurouterRules,
 } from '@mindbase/core';
 import type { ServerContext } from '../context';
 import type { AtlasConfig } from '../config';
@@ -10,6 +10,10 @@ import { requireConfigAdminAlways } from '../lib/proxy-identity';
 import { probeRateLimiter } from '../lib/probe-rate-limit';
 
 const GENERIC_TEST_ERROR = 'Connection test failed';
+// Test results that carry no upstream detail and tell the user what to fix.
+const ACTIONABLE_TEST_ERRORS: ReadonlySet<string> = new Set([
+  EUROUTER_RULE_NOT_FOUND, EUROUTER_KEY_INVALID, EUROUTER_ROUTE_REQUIRED, EUROUTER_ROUTE_UNAVAILABLE,
+]);
 const NOT_EUROUTER_ERROR = 'EUrouter is not the configured endpoint';
 const RULES_FAILED_ERROR = 'Could not load EUrouter routes';
 const KEY_REJECTED_ERROR = 'Key invalid or not authorised';
@@ -131,8 +135,7 @@ export function configRoutes(ctx: ServerContext): Router {
         return;
       }
       logFailure(result.error);
-      // A missing rule carries no upstream detail and tells the user what to fix.
-      res.json({ ok: false, error: result.error === EUROUTER_RULE_NOT_FOUND ? EUROUTER_RULE_NOT_FOUND : GENERIC_TEST_ERROR });
+      res.json({ ok: false, error: result.error && ACTIONABLE_TEST_ERRORS.has(result.error) ? result.error : GENERIC_TEST_ERROR });
     } catch (e) {
       logFailure((e as Error).message);
       res.json({ ok: false, error: GENERIC_TEST_ERROR });

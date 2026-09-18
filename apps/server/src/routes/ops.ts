@@ -5,6 +5,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import type { ServerContext } from '../context';
 import type { AtlasConfig } from '../config';
+import { isEurouterBaseUrl } from '@mindbase/core';
 import { projectRoot as makeProjectRoot, detectLayoutVersion } from '../context';
 import {
   runContributePlan, applyContributePlan, runBuild, runLint, runResearch,
@@ -28,9 +29,10 @@ function sse(ctx: ServerContext, res: Response): (e: OpEvent) => void {
   };
 }
 
-/** No model or no endpoint. An EUrouter route does not replace the model (LBV2-30). */
+/** No model (an EUrouter route replaces it, LBV2-30) or no endpoint. */
 export function llmUnconfigured(config: AtlasConfig): boolean {
-  return !config.model || (!config.apiKey && !config.baseUrl && config.provider !== 'ollama');
+  const routed = !!config.ruleId && isEurouterBaseUrl(config.baseUrl);
+  return (!config.model && !routed) || (!config.apiKey && !config.baseUrl && config.provider !== 'ollama');
 }
 
 async function opsCtx(ctx: ServerContext, req: Request): Promise<OpsCtx | { error: string }> {

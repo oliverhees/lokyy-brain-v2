@@ -46,6 +46,8 @@ export interface AtlasConfig {
   baseUrl: string;
   /** EUrouter routing rule (UUID) sent as `rule_id`; only kept while baseUrl is EUrouter (LBV2-30). */
   ruleId?: string;
+  /** Display name of the route (from EUrouter at selection time); dropped with ruleId. */
+  ruleName?: string;
   /** Optional Brave Search API key — enables web results in /research. */
   braveApiKey?: string;
   autoSave: boolean;      // LLM auto-saves insights silently

@@ -90,10 +90,43 @@ describe('EUrouter routing rules (LBV2-30)', () => {
       expect(ctx.config.ruleId).toBeUndefined();
     });
 
-    it('PUT with an empty rule id clears it', async () => {
+    it('PUT refuses to clear the route of an EUrouter config', async () => {
       await ctx.saveConfig({ ...BASE, ruleId: RULE });
-      expect((await request(app).put('/api/config').set(ADMIN).send({ ruleId: '' })).status).toBe(200);
+      const res = await request(app).put('/api/config').set(ADMIN).send({ ruleId: '' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Select an EUrouter route');
+      expect(ctx.config.ruleId).toBe(RULE);
+    });
+
+    it('PUT refuses switching to EUrouter without a route', async () => {
+      vi.stubEnv('VAULT_LLM_ALLOWED_HOSTS', 'api.eurouter.ai,api.openai.com');
+      await ctx.saveConfig({ ...BASE, baseUrl: '' });
+      const res = await request(app).put('/api/config').set(ADMIN).send({ provider: 'openai', baseUrl: EU, apiKey: 'eur_new', model: '' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Select an EUrouter route');
+    });
+
+    it('PUT keeps a legacy EUrouter config without a route savable for unrelated settings', async () => {
+      const res = await request(app).put('/api/config').set(ADMIN).send({ autoSave: false });
+      expect(res.status).toBe(200);
+      expect(ctx.config.autoSave).toBe(false);
+    });
+
+    it('PUT stores the route name for display and drops it together with the route', async () => {
+      vi.stubEnv('VAULT_LLM_ALLOWED_HOSTS', 'api.eurouter.ai,api.openai.com');
+      expect((await request(app).put('/api/config').set(ADMIN).send({ ruleId: RULE, ruleName: 'EU Compliance', model: '' })).status).toBe(200);
+      expect(ctx.config).toMatchObject({ ruleId: RULE, ruleName: 'EU Compliance', model: '' });
+      expect((await request(app).get('/api/config')).body.ruleName).toBe('EU Compliance');
+      expect((await request(app).put('/api/config').set(ADMIN).send({ provider: 'openai', baseUrl: '', apiKey: 'sk-new', model: 'gpt-4o' })).status).toBe(200);
       expect(ctx.config.ruleId).toBeUndefined();
+      expect(ctx.config.ruleName).toBeUndefined();
+    });
+
+    it('PUT ignores a route name that is not a short string', async () => {
+      await request(app).put('/api/config').set(ADMIN).send({ ruleId: RULE, ruleName: 'x'.repeat(300) });
+      expect(ctx.config.ruleName).toBeUndefined();
+      await request(app).put('/api/config').set(ADMIN).send({ ruleId: RULE, ruleName: { evil: true } });
+      expect(ctx.config.ruleName).toBeUndefined();
     });
 
     it('PUT drops the rule id when the endpoint is no longer EUrouter (and still needs the key)', async () => {
@@ -115,7 +148,7 @@ describe('EUrouter routing rules (LBV2-30)', () => {
       for await (const _c of adapter.chat({ model: ctx.config.model, messages: [{ role: 'user', content: 'hi' }] })) { /* drain */ }
       const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body)) as Record<string, unknown>;
       expect(body['rule_id']).toBe(RULE);
-      expect(body['model']).toBe('qwen3.6-27b');
+      expect('model' in body).toBe(false);
     });
   });
 
@@ -195,11 +228,11 @@ describe('EUrouter routing rules (LBV2-30)', () => {
   });
 
   describe('POST /api/config/test on EUrouter', () => {
-    it('fails for a wrong key although /models is public', async () => {
+    it('fails for a wrong key although /models is public, and says so', async () => {
       mockEurouter();
       const res = await request(app).post('/api/config/test').set(ADMIN)
-        .send({ provider: 'openai', model: 'm', baseUrl: EU, apiKey: 'eur_wrong' });
-      expect(res.body).toEqual({ ok: false, error: 'Connection test failed' });
+        .send({ provider: 'openai', model: '', baseUrl: EU, apiKey: 'eur_wrong', ruleId: RULE });
+      expect(res.body).toEqual({ ok: false, error: 'EUrouter key invalid or not authorised' });
       expect(JSON.stringify(warn.mock.calls)).not.toContain('eur_wrong');
     });
 
@@ -298,7 +331,8 @@ describe('PDF chat through EUrouter in the server adapter (LBV2-30)', () => {
     const [url, init] = fetchSpy.mock.calls[0]!;
     expect(String(url)).toBe(`${EU}/chat/completions`);
     const body = JSON.parse(String(init?.body)) as { model: string; rule_id: string; messages: Array<{ content: string }> };
-    expect(body).toMatchObject({ model: 'qwen3.6-27b', rule_id: RULE });
+    expect(body).toMatchObject({ rule_id: RULE });
+    expect('model' in body).toBe(false);
     expect(body.messages[0]!.content).toContain('Hello EU PDF');
   });
 
@@ -310,10 +344,46 @@ describe('PDF chat through EUrouter in the server adapter (LBV2-30)', () => {
 });
 
 describe('ops readiness with a route (LBV2-30)', () => {
-  it('still needs a model when a route is set (EUrouter requires model)', async () => {
+  it('counts EUrouter + route without a model as configured, a route elsewhere not', async () => {
     const { llmUnconfigured } = await import('../ops.js');
-    expect(llmUnconfigured({ ...BASE, model: '', ruleId: RULE })).toBe(true);
+    expect(llmUnconfigured({ ...BASE, model: '', ruleId: RULE })).toBe(false);
+    expect(llmUnconfigured({ ...BASE, model: '', baseUrl: 'https://api.openai.com', ruleId: RULE })).toBe(true);
     expect(llmUnconfigured({ ...BASE, model: '' })).toBe(true);
     expect(llmUnconfigured({ ...BASE })).toBe(false);
+  });
+});
+
+describe('POST /api/config/test: EUrouter messages the user can act on (LBV2-30)', () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+  async function testWith(body: Record<string, unknown>, chat: Response) {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => (String(input).endsWith('/routing-rules')
+      ? json({ data: [{ id: RULE, name: 'EU only' }] })
+      : chat.clone()));
+    const outer = await mkdtemp(join(tmpdir(), 'eurouter-test-'));
+    try {
+      const c = await createContext(outer);
+      await c.saveConfig({ ...BASE, ruleId: RULE });
+      const a = express();
+      a.use(express.json());
+      a.use('/api/config', configRoutes(c));
+      return (await request(a).post('/api/config/test').send({ provider: 'openai', model: '', baseUrl: EU, apiKey: MASKED_SECRET, ...body })).body as unknown;
+    } finally {
+      await rm(outer, { recursive: true, force: true });
+    }
+  }
+
+  it('needs a route', async () => {
+    expect(await testWith({}, json({}))).toEqual({ ok: false, error: 'Select an EUrouter route' });
+  });
+
+  it('passes when the rule-only chat answers 200', async () => {
+    expect(await testWith({ ruleId: RULE }, json({ choices: [{ message: { content: '' } }] }))).toEqual({ ok: true });
+  });
+
+  it('keeps other upstream failures generic', async () => {
+    expect(await testWith({ ruleId: RULE }, json({ error: { message: 'No providers available for secret-ish detail' } }, 400)))
+      .toEqual({ ok: false, error: 'Connection test failed' });
   });
 });
