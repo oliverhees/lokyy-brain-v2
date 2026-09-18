@@ -5,6 +5,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 set -a; . ./.env; set +a
 STACK=${STACK_NAME:-lokyy-stack}
+P=${STACK_HTTP_PORT:-18080}
+TAG=${IMAGE_TAG:-dev}
+tests/port-gate.sh || exit 1
 tests/wait-ready.sh "${WAIT_TIMEOUT:-300}" || exit 1
 
 pass=0 fail=0
@@ -32,7 +35,7 @@ access() {
   else echo "OTHER:$status"; fi
   rm -f "$body"
 }
-V=http://%s.vault.localhost:18080
+V=http://%s.vault.localhost:$P
 
 jar_anna=$(mktemp) jar_ben=$(mktemp)
 hdir=$(mktemp -d)
@@ -47,7 +50,7 @@ echo "== 1. Unauthenticated access is redirected to the login"
 for v in anna ben firma; do
   expect "anon → $v /api/config" "$(code "$(printf $V $v)/api/config")" "302"
 done
-expect "anon → metamcp admin" "$(code http://mcp.localhost:18080/)" "302"
+expect "anon → metamcp admin" "$(code http://mcp.localhost:$P/)" "302"
 
 echo "== 2. Browser session isolation (Authentik policies)"
 tests/login.sh "$jar_anna" "$(printf $V anna)/" anna "$DEMO_PASS_ANNA" || bad "anna login"
@@ -58,7 +61,7 @@ expect "anna → ben"   "$(access "$jar_anna" "$(printf $V ben)/api/config")"   
 expect "ben  → anna"  "$(access "$jar_ben"  "$(printf $V anna)/api/config")"  "DENIED"
 expect "anna (reader) → firma web" "$(access "$jar_anna" "$(printf $V firma)/api/config")" "DENIED"
 expect "ben (writer) → firma web"  "$(access "$jar_ben"  "$(printf $V firma)/api/config")" "DATA"
-expect "anna → metamcp admin" "$(access "$jar_anna" http://mcp.localhost:18080/api/health)" "DENIED"
+expect "anna → metamcp admin" "$(access "$jar_anna" http://mcp.localhost:$P/api/health)" "DENIED"
 
 echo "== 3. Header forgery through Traefik"
 # Vaults trust X-authentik-username in guarded mode (LBV2-9); section 3b checks what they receive.
@@ -182,9 +185,11 @@ for ip in $(docker inspect "${STACK}-vault-connector-1" --format '{{range .Netwo
   done
 done
 for v in anna ben firma; do
-  expect "vault-$v cannot write the shared model cache /models (M3)" \
-    "$(docker compose exec -T "vault-$v" sh -c 'touch /models/.probe 2>/dev/null && echo WRITABLE || echo read-only' | tr -d '\r')" "read-only"
+  expect "vault-$v does not mount the model cache /models (embeddings via the shared service, LBV2-26)" \
+    "$(docker inspect "${STACK}-vault-$v-1" --format '{{range .Mounts}}{{.Destination}} {{end}}' | grep -c '/models')" "0"
 done
+expect "embed cannot write the shared model cache /models (M3)" \
+  "$(docker compose exec -T embed sh -c 'touch /models/.probe 2>/dev/null && echo WRITABLE || echo read-only' | tr -d '\r')" "read-only"
 expect "OCR works; tesseract data cached in the vault's own home volume (MINDBASE_MODEL_CACHE, LBV2-14)" \
   "$(docker compose exec -T vault-anna sh -c 'cat >/tmp/ocr-probe.mjs' <tests/lib/ocr-probe.mjs; OCR_PNG_B64=$(base64 -w0 tests/fixtures/ocr-lokyy.png) docker compose exec -T -e OCR_PNG_B64 vault-anna node /tmp/ocr-probe.mjs 2>&1 | tail -1 | tr -d '\r')" "cache=MINDBASE_MODEL_CACHE text=LOKYY 4711"
 expect "tesseract cache is persistent and per vault (named volume vault-anna-home)" \
@@ -194,26 +199,29 @@ expect "vault-ben has no access to anna's tesseract cache" \
 for v in anna ben firma; do
   expect "vault-$v embedder runs with MINDBASE_MODELS_OFFLINE=1 (no downloads in code, LBV2-24)" "$(docker compose exec -T "vault-$v" printenv MINDBASE_MODELS_OFFLINE | tr -d '\r')" "1"
 done
-expect "vault embeddings work offline from /models; unlisted models are never downloaded (allowRemoteModels=false)" \
-  "$(docker compose exec -T vault-anna node --input-type=module - <tests/lib/offline-embed-probe.mjs 2>/dev/null | tail -1 | tr -d '\r')" "allowRemote=false dim=1024 unlisted=refused"
+expect "embed service loads the model offline from /models; unlisted models are never downloaded (allowRemoteModels=false)" \
+  "$(docker run --rm --network none -v "${STACK}_models:/models:ro" -v "$PWD/models/offline.mjs:/lokyy/offline.mjs:ro" -v "$PWD/tests/lib/embed-offline-probe.mjs:/probe.mjs:ro" \
+      -e NODE_OPTIONS=--import=/lokyy/offline.mjs --entrypoint node "lokyy-embed:$TAG" /probe.mjs 2>/dev/null | tail -1 | tr -d '\r')" "allowRemote=false dim=1024 unlisted=refused"
 expect "model-prefetch verified the pinned model (sha256 manifest)" \
   "$(docker compose logs model-prefetch 2>/dev/null | grep -c 'verified (4 files, sha256)')" "[1-9][0-9]*"
+expect "embed starts only after a successful model-prefetch" \
+  "$(docker compose config --format json | jq -r '.services.embed.depends_on["model-prefetch"].condition')" "service_completed_successfully"
 for v in anna ben firma; do
-  expect "vault-$v starts only after a successful model-prefetch" \
-    "$(docker compose config --format json | jq -r --arg s "vault-$v" '.services[$s].depends_on["model-prefetch"].condition')" "service_completed_successfully"
+  expect "vault-$v starts only after the embed service is healthy" \
+    "$(docker compose config --format json | jq -r --arg s "vault-$v" '.services[$s].depends_on.embed.condition')" "service_healthy"
 done
 # Tampered model file: verification must fail (vaults would not start). Checked on a copy, offline.
 tamper=$(mktemp -d)
-docker compose exec -T vault-anna sh -c 'cd /models && tar cf - Xenova/bge-m3/config.json Xenova/bge-m3/tokenizer_config.json' | tar xf - -C "$tamper"
+docker compose exec -T embed sh -c 'cd /models && tar cf - Xenova/bge-m3/config.json Xenova/bge-m3/tokenizer_config.json' | tar xf - -C "$tamper"
 printf ' ' >>"$tamper/Xenova/bge-m3/config.json"
 chmod -R a+rX "$tamper"
 expect "model-prefetch fails closed on a tampered model file" \
-  "$(docker run --rm --network none --entrypoint node -e PREFETCH_VERIFY_ONLY=1 -v "$tamper:/models:ro" -v "$PWD/models:/prefetch:ro" lokyy-brain-v2:dev /prefetch/prefetch.mjs >/dev/null 2>"$tamper.err"; echo "exit=$? $(grep -o 'checksum mismatch config.json' "$tamper.err")")" "exit=1 checksum mismatch config.json"
+  "$(docker run --rm --network none --entrypoint node -e PREFETCH_VERIFY_ONLY=1 -v "$tamper:/models:ro" -v "$PWD/models:/prefetch:ro" "lokyy-brain-v2:$TAG" /prefetch/prefetch.mjs >/dev/null 2>"$tamper.err"; echo "exit=$? $(grep -o 'checksum mismatch config.json' "$tamper.err")")" "exit=1 checksum mismatch config.json"
 rm -rf "$tamper" "$tamper.err"
 expect "model cache prefilled by model-prefetch" \
-  "$(docker compose exec -T vault-anna sh -c 'find /models -name "*.onnx" | head -1 | grep -q . && echo present || echo missing' | tr -d '\r')" "present"
+  "$(docker compose exec -T embed sh -c 'find /models -name "*.onnx" | head -1 | grep -q . && echo present || echo missing' | tr -d '\r')" "present"
 expect "vault-anna → traefik → ben (no session)" \
-  "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Host: ben.vault.localhost:18080' http://traefik/api/config")" "302"
+  "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Host: ben.vault.localhost:$P' http://traefik/api/config")" "302"
 expect "vault-anna → internet (EUrouter must stay reachable)" \
   "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://www.eurouter.ai/")" "200|301|302|307|308"
 expect "vault-anna → EUrouter API host (LLM base URL)" \
@@ -224,7 +232,8 @@ members() { docker network inspect "${STACK}_$1" --format '{{range .Containers}}
 for v in anna ben firma; do
   expect "web-$v members" "$(members web-$v)" "traefik vault-$v"
   expect "mcp-$v members" "$(members mcp-$v)" "vault-$v vault-connector|vault-connector vault-$v"
-  expect "vault-$v networks" "$(docker inspect "${STACK}-vault-$v-1" --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed "s/^${STACK}_//" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')" "egress mcp-$v web-$v"
+  expect "embed-$v members" "$(members embed-$v)" "embed vault-$v"
+  expect "vault-$v networks" "$(docker inspect "${STACK}-vault-$v-1" --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed "s/^${STACK}_//" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')" "egress embed-$v mcp-$v web-$v"
 done
 expect "mcp-upstream members (no vault)" "$(members mcp-upstream)" "metamcp vault-connector"
 expect "metamcp networks (no vault network)" "$(docker inspect "${STACK}-metamcp-1" --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed "s/^${STACK}_//" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')" "edge mcp-upstream metamcp-internal"
@@ -240,22 +249,88 @@ for target in ben firma; do
   done
 done
 
+echo "== 5d. Shared embedding service (LBV2-26)"
+# embed_post <vault-container> <token|-> <json> [extra curl args] → "<status> <body…>" as seen from inside that vault
+embed_post() {
+  local c=$1 tok=$2 json=$3; shift 3
+  if [[ $tok == - ]]; then
+    in_c "$c" "curl -s -w ' %{http_code}' --max-time 60 -X POST -H 'content-type: application/json' $* -d '$json' http://embed:8080/embed" | awk '{print $NF" "substr($0,1,length($0)-length($NF)-1)}'
+  else
+    in_ct "$c" "$tok" "curl -s -w ' %{http_code}' --max-time 60 -X POST -H 'content-type: application/json' -H @\$h $* -d '$json' http://embed:8080/embed" | awk '{print $NF" "substr($0,1,length($0)-length($NF)-1)}'
+  fi
+}
+marker="isolation-marker-$RANDOM$RANDOM"
+for v in anna ben firma; do
+  tokvar="EMBED_TOKEN_${v^^}"
+  out=$(embed_post "vault-$v" "${!tokvar}" "{\"texts\":[\"$marker $v\"]}")
+  expect "vault-$v → embed with its own token (1024-dim vector)" "${out%% *} $(jq -r '.dim' <<<"${out#* }" 2>/dev/null)" "200 1024"
+done
+expect "vault-anna → embed with ben's token (bound to ben's network)" "$(embed_post vault-anna "$EMBED_TOKEN_BEN" '{"texts":["x"]}' | cut -d' ' -f1)" "401"
+expect "vault-ben → embed with firma's token" "$(embed_post vault-ben "$EMBED_TOKEN_FIRMA" '{"texts":["x"]}' | cut -d' ' -f1)" "401"
+expect "vault-anna → embed without token" "$(embed_post vault-anna - '{"texts":["x"]}' | cut -d' ' -f1)" "401"
+expect "vault-anna → embed with a wrong token" "$(embed_post vault-anna "wrong-$RANDOM-token" '{"texts":["x"]}' | cut -d' ' -f1)" "401"
+expect "vault-anna → embed: too many texts rejected" \
+  "$(embed_post vault-anna "$EMBED_TOKEN_ANNA" "{\"texts\":$(jq -cn '[range(40)|"t"]')}" | cut -d' ' -f1)" "400"
+expect "vault-anna → embed: over-long text rejected" \
+  "$(embed_post vault-anna "$EMBED_TOKEN_ANNA" "{\"texts\":[\"$(head -c 8001 /dev/zero | tr '\0' a)\"]}" | cut -d' ' -f1)" "400"
+# embed is not a proxy: absolute-form URLs, Host headers and CONNECT never reach another vault
+expect "vault-anna → embed as HTTP proxy to vault-ben" \
+  "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -x http://embed:8080 http://vault-ben:4321/api/config || true")" "404"
+expect "vault-anna → embed CONNECT tunnel to vault-ben:4322" \
+  "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -p -x http://embed:8080 http://vault-ben:4322/mcp || true")" "000|400|404|405"
+expect "vault-anna → embed with Host: upstream.vault-ben" \
+  "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Host: upstream.vault-ben:4322' http://embed:8080/mcp || true")" "404"
+# Other vaults' embed networks are not routed from vault-anna
+for n in embed-ben embed-firma; do
+  ip=$(docker inspect "${STACK}-embed-1" --format "{{(index .NetworkSettings.Networks \"${STACK}_$n\").IPAddress}}")
+  expect "vault-anna → embed's address on $n ($ip:8080)" \
+    "$(in_c vault-anna "curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://$ip:8080/healthz || true")" "000"
+done
+expect "embed has no outbound network (internet)" \
+  "$(docker compose exec -T embed node -e "fetch('https://api.eurouter.ai/',{signal:AbortSignal.timeout(5000)}).then(()=>console.log('REACHED'),()=>console.log('blocked'))" | tr -d '\r')" "blocked"
+expect "embed has no route to a public IP" \
+  "$(docker compose exec -T embed node -e "require('net').connect({host:'1.1.1.1',port:443,timeout:3000}).on('connect',()=>{console.log('REACHED');process.exit()}).on('error',()=>{console.log('blocked');process.exit()}).on('timeout',()=>{console.log('blocked');process.exit()})" | tr -d '\r')" "blocked"
+for n in embed-anna embed-ben embed-firma; do
+  expect "$n is internal" "$(docker network inspect "${STACK}_$n" --format '{{.Internal}}')" "true"
+done
+expect "embed networks (only the per-vault embed networks)" \
+  "$(docker inspect "${STACK}-embed-1" --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed "s/^${STACK}_//" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')" "embed-anna embed-ben embed-firma"
+expect "embed hardening: read-only rootfs, no capabilities, no-new-privileges, memory limit" \
+  "$(docker inspect "${STACK}-embed-1" --format '{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}} {{gt .HostConfig.Memory 0}}')" "true \[ALL\] \[no-new-privileges:true\] true"
+expect "embed does not forward packets between vault networks (net.ipv4.ip_forward=0)" \
+  "$(docker compose exec -T embed cat /proc/sys/net/ipv4/ip_forward | tr -d '\r')" "0"
+expect "embed has a pids limit" "$(docker inspect "${STACK}-embed-1" --format '{{.HostConfig.PidsLimit}}')" "[1-9][0-9]*"
+expect "embed runs as non-root" "$(docker compose exec -T embed id -u | tr -d '\r')" "[1-9][0-9]*"
+expect "embed's root filesystem is not writable" \
+  "$(docker compose exec -T embed sh -c 'touch /app/x 2>/dev/null && echo WRITABLE || echo read-only' | tr -d '\r')" "read-only"
+expect "embed holds only token hashes (no plain token in its environment)" \
+  "$(docker compose exec -T embed env | grep -cF "$EMBED_TOKEN_ANNA")" "0"
+expect "embed logs contain no text content" "$(docker compose logs embed 2>/dev/null | grep -c "$marker")" "0"
+expect "embed logs contain no token" "$(docker compose logs embed 2>/dev/null | grep -cF -e "$EMBED_TOKEN_ANNA" -e "$EMBED_TOKEN_BEN")" "0"
+expect "embed logs attribute requests per vault" "$(docker compose logs embed 2>/dev/null | grep -c 'vault=ben texts=1 status=200')" "[1-9][0-9]*"
+for v in anna ben firma; do
+  expect "vault-$v has its own embed token and the service URL" \
+    "$(docker compose exec -T "vault-$v" sh -c 'echo "$MINDBASE_EMBED_URL $([ -n "$MINDBASE_EMBED_TOKEN" ] && echo token)"' | tr -d '\r')" "http://embed:8080 token"
+done
+expect "vault search goes through the embed service (anna, hybrid search via Traefik)" \
+  "$(before=$(docker compose logs embed 2>/dev/null | grep -c 'vault=anna texts=1 status=200'); curl -s -o /dev/null -b "$jar_anna" -H 'content-type: application/json' -d '{"q":"isolation embedding probe"}' "$(printf $V anna)/api/search/hybrid"; sleep 1; after=$(docker compose logs embed 2>/dev/null | grep -c 'vault=anna texts=1 status=200'); echo $((after - before)))" "[1-9][0-9]*"
+
 echo "== 5c. Traefik scope (LOW-2)"
 expect "MetaMCP admin route never serves /metamcp/health/sessions" \
-  "$(code http://mcp.localhost:18080/metamcp/health/sessions)" "404"
+  "$(code http://mcp.localhost:$P/metamcp/health/sessions)" "404"
 expect "MetaMCP admin route never serves /metamcp/health/sessions (admin-looking session cookie irrelevant)" \
-  "$(code -b "$jar_ben" http://mcp.localhost:18080/metamcp/health/sessions)" "404"
+  "$(code -b "$jar_ben" http://mcp.localhost:$P/metamcp/health/sessions)" "404"
 foreign=$(docker run -d --rm --network "${STACK}_edge" --label traefik.enable=true \
   --label 'traefik.http.routers.lokyy-foreign-probe.rule=Host(`foreign.localhost`)' \
   --label traefik.http.services.lokyy-foreign-probe.loadbalancer.server.port=80 traefik/whoami:v1.11.0 2>/dev/null)
 sleep 3
-expect "labels of a container outside this compose project are ignored" "$(code http://foreign.localhost:18080/)" "404"
+expect "labels of a container outside this compose project are ignored" "$(code http://foreign.localhost:$P/)" "404"
 docker rm -f "$foreign" >/dev/null 2>&1
 
 echo "== 6. Nothing but Traefik is published on the host"
 published=$(docker compose ps --format json | jq -r 'select(.Service != "traefik") | .Service as $s | (.Publishers // [])[] | select(.PublishedPort != 0) | "\($s):\(.PublishedPort)"' || true)
 [[ -z "$published" ]] && ok "only traefik publishes ports" || bad "published ports: $published"
-expect "host → 127.0.0.1:18080 bound to loopback only" \
+expect "host → 127.0.0.1:$P bound to loopback only" \
   "$(docker compose port traefik 80 | cut -d: -f1)" "127\.0\.0\.1"
 
 echo

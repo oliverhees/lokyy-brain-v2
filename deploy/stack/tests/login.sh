@@ -4,7 +4,7 @@
 # Usage: login.sh <cookie-jar> <protected-url> <username> <password>
 set -euo pipefail
 jar=$1 url=$2 user=$3 pass=$4
-base=http://auth.localhost:18080
+base=http://auth.localhost:${STACK_HTTP_PORT:-18080}
 
 # 1. Follow redirects from the protected URL to the Authentik flow page.
 final=$(curl -s -L -c "$jar" -b "$jar" -o /dev/null -w '%{url_effective}' "$url")

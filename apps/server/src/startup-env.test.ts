@@ -21,3 +21,26 @@ describe('web server startup validation', () => {
     }
   }, 70_000);
 });
+
+// LBV2-26 QA: exactly one of MINDBASE_EMBED_URL / MINDBASE_EMBED_TOKEN is a configuration error that
+// must stop the web server at startup, not surface lazily on the first embedding.
+describe('web server startup: shared embedding service configuration', () => {
+  it.each([
+    [{ MINDBASE_EMBED_URL: 'http://embed:8080' }, /MINDBASE_EMBED_TOKEN/],
+    [{ MINDBASE_EMBED_TOKEN: 'embed-token-0123456789abcdef0123456789' }, /MINDBASE_EMBED_URL/],
+    [{ MINDBASE_EMBED_URL: 'ftp://embed', MINDBASE_EMBED_TOKEN: 'embed-token-0123456789abcdef0123456789' }, /MINDBASE_EMBED_URL/],
+  ])('exits 1 for %o', (extra, message) => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'mb-startup-'));
+    try {
+      const env: NodeJS.ProcessEnv = { ...process.env, MINDBASE_DATA_DIR: dataDir, PORT: '0', MINDBASE_MDNS: 'off', ...extra };
+      delete env['VAULT_PROXY_SECRET'];
+      delete env['VAULT_REQUIRE_PROXY_SECRET'];
+      const run = spawnSync('npx', ['tsx', 'src/index.ts'], { cwd: join(__dirname, '..'), env, encoding: 'utf-8', timeout: 60_000 });
+      expect(run.status).toBe(1);
+      expect(run.stderr).toMatch(message);
+      expect(run.stderr).not.toContain('embed-token-0123456789abcdef0123456789');
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 70_000);
+});

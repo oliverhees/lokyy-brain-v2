@@ -41,6 +41,33 @@ RUN CI=true pnpm install --prod --frozen-lockfile \
  && rm -f node_modules/.pnpm/node_modules/@mindbase/core apps/server/node_modules/@mindbase/core \
  && find node_modules apps/server/node_modules apps/mcp/node_modules -xtype l -delete
 
+# Shared embedding service (LBV2-26, deploy/stack/embed): one BGE-M3 for all vaults of a server.
+# Build with --target embed. Its own tests run first (a failing test fails the build); runtime reuses
+# the vault's production node_modules for @xenova/transformers + onnxruntime-node (same lockfile).
+# Node 24 runs the TypeScript sources directly (type stripping); onnxruntime-node is N-API.
+FROM node:24-alpine AS embed-test
+WORKDIR /embed
+COPY deploy/stack/embed/package.json ./
+COPY deploy/stack/embed/src ./src
+COPY deploy/stack/embed/test ./test
+RUN node --test test/*.test.ts
+
+FROM node:24-bookworm-slim AS embed
+WORKDIR /app
+COPY --from=prod-deps /src/node_modules /app/node_modules
+COPY --from=prod-deps /src/apps/server/node_modules /app/apps/server/node_modules
+COPY --from=embed-test /embed/package.json /app/embed/package.json
+COPY --from=embed-test /embed/src /app/embed/src
+RUN useradd -r -u 10002 embed
+USER embed
+ENV NODE_ENV=production \
+    EMBED_MODELS_DIR=/models \
+    EMBED_TRANSFORMERS_FROM=/app/apps/server/
+EXPOSE 8080
+HEALTHCHECK --interval=10s --timeout=3s --start-period=120s --retries=5 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.EMBED_PORT||8080)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+CMD ["node", "/app/embed/src/main.ts"]
+
 FROM node:20-bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates tini \

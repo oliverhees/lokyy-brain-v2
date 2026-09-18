@@ -2,7 +2,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { FileStore, SearchIndex, FeedStore, CardStore, TemplateStore, WikiIndex, reindex, createAdapter, type LLMAdapter, type Store } from '@mindbase/core';
+import { FileStore, ProjectScopedStore, SearchIndex, FeedStore, CardStore, TemplateStore, WikiIndex, reindex, createAdapter, isValidProjectId, type LLMAdapter, type Store } from '@mindbase/core';
 import { SynthesisCache } from './lib/synthesis-cache.js';
 import { extractPdfText } from './lib/extract-pdf.js';
 
@@ -45,6 +45,48 @@ function expandHome(p: string): string {
   return p;
 }
 
+const isDir = (p: string) => fs.stat(p).then((st) => st.isDirectory(), () => false);
+
+/**
+ * Same store as the web server (LBV2-26 QA): reads and writes go to projects/<currentProjectId>/
+ * (config.json, default "default") through ProjectScopedStore, so MCP and web app see the same pages.
+ * Only a legacy data dir — wiki/ present, projects/<id>/ absent — keeps the unscoped layout. The
+ * decision is re-checked per call until the project directory exists (the web server may scaffold or
+ * migrate it after this process started; the MCP server itself never migrates, to avoid racing it).
+ */
+async function openStore(dataDir: string): Promise<Store> {
+  const raw = new FileStore(dataDir);
+  const projectId = (await currentProjectId(dataDir)) ?? 'default';
+  if (!isValidProjectId(projectId)) throw new Error('config.json currentProjectId is not a valid project id');
+  const scoped = new ProjectScopedStore(raw, projectId);
+  let settled = false;
+  const pick = async (): Promise<Store> => {
+    if (settled) return scoped;
+    if (await isDir(path.join(dataDir, 'projects', projectId))) { settled = true; return scoped; }
+    return (await isDir(path.join(dataDir, 'wiki'))) ? raw : scoped;
+  };
+  if ((await pick()) === scoped) {
+    // Pages an older MCP server wrote to the legacy location are invisible to both servers now.
+    try {
+      const stray = (await fs.readdir(path.join(dataDir, 'wiki', 'notes'))).filter((f) => f.endsWith('.md')).length;
+      if (stray > 0) {
+        process.stderr.write(`[mindbase-mcp] warning: ${stray} page(s) in the legacy <dataDir>/wiki/notes are outside project "${projectId}" and not served; move them to projects/${projectId}/wiki/notes to keep them\n`);
+      }
+    } catch { /* no legacy dir */ }
+  }
+  return {
+    writeText: async (p, c) => (await pick()).writeText(p, c),
+    readText: async (p) => (await pick()).readText(p),
+    writeJSON: async (p, v) => (await pick()).writeJSON(p, v),
+    readJSON: async <T>(p: string) => (await pick()).readJSON<T>(p),
+    writeBinary: async (p, d) => (await pick()).writeBinary(p, d),
+    readBinary: async (p) => (await pick()).readBinary(p),
+    exists: async (p) => (await pick()).exists(p),
+    listDir: async (p) => (await pick()).listDir(p),
+    remove: async (p) => (await pick()).remove(p),
+  };
+}
+
 export async function loadContext(opts: {
   dataDir?: string;
   /** Required, no default (fail closed): true only for stdio, false for remote transports. */
@@ -56,7 +98,7 @@ export async function loadContext(opts: {
   const dataDir = expandHome(opts.dataDir ?? process.env['MINDBASE_DATA_DIR'] ?? path.join(os.homedir(), 'mindbase-data'));
   await fs.mkdir(dataDir, { recursive: true });
 
-  const store = new FileStore(dataDir);
+  const store = await openStore(dataDir);
   const feeds = new FeedStore(dataDir);
   const cards = new CardStore(dataDir);
   const templates = new TemplateStore(dataDir);
