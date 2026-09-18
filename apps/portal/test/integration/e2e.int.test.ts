@@ -30,9 +30,14 @@ async function revealKey(b: Browser): Promise<string> {
   return r.json<{ apiKey: string }>().apiKey;
 }
 
+/** Admin API call; honours one Retry-After (back-to-back runs share akadmin's limit of 10 invitations/min). */
 async function portalApi(b: Browser, method: string, path: string, body?: unknown): Promise<Res> {
   const session = (await b.visit(`${APP}/api/session`, admin)).json<{ csrfToken: string }>();
-  return b.request(`${APP}${path}`, { method, body, headers: { 'x-csrf-token': session.csrfToken, accept: 'application/json' } });
+  const send = () => b.request(`${APP}${path}`, { method, body, headers: { 'x-csrf-token': session.csrfToken, accept: 'application/json' } });
+  const r = await send();
+  if (r.status !== 429) return r;
+  await new Promise((res) => setTimeout(res, (Number(r.headers['retry-after']) + 1) * 1000));
+  return send();
 }
 
 describe.runIf(enabled)('E2E: invite → accept → vault login → MCP tools/list', () => {
