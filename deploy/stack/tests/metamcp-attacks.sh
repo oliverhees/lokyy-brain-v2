@@ -253,7 +253,7 @@ for _ in $(seq 1 30); do [[ $(curl -s -o /dev/null -w '%{http_code}' $MCP_HOST/)
 expect "user key → MetaMCP key management (tRPC apiKeys.create) needs the admin login" \
   "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' $MCP_HOST/trpc/frontend.apiKeys.create)" "302"
 expect "user key → tRPC through the gate path (path traversal)" \
-  "$(curl -s --path-as-is -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' '$MCP_HOST/metamcp/anna/mcp/../../../trpc/frontend.apiKeys.create')" "302|400|401|404"
+  "$(curl -s --path-as-is -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -K <(keycfg) -d '{"name":"x"}' "$MCP_HOST/metamcp/anna/mcp/../../../trpc/frontend.apiKeys.create")" "302|400|401|404"
 expect "user key did not create an API key" "$(count "select count(*) from api_keys where name = 'x'")" "0"
 
 echo "== 8. Session binding in mcp-gate (M2)"

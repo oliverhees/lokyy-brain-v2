@@ -220,21 +220,22 @@ Risks:
 - `GET /api/config` returns the whole config including `apiKey` to every user who can open the vault web UI.
 - Embeddings do not use EUrouter: BGE-M3 runs in the stack's own `embed` service (`@xenova/transformers`, ~570 MB model fetched once by `model-prefetch`).
 
-### Memory (LBV2-26, measured 2026-09-18, `docker stats`, 1 s sampling)
+### Memory (LBV2-26, measured 2026-09-18 on lokyy-emb; `docker stats` 1 s sampling and the cgroup's `memory.peak`)
 
 With the shared `embed` service the vaults no longer hold the model:
 
 | State | vault-anna | embed |
 |---|---|---|
-| Idle after start, model loaded | 190–200 MiB | 2.09 GiB |
-| Indexing 200 generated pages (≈2,500 chars each) through the service, then 20 hybrid searches via Traefik (`tests/embed.sh`) | **226 MiB peak** | 2.17 GiB peak |
-| One request with 16 texts of 8,000 chars (the maximum length; ~3.3 s per text on 16 cores) | – | **2.38 GiB peak** |
+| Idle after start, model loaded | 190–200 MiB | 2.0–2.1 GiB |
+| Indexing 200 generated pages (≈2,500 chars each) through the service, then 20 hybrid searches via Traefik | **241 MiB peak** | 2.05 GiB (sampled) |
+| Worst case (audit HIGH-2): 4 × 4 texts of 8,000 CJK chars and 4 × 4 texts of 8,000 random single-char tokens concurrently, each cut at 2,048 tokens | – | **3,113 MiB cgroup peak** (whole `tests/embed.sh` run, incl. spikes) |
+| 16 × 8,000 CJK chars in one request | – | refused (`413`, token budget) |
 
-Limits: `VAULT_MEM_LIMIT` default `1g` (vaults also run OCR and PDF extraction), `EMBED_MEM_LIMIT` default `3584m` (≈1.1 GiB above the measured worst case). Before LBV2-26 every vault loaded BGE-M3 itself (2.62 GiB peak per vault after the LBV2-24 cache fix; 8.98 GiB peak without it on 2026-09-16), so 30 vaults needed 30 model copies; now they share one. Throughput is the new limit: the service embeds one text at a time (all cores per text), round-robin across vaults, so a vault indexing a large import slows other vaults' first-time indexing but not their search beyond one text's latency.
+Limits: `VAULT_MEM_LIMIT` default `1g` (vaults also run OCR and PDF extraction), `EMBED_MEM_LIMIT` default `4g` (≈1 GiB above the measured worst case). Without the 2,048-token cap a single 8,000-token text could exceed any sensible limit (attention memory grows with tokens²); with the cap, a process-level test over varied CJK lengths peaked at 3.19 GB (ONNX arena off; 3.32 GB with it; 2.74 GB with a 1,024-token cap). A search query under that bulk load was answered in 12.5 s end to end (it waits for at most the one text being embedded, ~3–7 s for 2,048 tokens, plus `docker exec` overhead in the test). Before LBV2-26 every vault loaded BGE-M3 itself (2.62 GiB peak per vault), so 30 vaults needed 30 model copies; now they share one. Throughput is the new limit: one text at a time with all cores, search queries first, bulk indexing shared round-robin across vaults.
 
 ## Attack tests
 
-`tests/isolation.sh` (161 checks) logs in through the real Authentik flow (`tests/login.sh`) and verifies:
+`tests/isolation.sh` (163 checks) logs in through the real Authentik flow (`tests/login.sh`) and verifies:
 
 1. Anonymous requests are redirected to the login.
 2. Browser isolation: each user reaches only their own vault; readers are denied the company vault web UI; only admins reach MetaMCP.
@@ -247,7 +248,7 @@ Limits: `VAULT_MEM_LIMIT` default `1g` (vaults also run OCR and PDF extraction),
 8. Only Traefik publishes a port, bound to `127.0.0.1`.
 9. Shared embedding service (section 5d, LBV2-26): each vault embeds with its own token; another vault's token (bound to that vault's network), no token and a wrong token get `401`; oversized requests `400`; `embed` is no proxy (absolute-form URL, `CONNECT`, foreign `Host` reach no vault) and its addresses on other vaults' embed networks are unreachable; `embed` has no internet and no route to public IPs, its networks are internal, it runs read-only, non-root, without capabilities and with a memory limit, holds only token hashes, and its logs contain neither text nor tokens; hybrid search in a vault goes through the service; vaults do not mount `/models`.
 
-`tests/embed.sh` (9 checks): service vectors are identical to the former in-process vectors (4 texts incl. umlauts, emoji and one over 8,000 chars: cosine 1.0000000, max |Δ| 0), and vault-anna stays below 400 MiB (`VAULT_RSS_LIMIT_MIB`) while 200 pages are indexed through the service and 20 hybrid searches run; `embed` stays below its limit and is not OOM-killed. It writes and afterwards deletes 200 test pages in vault-anna.
+`tests/embed.sh` (16 checks): service vectors are identical to the former in-process vectors (4 texts incl. umlauts, emoji and one over 8,000 chars: cosine 1.0000000, max |Δ| 0), and vault-anna stays below 400 MiB (`VAULT_RSS_LIMIT_MIB`) while 200 pages are indexed through the service and 20 hybrid searches run; `embed` stays below its limit and is not OOM-killed; worst-case token-heavy input (section 3) is refused above the token budget, stays inside the limit (cgroup `memory.peak`) and does not block a concurrent search query for more than `QUERY_MAX_S` (15 s). It writes and afterwards deletes 200 test pages in vault-anna. All suites first run `tests/port-gate.sh` (no hard-coded host port).
 
 `tests/metamcp-attacks.sh` (98 checks, all through Traefik with the provisioned keys):
 
