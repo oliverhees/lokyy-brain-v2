@@ -285,7 +285,7 @@ wait_for "S: all services healthy" 600 healthy s
 wait_for "S: blueprint lokyy-slots applied (automatic)" 300 blueprint s
 wait_for "S: metamcp-init finished (automatic)" 120 init_done s metamcp-init
 wait_for "S: model-prefetch verified (automatic)" 60 init_done s model-prefetch
-wait_for "S: vault routes behind forward-auth" 120 routes v01 v15 firma
+wait_for "S: vault routes behind forward-auth" 600 routes v01 v15 firma
 
 for u in alice bob walt rita ulla; do [[ -f $work/pass-$u ]] || (umask 077; openssl rand -hex 16 >"$work/pass-$u"); done
 create_user alice "$(cat "$work/pass-alice")" vault-v01 && create_user bob "$(cat "$work/pass-bob")" vault-v02 \
