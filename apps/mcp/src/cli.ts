@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // apps/mcp/src/cli.ts
+import { remoteEmbedderFromEnv } from '@mindbase/core';
 import { runServer } from './index.js';
 
 interface ParsedArgs {
@@ -44,6 +45,8 @@ async function main() {
   }
 
   try {
+    // Shared embedding service (LBV2-26): half or invalid configuration stops the server at startup
+    remoteEmbedderFromEnv(process.env);
     await runServer({ dataDir: args.dataDir });
   } catch (e) {
     process.stderr.write(`[mindbase-mcp] fatal: ${(e as Error).message}\n`);

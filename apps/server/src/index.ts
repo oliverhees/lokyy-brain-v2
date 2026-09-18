@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(import.meta.dirname, '../../../.env') });
 
 import express from 'express';
-import { readFetchConcurrency, readLlmTimeoutMs, logLlmHostPolicy } from '@mindbase/core';
+import { readFetchConcurrency, readLlmTimeoutMs, logLlmHostPolicy, remoteEmbedderFromEnv } from '@mindbase/core';
 import { createContext } from './context';
 import { proxySecretGuard, readProxySecret } from './lib/proxy-secret';
 import { resolveDataDirAsync } from './config';
@@ -107,6 +107,9 @@ async function main() {
   assertTrustedHeaderConfig(process.env);
   // Startup log for the LLM endpoint allow-list (LBV2-19); fail closed is loud.
   logLlmHostPolicy(process.env);
+  // Shared embedding service (LBV2-26): only one of MINDBASE_EMBED_URL / _TOKEN, or an invalid URL,
+  // stops the server here instead of failing the first embedding.
+  remoteEmbedderFromEnv(process.env);
   const dataDir = await resolveDataDirAsync();
 
   const layoutAudit = await auditProjectLayouts(dataDir);
