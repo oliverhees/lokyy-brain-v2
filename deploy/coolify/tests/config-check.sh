@@ -13,6 +13,8 @@ fail=0
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
 
 node --test "$dir/tests/generate.test.ts" >"$tmp/unit.log" 2>&1 && echo "ok   generator unit tests" || { cat "$tmp/unit.log"; echo "FAIL generator unit tests"; fail=1; }
+node --test "$dir/../stack/tests/blueprint-check.test.ts" >"$tmp/bp.log" 2>&1 && echo "ok   blueprint checker tests (YAML parse, fixtures, shipped blueprints)" || { cat "$tmp/bp.log"; echo "FAIL blueprint checker tests"; fail=1; }
+check "blueprint-check passes every shipped blueprint" '"$dir/../stack/tests/blueprint-check.sh" "$dir"/authentik/blueprints/*.yaml "$dir"/../stack/authentik/blueprints/*.yaml >/dev/null 2>&1'
 check "generator --check reports no stale file" 'node "$dir/generate.ts" --check'
 
 # Emulates Coolify: one random value per magic variable referenced in the file.

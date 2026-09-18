@@ -575,6 +575,28 @@ export function renderTraefikDynamic(pkg: PackageName): string {
   return L.join('\n') + '\n';
 }
 
+// Authentik system blueprints this blueprint depends on (akadmin + "authentik Admins"; managed proxy scopes)
+const BLUEPRINT_DEPS = [
+  "  # Dependencies: akadmin + \"authentik Admins\" (bootstrap) and the managed proxy scope mappings must exist",
+  "  # before this blueprint references them (fresh stack: otherwise providers get no property mappings)",
+  "  - model: authentik_blueprints.metaapplyblueprint",
+  "    attrs: { identifiers: { name: authentik Bootstrap }, required: true }",
+  "  - model: authentik_blueprints.metaapplyblueprint",
+  "    attrs: { identifiers: { name: \"System - OAuth2 Provider - Scopes\" }, required: true }",
+  "  - model: authentik_blueprints.metaapplyblueprint",
+  "    attrs: { identifiers: { name: \"System - Proxy Provider - Scopes\" }, required: true }",
+];
+// Explicit scope mappings: a provider created before the managed mappings exist would otherwise get none
+// and the outpost would send an empty X-authentik-username (401 everywhere)
+const PROXY_PROPERTY_MAPPINGS = [
+  "      property_mappings:",
+  "        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]",
+  "        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]",
+  "        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]",
+  "        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-entitlements]]",
+  "        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]",
+];
+
 // Authentik blueprint: groups, one forward-auth proxy provider + application + group binding per vault,
 // the embedded outpost, and the bootstrap admin (akadmin) in lokyy-admins. No other users: the portal
 // creates them and assigns slots.
@@ -589,6 +611,7 @@ export function renderBlueprint(pkg: PackageName): string {
     '  labels:',
     '    blueprints.goauthentik.io/instantiate: "true"',
     'entries:',
+    ...BLUEPRINT_DEPS,
     '  # Web access to a personal vault slot (exactly one user per group)',
   ];
   const group = (key: string, name: string) =>
@@ -617,6 +640,7 @@ export function renderBlueprint(pkg: PackageName): string {
           '      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]',
           '      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]',
           '      access_token_validity: hours=8',
+          ...PROXY_PROPERTY_MAPPINGS,
         ]
         : ['    attrs:', '      <<: *provider', `      name: ${name}`, `      external_host: !Format ["https://${host}.%s", !Env BASE_DOMAIN]`]),
       '  - model: authentik_core.application',
