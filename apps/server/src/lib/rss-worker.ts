@@ -99,7 +99,7 @@ export class RSSWorker {
 
   private async pollFeed(feed: Feed): Promise<PollResult> {
     const headers: Record<string, string> = {
-      'User-Agent': this.ctx.config.rss?.fetchUserAgent ?? 'MindBase/0.1',
+      'User-Agent': this.ctx.config.rss?.fetchUserAgent ?? 'LokyyBrain/0.1',
     };
     if (feed.etag) headers['If-None-Match'] = feed.etag;
     if (feed.last_modified) headers['If-Modified-Since'] = feed.last_modified;
@@ -190,7 +190,7 @@ export class RSSWorker {
       try {
         const res = await this.fetcher(item.link, {
           headers: {
-            'User-Agent': this.ctx.config.rss?.fetchUserAgent ?? 'MindBase/0.1',
+            'User-Agent': this.ctx.config.rss?.fetchUserAgent ?? 'LokyyBrain/0.1',
           },
           timeoutMs: this.ctx.config.rss?.fetchTimeoutMs ?? 15000,
         });

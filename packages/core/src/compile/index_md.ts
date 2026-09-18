@@ -7,7 +7,7 @@ export interface IndexEntry {
   one_liner: string;
 }
 
-const PLACEHOLDER = '# MindBase Wiki Index\n\n(empty)\n';
+const PLACEHOLDER = '# Lokyy Brain Wiki Index\n\n(empty)\n';
 
 export async function readIndex(store: Store): Promise<string> {
   const path = indexPath();

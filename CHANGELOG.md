@@ -2,6 +2,9 @@
 
 ## Unreleased — Lokyy Brain v2 fork
 
+### Changed
+- Product name "Lokyy Brain" everywhere users, admins and the LLM read it (LBV2-35): web UI, MCP server name (`lokyy-brain`) and instructions/tool descriptions, brief e-mail, LLM prompts, vault headings, docs. Package names, `MINDBASE_*` variables, tool names, the `mindbase://` scheme and the `X-Mindbase-User` header are unchanged. CI guard `scripts/check-brand.mjs`. See `docs/adr/0001-rebrand-lokyy-brain.md`.
+
 ### Added
 - Setup portal `apps/portal` (LBV2-28) at `app.<domain>` behind Authentik: admin setup wizard (company, EUrouter key + route shared or per vault, optional SMTP), employee invitations (slot assignment, Authentik user + groups, one-time set-password link, MetaMCP provisioning, optional mail), role change, disable/enable, remove (MCP key revoked first, vault data kept, slot retired; explicit restore or release), audit log, and "Mein Zugang" (vault links, MCP URL, key reveal/regenerate, Claude Code and `mcpServers` snippets). Holds no Authentik token: the new `authentik-gate` service (`deploy/stack/authentik-gate`) alone holds the least-privilege service-account token and lets the portal manage only its own employees (never superusers, `akadmin` or `lokyy-admins` members; allowlisted groups; no password endpoint). Authentik blueprint `apps/portal/authentik/lokyy-portal.yaml`, API `apps/portal/openapi.json`, E2E stack `apps/portal/test/e2e`. See `docs/setup-portal.md`.
 - MCP over Streamable HTTP (`apps/mcp/dist/http.js`) with bearer token, session limits and Host allow-list; optional read-only token profile with a fail-closed allowlist of 13 tools and a reader view that hides `internal`/`pii` pages. See `docs/self-hosting-mcp-http.md`.
@@ -19,6 +22,7 @@
 - `MINDBASE_DISABLE_CAPTURE=1`: `/api/capture` and `/api/devices` return 404, the capture worker and mDNS do not start, `/api/health` reports `features.capture`, and the Devices page shows a disabled notice.
 
 ### Changed — may affect existing (stdio / single-user) setups
+- **Embed service plain tokens** (LBV2-36): `EMBED_TOKEN_<VAULT>` accepts every `openssl rand -hex 32` token (64 hex characters; the previous "16 distinct characters" rule refused about a quarter of them and the service did not start) and 32+ random letters and digits; repeated characters, periodic patterns and tokens dominated by one character are still refused.
 - **MCP server uses the web server's project layout** (LBV2-26): reads and writes go to `projects/<currentProjectId>/` like the web app; before, the MCP server used `<dataDir>/wiki/notes`, so MCP-created notes never showed up in the web app. Pages already written there are reported at MCP startup and have to be moved manually. Legacy data dirs without `projects/` are unchanged.
 - **Embedding indexer sweep** (`MINDBASE_EMBED_SWEEP_MS`, default 60 s): pages that failed to embed or were written by another process are embedded without a restart.
 - **Embeddings are truncated at 2048 tokens** (LBV2-26, also in-process): texts longer than that (rare for 8000 characters of prose, common for CJK) get a vector of their first 2048 tokens; such pages get a different vector after re-indexing.

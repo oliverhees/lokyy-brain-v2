@@ -191,7 +191,7 @@ export function toHTML(graph: PageGraph, opts: ExportOpts = {}): string {
   }));
 
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>MindBase Knowledge Graph</title>
+<html><head><meta charset="utf-8"><title>Lokyy Brain Knowledge Graph</title>
 <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 <style>
   * { box-sizing: border-box; }
@@ -266,7 +266,7 @@ network.on('click', function(params) {
   document.getElementById('info').innerHTML =
     '<b>' + escHtml(n.label) + '</b>' +
     '<br><span style="color:#888;font-size:11px">' + escHtml(n.title || '') + '</span>' +
-    '<br><a href="' + url + '" target="_blank" rel="noopener" style="font-size:11px">Open in MindBase &rarr;</a>';
+    '<br><a href="' + url + '" target="_blank" rel="noopener" style="font-size:11px">Open in Lokyy Brain &rarr;</a>';
   window.open(url, '_blank');
 });
 

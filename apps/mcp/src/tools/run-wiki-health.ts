@@ -10,7 +10,7 @@ export const definition = {
 };
 
 export async function handle(ctx: Context) {
-  if (!ctx.config) return errorResult('LLM not configured', 'Open MindBase Settings to configure your LLM.');
+  if (!ctx.config) return errorResult('LLM not configured', 'Open Lokyy Brain Settings to configure your LLM.');
   try {
     const graph = ctx.wikiIndex.buildGraph();
     const insights = await generateInsights(graph, ctx.store);

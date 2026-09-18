@@ -1,8 +1,8 @@
 # mindbase-mcp
 
-> **Turn your MindBase wiki into the long-term memory of every AI agent you use.**
+> **Turn your Lokyy Brain wiki into the long-term memory of every AI agent you use.**
 
-A [Model Context Protocol](https://modelcontextprotocol.io) server that lets Claude Desktop, Claude Code, Cursor, Windsurf, Cline, and any other MCP-compatible client read, write, and reason about your local MindBase wiki.
+A [Model Context Protocol](https://modelcontextprotocol.io) server that lets Claude Desktop, Claude Code, Cursor, Windsurf, Cline, and any other MCP-compatible client read, write, and reason about your local Lokyy Brain wiki.
 
 Built for the engineer who wants their AI tools to *actually know what they know*.
 
@@ -15,7 +15,7 @@ Built for the engineer who wants their AI tools to *actually know what they know
 - **7 prompts** — `daily-digest`, `brainstorm`, `audit`, `connect`, `explain`, `quiz`, `write` (surface as slash commands in clients that support MCP prompts)
 - **Graph-aware retrieval** — `ask_wiki` doesn't just keyword-match; it traverses your wikilink graph so the AI sees the surrounding cluster
 - **Audit trail** — anything an AI writes is tagged `created_via: mcp` with the client/tool, so you always know what's human and what's machine
-- **Standalone process** — runs on stdio against your wiki on disk; the MindBase web app does not need to be running
+- **Standalone process** — runs on stdio against your wiki on disk; the Lokyy Brain web app does not need to be running
 - **Multi-vault** — one config can connect Claude to a personal wiki and a work wiki simultaneously
 - **Privacy-first** — everything stays local, no telemetry, no outbound calls except the LLM you've configured
 
@@ -85,7 +85,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 }
 ```
 
-Quit Claude Desktop fully (`Cmd+Q`), reopen. The MindBase tools and prompts are now available.
+Quit Claude Desktop fully (`Cmd+Q`), reopen. The Lokyy Brain tools and prompts are now available.
 
 ### Cursor
 
@@ -126,7 +126,7 @@ Opens a browser GUI where you can click any tool, fill the input form, and see r
 
 Once connected, paste these into your AI client:
 
-- *"Run a wiki health check on my MindBase and tell me the three most important things to clean up."*
+- *"Run a wiki health check on my Lokyy Brain and tell me the three most important things to clean up."*
 - *"What's been added to my wiki in the last 7 days? Group by topic."*
 - *"Find pages related to `<your-top-hub-slug>` and summarize the cluster in five bullets."*
 - *"Save this conversation as a wiki excerpt titled 'MCP testing notes'."*
@@ -311,8 +311,8 @@ These are just composed prompts — they instruct the AI to call the right combi
 ```
 
 - **Transport:** stdio (the MCP standard for local servers).
-- **Storage:** reads and writes the same file-based MindBase data directory the web app uses (`FileStore` from `@mindbase/core`).
-- **No web server needed:** the MCP process talks to your wiki directly. You can have the MindBase web app running or not — they don't conflict (writes use atomic file locks).
+- **Storage:** reads and writes the same file-based Lokyy Brain data directory the web app uses (`FileStore` from `@mindbase/core`).
+- **No web server needed:** the MCP process talks to your wiki directly. You can have the Lokyy Brain web app running or not — they don't conflict (writes use atomic file locks).
 - **LLM calls:** only the few tools that need them (`ingest_source`, `ask_wiki`, `run_wiki_health`) actually call your configured LLM. The rest run on local indexes.
 
 ---
@@ -357,7 +357,7 @@ pnpm -F mindbase-mcp build
 
 **Tools return empty results**
 
-Check `--data-dir` points at a real MindBase data directory. The default is `~/mindbase-data`. Verify with:
+Check `--data-dir` points at a real Lokyy Brain data directory. The default is `~/mindbase-data`. Verify with:
 
 ```bash
 ls ~/mindbase-data/projects

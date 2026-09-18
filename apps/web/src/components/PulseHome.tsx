@@ -61,7 +61,7 @@ export function PulseHome({ onOpenArticle, onOpenReview }: Props) {
       <div className="max-w-xl mx-auto px-8 py-16 text-center" data-testid="pulse-home-empty">
         <div className="hero-mark mx-auto mb-6"></div>
         <div className="text-[28px] font-semibold mb-3" style={{ color: 'var(--text-high)' }}>
-          Welcome to MindBase.
+          Welcome to Lokyy Brain.
         </div>
         <div className="text-[13px] leading-[1.6] mb-6" style={{ color: 'var(--text-mid)' }}>
           Your wiki's empty. Once you write a few notes, this space shows you<br />

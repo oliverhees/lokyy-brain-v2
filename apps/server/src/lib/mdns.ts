@@ -3,7 +3,7 @@ import { Bonjour } from 'bonjour-service';
 export function startMdns(port: number): () => void {
   const bonjour = new Bonjour();
   const service = bonjour.publish({
-    name: 'MindBase',
+    name: 'Lokyy Brain',
     type: 'mindbase',
     port,
     txt: { version: '0.1' },

@@ -11,6 +11,8 @@ FROM node:20-bookworm AS build
 WORKDIR /src
 RUN corepack enable
 COPY . .
+# Optional: setup portal URL for the "Connect to AI clients" link in the web UI.
+ARG VITE_LOKYY_PORTAL_URL=""
 RUN pnpm install --frozen-lockfile \
  && pnpm -F @mindbase/core build \
  && pnpm -F @mindbase/web build \

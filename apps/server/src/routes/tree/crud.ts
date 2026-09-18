@@ -22,7 +22,7 @@ function wildcardPath(req: { params: unknown }): string {
 
 /**
  * For contributors, the URL path may include the user as the first segment
- * (e.g. `haobing/2026-06-09.md`). Split it out so we can pass just the file
+ * (e.g. `anna/2026-06-09.md`). Split it out so we can pass just the file
  * portion to `resolveTreePath`, which will re-prepend the user directory.
  *
  * Rules:

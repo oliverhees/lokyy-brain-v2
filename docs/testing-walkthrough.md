@@ -130,7 +130,7 @@ Prerequisites:
 - [ ] Toolbar icon shows **amber badge "1"**
 - [ ] Within ~10 seconds: status updates to `processing`
 - [ ] Within ~60–90 seconds: status updates to `compiled`; badge disappears
-- [ ] Click "Open wiki →" → opens the new wiki page in MindBase
+- [ ] Click "Open wiki →" → opens the new wiki page in Lokyy Brain
 
 ### 15. Selection capture
 - [ ] Highlight a paragraph on any website
@@ -143,7 +143,7 @@ Prerequisites:
 - [ ] Visible-tab screenshot captured + uploaded
 - [ ] After 60–90s, OCR'd text becomes the wiki page body
 
-### 17. Inbox view in MindBase web
+### 17. Inbox view in Lokyy Brain web
 - [ ] Sidebar "Inbox" → all captures listed with status badges
 - [ ] Failed entries have "Retry" button
 - [ ] Each entry has "Delete" option
@@ -238,7 +238,7 @@ start).
 ### 31. save_chat_excerpt
 - [ ] After any substantive conversation, ask: "save this as a wiki page titled 'MCP test'"
 - [ ] Claude calls `save_chat_excerpt`
-- [ ] Verify the new page in MindBase web wiki list, with `created_via: mcp` in its frontmatter
+- [ ] Verify the new page in Lokyy Brain web wiki list, with `created_via: mcp` in its frontmatter
 
 ---
 
@@ -254,14 +254,14 @@ cd apps/ios && xcodegen generate && open MindBase.xcodeproj
 ### 33. iOS pairing
 - [ ] Settings tab → "Pair this device" → modal sheet
 - [ ] Default server URL is `http://localhost:4321` (Mac running server reachable from sim)
-- [ ] Get pair code from MindBase web → paste (or scan QR with iPhone real-device camera)
+- [ ] Get pair code from Lokyy Brain web → paste (or scan QR with iPhone real-device camera)
 - [ ] Click "Pair this device" → ✓ Paired
 
 ### 34. iOS Voice recorder
 - [ ] Voice tab → tap large mic button → records (allow mic permission first time)
 - [ ] Tap again to stop → upload begins
 - [ ] Status "✓ Saved to inbox" appears
-- [ ] Check MindBase web Inbox → new entry with `captured_via: ios`
+- [ ] Check Lokyy Brain web Inbox → new entry with `captured_via: ios`
 
 ### 35. iOS Inbox view
 - [ ] Inbox tab → list of captures with status badges

@@ -27,7 +27,7 @@ export async function extractArticleText(
   // Failures throw UntrustedFetchError with the generic message; details are logged.
   const res = await fetchUntrusted(url, {
     headers: {
-      'User-Agent': opts.userAgent ?? 'MindBase/0.1',
+      'User-Agent': opts.userAgent ?? 'LokyyBrain/0.1',
       Accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
     },
     timeoutMs: opts.timeoutMs ?? 15000,

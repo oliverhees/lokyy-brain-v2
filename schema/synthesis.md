@@ -1,6 +1,6 @@
 # Active Wiki Engine Preamble
 
-This file is prepended to the prompts used by MindBase's three Active Wiki engines:
+This file is prepended to the prompts used by Lokyy Brain's three Active Wiki engines:
 
 - **Synthesis** — "what does my wiki collectively know about TOPIC"
 - **Network** — semantic neighbors + missing-link suggestions

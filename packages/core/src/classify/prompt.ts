@@ -3,7 +3,7 @@ import type { Folder } from './folders';
 
 const MAX_NOTE_CHARS = 4000;
 
-const FIXED_HEADER = `You are a note classifier for MindBase. Your job: read a note and pick the single best-fitting folder from a fixed list.
+const FIXED_HEADER = `You are a note classifier for Lokyy Brain. Your job: read a note and pick the single best-fitting folder from a fixed list.
 
 OUTPUT FORMAT — MUST be valid JSON, nothing else:
   {"folder": "<one of the available folder paths>", "reason": "<one sentence>"}

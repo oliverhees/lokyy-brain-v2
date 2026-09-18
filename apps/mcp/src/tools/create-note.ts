@@ -26,7 +26,7 @@ export const definition = {
       title: { type: 'string' },
       slug: { type: 'string', description: 'Override auto-derived slug (must match [a-z0-9][a-z0-9_-]*)' },
       kind: { type: 'string', description: "default 'note'. Known: note, daily, meeting, person, project, concept, or custom" },
-      template: { type: 'string', description: 'Template name (without .md) from ~/mindbase-data/templates/' },
+      template: { type: 'string', description: 'Template name (without .md) from the templates/ folder of the data directory' },
       content: { type: 'string', description: 'Raw markdown body. Mutually exclusive with template.' },
       tags: { type: 'array', items: { type: 'string' } },
       project: { type: 'string' },

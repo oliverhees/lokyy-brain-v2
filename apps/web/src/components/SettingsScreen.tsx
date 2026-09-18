@@ -278,14 +278,8 @@ export function SettingsScreen({ onClose }: Props) {
               Obsidian Integration
             </h2>
             <p className="text-[12px] mb-4" style={{ color: 'var(--text-low)' }}>
-              Color Obsidian's graph view by tag, category, or visibility. Open{' '}
-              <code
-                className="px-1.5 py-0.5 rounded text-[11px]"
-                style={{ background: 'var(--surface-2)', color: 'var(--text-mid)' }}
-              >
-                ~/mindbase-data/
-              </code>{' '}
-              as an Obsidian vault.
+              Color Obsidian's graph view by tag, category, or visibility. Open your data directory (see
+              Data location) as an Obsidian vault.
             </p>
             <div className="flex gap-2">
               <button
@@ -501,7 +495,7 @@ function UsernameField() {
   return (
     <div style={{ marginBottom: 16, padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
       <label style={{ display: 'block', marginBottom: 4, color: 'var(--text-mid)', fontSize: 12, fontWeight: 600 }}>
-        MindBase username
+        Lokyy Brain username
       </label>
       <div style={{ color: 'var(--text-low)', fontSize: 11, marginBottom: 8 }}>
         Used as the contributor directory: sources/contributors/&lt;user&gt;/
@@ -511,7 +505,7 @@ function UsernameField() {
           type="text"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="haobing"
+          placeholder="anna"
           style={{ padding: '6px 10px', width: 240, background: 'var(--bg-input, #111)', color: 'var(--text-high)', border: '1px solid var(--border-default)', borderRadius: 4, fontSize: 12 }}
         />
         <button

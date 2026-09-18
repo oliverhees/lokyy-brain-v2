@@ -95,7 +95,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
   if (!parsed.success) return errorResult(`Invalid input: ${parsed.error.issues[0]?.message ?? 'parse error'}`);
   const { query, limit } = parsed.data;
   const useEmbedService = Boolean(process.env['MINDBASE_EMBED_URL'] || process.env['MINDBASE_EMBED_TOKEN']);
-  if (!useEmbedService && !ctx.config) return errorResult('LLM not configured', 'Open MindBase Settings to set up your LLM provider.');
+  if (!useEmbedService && !ctx.config) return errorResult('LLM not configured', 'Open Lokyy Brain Settings to set up your LLM provider.');
 
   try {
     if (useEmbedService) {

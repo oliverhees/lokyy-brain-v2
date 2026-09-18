@@ -73,7 +73,7 @@ export function DataLocationView() {
               Data location
             </h2>
             <p className="text-[12.5px] mt-1" style={{ color: 'var(--text-mid)' }}>
-              The directory MindBase reads and writes — projects, raw sources, wiki pages,
+              The directory Lokyy Brain reads and writes — projects, raw sources, wiki pages,
               chats, embeddings. The same directory works as a wiki for the Claude Code skill
               (use <code style={{ color: 'var(--text-default)' }}>--wiki-path</code> there to
               point at it from the terminal).
@@ -119,7 +119,7 @@ export function DataLocationView() {
                   type="text"
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  placeholder="/Users/you/mindbase or ~/mindbase"
+                  placeholder="/data/lokyy-brain"
                   spellCheck={false}
                   disabled={info.envOverride || saving}
                   className="flex-1 px-3 py-2 rounded outline-none font-mono text-[12.5px]"

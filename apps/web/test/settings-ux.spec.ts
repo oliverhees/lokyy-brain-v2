@@ -60,8 +60,8 @@ test.describe('Settings UX', () => {
     await doneBtn.click();
     await page.waitForTimeout(300);
 
-    // Should be back to list view — MindBase header is visible
-    await expect(page.getByText('MindBase').first()).toBeVisible({ timeout: 3000 });
+    // Should be back to list view — Lokyy Brain header is visible
+    await expect(page.getByText('Lokyy Brain').first()).toBeVisible({ timeout: 3000 });
   });
 
   test('Settings full screen snapshot', async ({ page }) => {

@@ -1,15 +1,15 @@
 # Remote access via Cloudflare Tunnel
 
-By default, MindBase runs locally and is reachable only on your LAN. To capture from your phone while on cellular data (or from a friend's network, or from a coworking space), expose your local server through a Cloudflare Tunnel.
+By default, Lokyy Brain runs locally and is reachable only on your LAN. To capture from your phone while on cellular data (or from a friend's network, or from a coworking space), expose your local server through a Cloudflare Tunnel.
 
-This is the official, free, recommended way for self-hosted MindBase users to enable off-LAN device access without opening ports on your router or running a relay service.
+This is the official, free, recommended way for self-hosted Lokyy Brain users to enable off-LAN device access without opening ports on your router or running a relay service.
 
 ## Quick start (ephemeral tunnel)
 
 ```bash
 brew install cloudflared        # or: see https://github.com/cloudflare/cloudflared#installing-cloudflared
 
-# In one terminal — keep MindBase running:
+# In one terminal — keep Lokyy Brain running:
 pnpm -F @mindbase/server dev
 
 # In another:

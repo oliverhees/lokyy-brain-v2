@@ -148,7 +148,7 @@ function NavBtn({
 // Breadcrumb derivation helper used by Canvas.tsx. Co-located here so the
 // shape stays in lockstep with the toolbar's interface.
 // `opts.noteTitle` lets the caller pass a cached human title for note routes
-// so the breadcrumb shows "Notes › Mindbase development journey" instead of
+// so the breadcrumb shows "Notes › Lokyy Brain development journey" instead of
 // the raw slug ("Notes › untitled-…-1234").
 export function breadcrumbFor(
   route: CanvasRoute,

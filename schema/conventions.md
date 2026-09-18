@@ -1,4 +1,4 @@
-# MindBase Wiki Conventions
+# Lokyy Brain Wiki Conventions
 
 ## Page Structure
 

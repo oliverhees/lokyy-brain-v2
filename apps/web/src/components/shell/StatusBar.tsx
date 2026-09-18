@@ -16,7 +16,7 @@ export function StatusBar({
   modelName,
   appVersion,
   lastSyncLabel,
-  dataPath = '~/mindbase-data',
+  dataPath,
   onModelClick,
   onVersionClick,
   onSyncClick,
@@ -36,8 +36,12 @@ export function StatusBar({
         fontFamily: '-apple-system, ui-monospace, monospace',
       }}
     >
-      <span>{dataPath}</span>
-      {sep}
+      {dataPath && (
+        <>
+          <span>{dataPath}</span>
+          {sep}
+        </>
+      )}
       <span>{notesCount ?? '—'} notes</span>
       {sep}
       <span>{wikiCount ?? '—'} wiki</span>
