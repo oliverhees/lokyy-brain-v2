@@ -10,6 +10,7 @@ entries:
   - { model: authentik_core.group, id: g-fr, identifiers: { name: vault-firma-read }, attrs: { name: vault-firma-read } }
   - { model: authentik_core.group, id: g-fw, identifiers: { name: vault-firma-write }, attrs: { name: vault-firma-write } }
   - { model: authentik_core.group, id: g-admins, identifiers: { name: lokyy-admins }, attrs: { name: lokyy-admins } }
+  - { model: authentik_core.group, id: g-users, identifiers: { name: lokyy-users }, attrs: { name: lokyy-users } }
   - model: authentik_core.user
     identifiers: { username: akadmin }
     state: present
@@ -28,12 +29,17 @@ entries:
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       access_token_validity: hours=8
-  # No policy binding: every authenticated user reaches the portal ("Mein Zugang"); the portal
-  # itself decides admin vs. self by group.
+  # Portal: employees (lokyy-users) and admins; the portal itself decides admin vs. self by group.
   - model: authentik_core.application
     id: a-portal
     identifiers: { slug: portal }
     attrs: { name: Lokyy Portal, slug: portal, provider: !KeyOf p-portal, policy_engine_mode: any }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf a-portal, group: !KeyOf g-users }
+    attrs: { target: !KeyOf a-portal, group: !KeyOf g-users, order: 0 }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf a-portal, group: !KeyOf g-admins }
+    attrs: { target: !KeyOf a-portal, group: !KeyOf g-admins, order: 1 }
 
   - model: authentik_providers_proxy.proxyprovider
     id: p-v01

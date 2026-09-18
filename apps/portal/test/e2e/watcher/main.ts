@@ -40,7 +40,7 @@ async function tick(): Promise<void> {
   }
   const out: ClientsFile = { generatedAt: new Date().toISOString(), status: r.status, ...(r.error ? { error: r.error } : {}),
     restartMetamcp: r.restartMetamcp, sourceGeneration: spec.generation, users };
-  await writeFile(`${outFile}.tmp`, JSON.stringify(out, null, 2), { mode: 0o640 });
+  await writeFile(`${outFile}.tmp`, JSON.stringify(out, null, 2), { mode: 0o644 } /* read by the portal (uid 1000); only portal and watcher mount the volume */);
   await rename(`${outFile}.tmp`, outFile);
   last = spec.generation;
   log(`wrote ${outFile} (${r.status})`);

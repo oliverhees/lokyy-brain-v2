@@ -24,6 +24,8 @@ describe('StateStore', () => {
     const onDisk = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
     expect(onDisk.company.name).toBe('Muster GmbH');
     expect(statSync(join(dir, 'state.json')).mode & 0o777).toBe(0o600);
+    // no secrets inside; the watcher in the metamcp container (another uid) must read it
+    expect(statSync(join(dir, 'users.json')).mode & 0o777).toBe(0o644);
     const users = JSON.parse(readFileSync(join(dir, 'users.json'), 'utf8'));
     expect(users).toEqual({ companyVault: 'firma', generation: 1, users: [{ username: 'anna', role: 'writer', vault: 'v01', allowVaultNameMismatch: true }] });
     // a fresh store sees the persisted state
