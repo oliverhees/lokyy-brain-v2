@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { ingestPaste, ingestFile, fetchUntrusted, UntrustedFetchError, UNTRUSTED_FETCH_ERROR } from '@mindbase/core';
 import type { ServerContext } from '../context';
-import { extractPdfText, readPdfLimits } from '../lib/extract-pdf';
+import { extractPdfText, pdfTooLargeMessage, readPdfLimits } from '../lib/extract-pdf';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -147,7 +147,7 @@ async function fetchYouTubeTranscript(videoId: string): Promise<{ title: string;
 async function extractPdfFile(file: File): Promise<string> {
   // Size check before reading the upload into memory; the rest is bounded in extractPdfText.
   const { maxBytes } = readPdfLimits();
-  if (file.size > maxBytes) throw new Error(`PDF is larger than ${maxBytes} bytes`);
+  if (file.size > maxBytes) throw new Error(pdfTooLargeMessage(maxBytes));
   return extractPdfText(new Uint8Array(await file.arrayBuffer()));
 }
 

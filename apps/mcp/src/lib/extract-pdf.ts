@@ -37,6 +37,14 @@ export function readPdfLimits(env: NodeJS.ProcessEnv = process.env): PdfLimits {
   };
 }
 
+/** 26214400 → "PDF is larger than 25 MB" (KB below 1 MB, bytes below 1 KB). */
+export function pdfTooLargeMessage(maxBytes: number): string {
+  const size = maxBytes >= 1024 * 1024 ? `${+(maxBytes / (1024 * 1024)).toFixed(1)} MB`
+    : maxBytes >= 1024 ? `${+(maxBytes / 1024).toFixed(1)} KB`
+    : `${maxBytes} bytes`;
+  return `PDF is larger than ${size}`;
+}
+
 export interface ExtractPdfOptions extends Partial<PdfLimits> {
   /** Stop reading pages once the text is longer than this (the caller refuses it anyway). */
   maxChars?: number;
@@ -44,7 +52,7 @@ export interface ExtractPdfOptions extends Partial<PdfLimits> {
 
 export async function extractPdfText(data: Uint8Array, opts: ExtractPdfOptions = {}): Promise<string> {
   const limits = { ...readPdfLimits(), ...opts };
-  if (data.byteLength > limits.maxBytes) throw new Error(`PDF is larger than ${limits.maxBytes} bytes`);
+  if (data.byteLength > limits.maxBytes) throw new Error(pdfTooLargeMessage(limits.maxBytes));
 
   const deadline = Date.now() + limits.timeoutMs;
   const timedOut = (): Error => new Error('PDF text extraction timed out');

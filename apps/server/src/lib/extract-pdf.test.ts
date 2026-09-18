@@ -18,6 +18,13 @@ describe('extractPdfText limits', () => {
     await expect(extractPdfText(makePdf(3), { maxBytes: 100 })).rejects.toThrow(/^PDF is larger than 100 bytes$/);
   });
 
+  it('states the size limit in MB (or KB) instead of raw bytes', async () => {
+    const big = new Uint8Array(PDF_LIMIT_DEFAULTS.maxBytes + 1);
+    await expect(extractPdfText(big)).rejects.toThrow(/^PDF is larger than 25 MB$/);
+    await expect(extractPdfText(new Uint8Array(3000), { maxBytes: 2048 })).rejects.toThrow(/^PDF is larger than 2 KB$/);
+    await expect(extractPdfText(new Uint8Array(1_600_000), { maxBytes: 1_572_864 })).rejects.toThrow(/^PDF is larger than 1.5 MB$/);
+  });
+
   it('refuses a document with more pages than the page cap', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     await expect(extractPdfText(makePdf(12), { maxPages: 10 })).rejects.toThrow('PDF has more than 10 pages');
