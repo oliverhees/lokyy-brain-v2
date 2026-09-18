@@ -17,6 +17,7 @@
 //                             so the two profiles can never evict each other
 //   MCP_HTTP_SESSION_IDLE_MS  default 1800000 (30 min), min 1000; idle sessions are closed
 //   MCP_HTTP_ALLOWED_HOSTS    optional comma-separated Host header allow-list (e.g. vault-anna:4322)
+import { remoteEmbedderFromEnv } from '@mindbase/core';
 import http from 'node:http';
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -112,6 +113,8 @@ async function main(): Promise<void> {
     readFetchConcurrency(process.env);
     readLlmTimeoutMs(process.env);
     readerLlmRateLimitFromEnv(process.env);
+    // Shared embedding service (LBV2-26): half or invalid configuration stops the server at startup
+    remoteEmbedderFromEnv(process.env);
     // Same LLM endpoint allow-list warning as the web server (LBV2-19).
     logLlmHostPolicy(process.env, { warn: log, info: log });
   } catch (e) {

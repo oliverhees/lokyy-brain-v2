@@ -27,16 +27,59 @@ function rawEntryPath(ctx: ServerContext, date: string, id: string): string | nu
   return resolveInside(rawRoot, date, id);
 }
 
+/**
+ * Sources ingested through /api/ingest/* (ingestPaste) live in `raw/<date>/<id>.md` +
+ * `<id>.meta.json` of the project, not in `sources/raw/`. They are listed under their raw id
+ * (no extension) so RawSourceView can open them (LBV2-32).
+ */
+function ingestedRawRoot(ctx: ServerContext): string {
+  return join(ctx.dataDir, 'projects', ctx.currentProjectId, 'raw');
+}
+
+/** Absolute path of raw/<date>/<id>.md for an ingested source, or null if the params could escape it. */
+function ingestedRawPath(ctx: ServerContext, date: string, id: string): string | null {
+  if (!isValidIsoDate(date) || !isSafePathSegment(id)) return null;
+  return resolveInside(ingestedRawRoot(ctx), date, `${id}.md`);
+}
+
+async function listIngestedRaw(ctx: ServerContext): Promise<Array<{ date: string; id: string; size: number; kind: string; title: string }>> {
+  const root = ingestedRawRoot(ctx);
+  const out: Array<{ date: string; id: string; size: number; kind: string; title: string }> = [];
+  let dates: string[] = [];
+  try { dates = await readdirP(root); } catch { return out; }
+  for (const date of dates) {
+    if (!isValidIsoDate(date)) continue;
+    let files: string[] = [];
+    try { files = await readdirP(join(root, date)); } catch { continue; }
+    for (const file of files) {
+      if (!file.endsWith('.meta.json')) continue;
+      const id = file.slice(0, -'.meta.json'.length);
+      if (!isSafePathSegment(id)) continue;
+      try {
+        const s = await statP(join(root, date, `${id}.md`));
+        let title = id;
+        try {
+          const meta = JSON.parse(await readFileP(join(root, date, file), 'utf-8')) as { title?: unknown };
+          if (typeof meta.title === 'string' && meta.title) title = meta.title;
+        } catch { /* keep id */ }
+        out.push({ date, id, size: s.size, kind: 'text', title });
+      } catch { /* meta without body: skip */ }
+    }
+  }
+  return out;
+}
+
 export function rawTreeRoutes(ctx: ServerContext): Router {
   const router = Router();
 
   router.get('/raw', async (_req, res) => {
     const projectId = ctx.currentProjectId;
     const layout = await detectLayoutVersion(makeProjectRoot(ctx.dataDir, projectId));
-    if (layout === 'v1') return res.status(409).json({ error: 'V1_LAYOUT_UNSUPPORTED' });
+    // Ingested sources live in raw/ in both layouts; only sources/raw/ needs v2 (LBV2-32).
+    if (layout === 'v1') return res.json({ category: 'raw', entries: await listIngestedRaw(ctx) });
     const p = projectPaths();
     const root = join(ctx.dataDir, 'projects', projectId, p.rawDir);
-    const entries: Array<{ date: string; id: string; size: number; kind: string }> = [];
+    const entries: Array<{ date: string; id: string; size: number; kind: string; title?: string }> = [];
     try {
       const dates = await readdirP(root);
       for (const date of dates) {
@@ -52,6 +95,7 @@ export function rawTreeRoutes(ctx: ServerContext): Router {
         } catch { /* skip */ }
       }
     } catch { /* ok */ }
+    entries.push(...await listIngestedRaw(ctx));
     return res.json({ category: 'raw', entries });
   });
 
@@ -107,7 +151,13 @@ export function rawTreeRoutes(ctx: ServerContext): Router {
   router.get('/raw/:date/:id', async (req, res) => {
     const projectId = ctx.currentProjectId;
     const layout = await detectLayoutVersion(makeProjectRoot(ctx.dataDir, projectId));
-    if (layout === 'v1') return res.status(409).json({ error: 'V1_LAYOUT_UNSUPPORTED' });
+    if (layout === 'v1') {
+      const ingested = ingestedRawPath(ctx, req.params.date, req.params.id);
+      if (!ingested) return res.status(400).json({ error: 'Invalid raw entry' });
+      try {
+        return res.json({ date: req.params.date, id: req.params.id, body: await readFileP(ingested, 'utf-8') });
+      } catch { return res.status(404).json({ error: 'Not found' }); }
+    }
     const abs = rawEntryPath(ctx, req.params.date, req.params.id);
     if (!abs) return res.status(400).json({ error: 'Invalid raw entry' });
     const dirAbs = dirname(abs);
@@ -119,7 +169,13 @@ export function rawTreeRoutes(ctx: ServerContext): Router {
         const body = await readFileP(sidecar, 'utf-8');
         return res.json({ date: req.params.date, id: req.params.id, body, extracted: true });
       }
-      const body = await readFileP(abs, 'utf-8');
+      if (await pathExists(abs)) {
+        const body = await readFileP(abs, 'utf-8');
+        return res.json({ date: req.params.date, id: req.params.id, body });
+      }
+      const ingested = ingestedRawPath(ctx, req.params.date, req.params.id);
+      if (!ingested) return res.status(404).json({ error: 'Not found' });
+      const body = await readFileP(ingested, 'utf-8');
       return res.json({ date: req.params.date, id: req.params.id, body });
     } catch { return res.status(404).json({ error: 'Not found' }); }
   });

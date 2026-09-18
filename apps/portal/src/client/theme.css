@@ -1,0 +1,49 @@
+/* Shared design tokens of apps/web (light + dark), then the portal's semantic aliases.
+   Aliases reuse tokens where those reach WCAG 2.2 AA contrast for text; where the shared token does
+   not (light --accent #007AFF 4.0:1, --warn 3.9:1, no danger token in tokens.css), the portal defines
+   the AA-compliant value here — the only place with raw colours. Contrast notes per value. */
+@import '../../../web/src/theme/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+:root[data-theme="light"] {
+  --portal-canvas: var(--dock-solid);          /* #f6f6f6 */
+  --portal-surface: #ffffff;
+  --portal-accent: var(--accent-deep);         /* #0051D5: white text 6.6:1 */
+  --portal-link: var(--accent-deep);           /* 6.6:1 on white */
+  --portal-focus: var(--accent-deep);
+  --portal-danger: #b42318;                    /* 6.5:1 on white, white text 6.5:1 */
+  --portal-danger-soft: rgba(180, 35, 24, 0.08);
+  --portal-success: #067647;                   /* 5.9:1 on white */
+  --portal-success-soft: rgba(6, 118, 71, 0.08);
+  --portal-warn: #93370d;                      /* 7.9:1 on white */
+  --portal-control-border: #8e8e93;            /* input/select borders, WCAG 1.4.11: 3.3:1 on white */
+}
+
+:root[data-theme="dark"] {
+  --portal-canvas: #161311;                    /* first stop of the dark --canvas-bg gradient */
+  --portal-surface: var(--dock-solid);         /* #221d18 */
+  --portal-accent: var(--accent-deep);         /* #c2410c: white text 5.2:1 */
+  --portal-link: var(--accent);                /* #f97316 on #221d18: 6.4:1 */
+  --portal-focus: var(--accent);
+  --portal-danger: #f97066;                    /* 6.0:1 on #221d18 */
+  --portal-danger-soft: rgba(249, 112, 102, 0.12);
+  --portal-success: var(--good);               /* #4ade80: 9.6:1 */
+  --portal-success-soft: rgba(74, 222, 128, 0.12);
+  --portal-warn: var(--warn);                  /* #eab308: 8.9:1 */
+  --portal-control-border: var(--text-mid);    /* #948a7e: 5.4:1 on #221d18 (--hairline is 1.26:1) */
+}
+
+html { color-scheme: light dark; }
+body { font-family: theme('fontFamily.sans'); -webkit-font-smoothing: antialiased; }
+
+@layer components {
+  .focus-ring { @apply outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2; --tw-ring-offset-color: var(--portal-surface); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}

@@ -8,6 +8,7 @@ import { createContext, type ServerContext } from '../../context.js';
 import { configRoutes } from '../config.js';
 import { requireConfigAdmin } from '../../lib/proxy-identity.js';
 import { MASKED_SECRET } from '../../lib/config-secrets.js';
+import { ROUTE_NO_TOOLS_WARNING } from '@mindbase/core';
 import type { AtlasConfig } from '../../config.js';
 
 // EUrouter routing rules (LBV2-30): ruleId in the config, the route picker
@@ -26,8 +27,12 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
-/** Stands in for EUrouter: a rule list for KEY, 401 for any other key. */
-function mockEurouter() {
+const TOOL_CALL_STREAM =
+  'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"record_value","arguments":"{\\"value\\":\\"ok\\"}"}}]}}]}\n\n' +
+  'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n';
+
+/** Stands in for EUrouter: a rule list for KEY, 401 for any other key; the route calls tools unless `toolless`. */
+function mockEurouter(opts: { toolless?: boolean; probeStatus?: number } = {}) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input);
     const auth = new Headers(init?.headers).get('authorization');
@@ -39,6 +44,9 @@ function mockEurouter() {
       ] });
     }
     if (url === `${EU}/chat/completions`) {
+      const withTools = Array.isArray((JSON.parse(String(init?.body ?? '{}')) as { tools?: unknown }).tools);
+      if (withTools && opts.probeStatus) return json({ error: 'upstream' }, opts.probeStatus);
+      if (withTools && !opts.toolless) return new Response(TOOL_CALL_STREAM, { status: 200 });
       return new Response('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { status: 200 });
     }
     return json({ data: [] });
@@ -243,6 +251,32 @@ describe('EUrouter routing rules (LBV2-30)', () => {
       expect(res.body).toEqual({ ok: true });
     });
 
+    it('passes with a warning when the route answers but never calls tools (LBV2-32)', async () => {
+      mockEurouter({ toolless: true });
+      const res = await request(app).post('/api/config/test').set(ADMIN)
+        .send({ provider: 'openai', model: '', baseUrl: EU, apiKey: MASKED_SECRET, ruleId: RULE });
+      expect(res.body).toEqual({ ok: true, warning: ROUTE_NO_TOOLS_WARNING });
+    });
+
+    it('probes tool calling with a rule-only request carrying one tool (LBV2-32)', async () => {
+      const fetchSpy = mockEurouter();
+      await request(app).post('/api/config/test').set(ADMIN)
+        .send({ provider: 'openai', model: '', baseUrl: EU, apiKey: MASKED_SECRET, ruleId: RULE });
+      const probe = fetchSpy.mock.calls
+        .map(([, init]) => JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
+        .find((b) => Array.isArray(b['tools']));
+      expect(probe).toMatchObject({ rule_id: RULE });
+      expect(probe?.['model']).toBeUndefined();
+      expect((probe?.['tools'] as unknown[]).length).toBe(1);
+    });
+
+    it('stays ok without a warning when only the tool probe fails (LBV2-32)', async () => {
+      mockEurouter({ probeStatus: 500 });
+      const res = await request(app).post('/api/config/test').set(ADMIN)
+        .send({ provider: 'openai', model: '', baseUrl: EU, apiKey: MASKED_SECRET, ruleId: RULE });
+      expect(res.body).toEqual({ ok: true });
+    });
+
     it('fails with a specific message for an unknown rule', async () => {
       mockEurouter();
       const res = await request(app).post('/api/config/test').set(ADMIN)
@@ -379,7 +413,8 @@ describe('POST /api/config/test: EUrouter messages the user can act on (LBV2-30)
   });
 
   it('passes when the rule-only chat answers 200', async () => {
-    expect(await testWith({ ruleId: RULE }, json({ choices: [{ message: { content: '' } }] }))).toEqual({ ok: true });
+    // This stub never returns a tool call, so the LBV2-32 tool probe adds a warning; the test still passes.
+    expect(await testWith({ ruleId: RULE }, json({ choices: [{ message: { content: '' } }] }))).toMatchObject({ ok: true });
   });
 
   it('keeps other upstream failures generic', async () => {

@@ -2,6 +2,7 @@ import { Router, type Response } from 'express';
 import {
   createAdapter, effectiveLlmBaseUrl, isLlmUrlAllowed, LLM_HOST_NOT_ALLOWED_ERROR,
   EurouterHttpError, EUROUTER_KEY_INVALID, EUROUTER_ROUTE_REQUIRED, EUROUTER_ROUTE_UNAVAILABLE, EUROUTER_RULE_NOT_FOUND, isEurouterBaseUrl, isEurouterRuleId, listEurouterRules,
+  probeToolCalling, ROUTE_NO_TOOLS_WARNING,
 } from '@mindbase/core';
 import type { ServerContext } from '../context';
 import type { AtlasConfig } from '../config';
@@ -130,6 +131,15 @@ export function configRoutes(ctx: ServerContext): Router {
       });
       const result = await adapter.testConnection();
       if (result.ok) {
+        // EUrouter routes pick their own models; ingest needs one that calls tools (LBV2-32).
+        if (isEurouterBaseUrl(endpoint)) {
+          const probe = await probeToolCalling(adapter, model ?? '');
+          if (probe.status === 'unsupported') {
+            res.json({ ok: true, warning: ROUTE_NO_TOOLS_WARNING });
+            return;
+          }
+          if (probe.status === 'unknown') logFailure(`tool probe: ${probe.error}`);
+        }
         res.json({ ok: true });
         return;
       }

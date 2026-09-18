@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles, Check, X, Loader2 } from 'lucide-react';
 import type { ProposedAction, ApprovalMap } from '@mindbase/core';
+import { ingestActionLabel } from '../../lib/ingest-action-label';
 
 interface Props {
   rawId: string;
@@ -36,6 +37,15 @@ async function* parseSSE(
   }
 }
 
+/** Error text for a non-2xx response: the server's `error` field if it sent JSON, else the status. */
+async function httpError(resp: Response): Promise<string> {
+  try {
+    const body = (await resp.json()) as { error?: unknown };
+    if (typeof body.error === 'string' && body.error) return body.error;
+  } catch { /* not JSON */ }
+  return `HTTP ${resp.status}`;
+}
+
 export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
   const [phase, setPhase] = useState<Phase>('planning');
   const [takeaways, setTakeaways] = useState<string>('');
@@ -46,18 +56,26 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
+  function startPlan(): AbortController {
+    abortRef.current?.abort();
     setPhase('planning');
     setTakeaways('');
     setProposed([]);
     setApprovals({});
+    setPlanId(null);
     setExecResults([]);
     setError(null);
     const ctl = new AbortController();
     abortRef.current = ctl;
     void runPlan(ctl.signal);
-    return () => { ctl.abort(); abortRef.current = null; };
+    return ctl;
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    startPlan();
+    // Abort whatever runs now (the first plan or one started by Retry).
+    return () => { abortRef.current?.abort(); abortRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, rawId]);
 
@@ -74,7 +92,9 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
   async function runPlan(signal: AbortSignal): Promise<void> {
     try {
       const resp = await fetch(`/api/compile/${encodeURIComponent(rawId)}/plan`, { method: 'POST', signal });
-      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(await httpError(resp));
+      if (!resp.body) throw new Error(`HTTP ${resp.status}`);
+      let finished = false;
       for await (const { event, data } of parseSSE(resp.body.getReader())) {
         if (signal.aborted) return;
         if (event === 'takeaways') {
@@ -85,12 +105,24 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
         } else if (event === 'proposed') {
           setProposed((p) => [...p, data['action'] as ProposedAction]);
         } else if (event === 'done') {
-          setPlanId(data['planId'] as string);
-          setPhase('reviewing');
+          finished = true;
+          // Older servers put a planning failure into `done`; never show it as an empty plan.
+          if (typeof data['error'] === 'string' && data['error']) {
+            setError(data['error']);
+            setPhase('error');
+          } else {
+            setPlanId(data['planId'] as string);
+            setPhase('reviewing');
+          }
         } else if (event === 'error') {
-          setError(data['error'] as string);
+          finished = true;
+          setError((data['error'] as string | undefined) || 'Ingest failed.');
           setPhase('error');
         }
+      }
+      if (!finished && !signal.aborted) {
+        setError('The connection ended unexpectedly before the plan was ready. Please try again.');
+        setPhase('error');
       }
     } catch (e) {
       if ((e as Error).name === 'AbortError') return;
@@ -118,7 +150,8 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
         body: JSON.stringify({ approvals }),
         signal: ctl.signal,
       });
-      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(await httpError(resp));
+      if (!resp.body) throw new Error(`HTTP ${resp.status}`);
       for await (const { event, data } of parseSSE(resp.body.getReader())) {
         if (ctl.signal.aborted) return;
         if (event === 'exec') {
@@ -166,8 +199,8 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
             {phase === 'done' && 'Done'}
             {phase === 'error' && 'Error'}
           </span>
-          <button onClick={onClose} className="ml-auto p-1 cursor-pointer" style={{ color: 'var(--text-mid)' }}>
-            <X size={14} />
+          <button onClick={onClose} aria-label="Close" title="Close" className="ml-auto p-1 cursor-pointer" style={{ color: 'var(--text-mid)' }}>
+            <X size={14} aria-hidden="true" />
           </button>
         </div>
 
@@ -200,12 +233,7 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
               {proposed.map((action) => {
                 const approved = approvals[action.id] !== false;
                 const execResult = execResults.find((r) => r.id === action.id);
-                const args = action.call.arguments as Record<string, unknown>;
-                const title =
-                  (args['name'] as string) ??
-                  (args['concept_name'] as string) ??
-                  (args['from'] as string) ??
-                  '?';
+                const title = ingestActionLabel(action.call);
                 return (
                   <div
                     key={action.id}
@@ -251,7 +279,12 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
             </div>
           )}
           {phase === 'error' && error && (
-            <div className="text-[12px] p-3 rounded" style={{ color: 'var(--error)', background: 'var(--bg-2)' }}>
+            <div
+              role="alert"
+              className="text-[12px] p-3 rounded whitespace-pre-wrap"
+              style={{ color: 'var(--error)', background: 'var(--bg-2)' }}
+              data-testid="ingest-error"
+            >
               {error}
             </div>
           )}
@@ -272,6 +305,20 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
               style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
             >
               Apply approved
+            </button>
+          </div>
+        )}
+        {phase === 'error' && (
+          <div className="px-5 py-3 flex justify-end gap-2" style={{ borderTop: '0.5px solid var(--hairline)' }}>
+            <button onClick={onClose} className="text-[12px] px-3 py-1.5 cursor-pointer" style={{ color: 'var(--text-mid)' }}>
+              Close
+            </button>
+            <button
+              onClick={() => { startPlan(); }}
+              className="text-[12px] px-3 py-1.5 rounded cursor-pointer"
+              style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
+            >
+              Retry
             </button>
           </div>
         )}

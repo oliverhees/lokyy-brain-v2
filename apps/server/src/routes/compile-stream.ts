@@ -5,6 +5,7 @@ import type { ServerContext } from '../context';
 import { isValidSlug } from '../safe-path';
 import { makeHybridSearchClosure } from '../lib/compile-deps';
 import { classifyNoteAsync } from '../lib/classify-worker';
+import { publicCompileError, publicCompileSummary } from '../lib/compile-errors';
 
 // Separate from `compileRoutes` because Express's manual SSE pattern needs
 // explicit `res.write` instead of `res.json`.
@@ -106,7 +107,7 @@ export function compileStreamRoutes(ctx: ServerContext): Router {
               break;
             case 'complete':
               emit('complete', {
-                summary: event.summary,
+                summary: publicCompileSummary(event.summary),
                 ...(event.navigateTo ? { navigateTo: event.navigateTo } : {}),
                 tokensUsed: event.tokensUsed,
                 durationMs: event.durationMs,
@@ -134,7 +135,7 @@ export function compileStreamRoutes(ctx: ServerContext): Router {
         }
       }
     } catch (e) {
-      emit('error', { message: (e as Error).message });
+      emit('error', { message: publicCompileError((e as Error).message) });
     } finally {
       res.end();
     }
@@ -200,6 +201,13 @@ export function compileStreamRoutes(ctx: ServerContext): Router {
         hybridSearch: makeHybridSearchClosure(ctx),
       });
 
+      if (plan.error) {
+        // Nothing to review — a `done` here would render as an empty plan.
+        emit('error', { error: publicCompileError(plan.error) });
+        res.end();
+        return;
+      }
+
       // Surface the LLM's narrative BEFORE the structured actions so the UI
       // can render takeaways → action review as a 4-phase flow.
       if (plan.takeaways) {
@@ -214,9 +222,9 @@ export function compileStreamRoutes(ctx: ServerContext): Router {
       const planId = `${rawId}-${Date.now().toString(36)}`;
       planCache.set(planId, { plan, rawDoc, cachedAt: Date.now() });
 
-      emit('done', { planId, usage: plan.total_usage, error: plan.error });
+      emit('done', { planId, usage: plan.total_usage });
     } catch (e) {
-      emit('error', { error: (e as Error).message });
+      emit('error', { error: publicCompileError((e as Error).message) });
     }
     res.end();
   });

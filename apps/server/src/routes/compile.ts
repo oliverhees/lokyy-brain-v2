@@ -6,6 +6,7 @@ import { detectLayoutVersion, projectRoot } from '../context';
 import { makeHybridSearchClosure } from '../lib/compile-deps';
 import { loadManifest, saveManifest, contentHash } from '../manifest';
 import { appendChangesLog } from '../lib/changes-log';
+import { publicCompileError } from '../lib/compile-errors';
 
 /**
  * Translate a legacy v1 path (e.g., "wiki/notes/<slug>.md") to v2 if the
@@ -152,9 +153,11 @@ export function compileRoutes(ctx: ServerContext): Router {
         hotBody = hotBody.replace(/updated: .*/, `updated: ${new Date().toISOString()}`);
         await ctx.store.writeText('wiki/hot.md', hotBody);
       }
-      res.json({ ok: result.ok, error: result.error });
+      // Upstream LLM failure (provider rejected the call, model can't do tool
+      // calls) → 502 so clients can't mistake it for a successful compile.
+      res.status(result.ok ? 200 : 502).json({ ok: result.ok, error: result.error === undefined ? undefined : publicCompileError(result.error) });
     } catch (e) {
-      res.status(500).json({ ok: false, error: (e as Error).message });
+      res.status(500).json({ ok: false, error: publicCompileError((e as Error).message) });
     }
   });
 

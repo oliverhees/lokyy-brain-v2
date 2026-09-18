@@ -24,22 +24,27 @@ export function registerResources(
     resources.push({ uri: 'mindbase://orphans', name: 'Orphan pages', description: 'Pages with no incoming links', mimeType: 'text/markdown' });
     resources.push({ uri: 'mindbase://insights', name: 'Wiki insights report', description: 'Structural analysis of the wiki', mimeType: 'text/markdown' });
 
-    // All wiki pages
-    try {
-      const entries = await ctx.store.listDir('wiki/notes');
-      for (const entry of entries) {
-        if (entry.kind !== 'file' || !entry.name.endsWith('.md')) continue;
-        const slug = entry.name.replace(/\.md$/, '');
-        let title = slug;
-        let one = '';
-        try {
-          const m = await ctx.store.readJSON<MetaJson>(`wiki/notes/${slug}.meta.json`);
-          title = m.title;
-          one = m.one_liner ?? '';
-        } catch { /* ok */ }
-        resources.push({ uri: `mindbase://wiki/${slug}`, name: title, description: one, mimeType: 'text/markdown' });
-      }
-    } catch { /* ok */ }
+    // All wiki pages: notes and compiled concepts (LBV2-32); a slug in both layers is listed once.
+    const listed = new Set<string>();
+    for (const layer of ['notes', 'concepts'] as const) {
+      try {
+        const entries = await ctx.store.listDir(`wiki/${layer}`);
+        for (const entry of entries) {
+          if (entry.kind !== 'file' || !entry.name.endsWith('.md')) continue;
+          const slug = entry.name.replace(/\.md$/, '');
+          if (listed.has(slug)) continue;
+          listed.add(slug);
+          let title = slug;
+          let one = '';
+          try {
+            const m = await ctx.store.readJSON<MetaJson>(`wiki/${layer}/${slug}.meta.json`);
+            title = m.title;
+            one = m.one_liner ?? '';
+          } catch { /* ok */ }
+          resources.push({ uri: `mindbase://wiki/${slug}`, name: title, description: one, mimeType: 'text/markdown' });
+        }
+      } catch { /* ok */ }
+    }
 
     // All chats — never exposed to read-only sessions (other users' conversations)
     if (profile === 'full') try {
@@ -69,7 +74,12 @@ export function registerResources(
     if (wikiMatch) {
       const slug = wikiMatch[1]!;
       if (!isSafeSlug(slug)) throw Object.assign(new Error('Not found: requested path'), { code: 'ENOENT' });
-      const body = await ctx.store.readText(`wiki/notes/${slug}.md`);
+      let body: string;
+      try {
+        body = await ctx.store.readText(`wiki/notes/${slug}.md`);
+      } catch {
+        body = await ctx.store.readText(`wiki/concepts/${slug}.md`);
+      }
       return { contents: [{ uri, mimeType: 'text/markdown', text: body }] };
     }
 
