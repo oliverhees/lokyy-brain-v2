@@ -204,7 +204,7 @@ llm/configure-eurouter.sh
 
 Per-vault keys are recommended: a leaked key or one heavy user cannot exhaust the whole budget, and one vault can be revoked alone.
 
-Route (routing rule): an admin picks it in the vault's Settings → Provider → EUrouter → Route; it is stored as `ruleId` and sent as `rule_id`. `configure-eurouter.sh` keeps an existing `ruleId` (it only merges provider, base URL, model and key). See `docs/self-hosting-mcp-http.md#eurouter-routes-routing-rules`. Note: `GET /api/config` shows the key to anyone who can open that vault's web UI — another reason for per-vault keys.
+Route (routing rule): an admin picks it in the vault's Settings → Provider → EUrouter → Route; it is stored as `ruleId` and sent as `rule_id` instead of a model (the route brings its models). `configure-eurouter.sh` keeps an existing `ruleId` (it only merges provider, base URL, model and key). See `docs/self-hosting-mcp-http.md#eurouter-routes-routing-rules`. Note: `GET /api/config` shows the key to anyone who can open that vault's web UI — another reason for per-vault keys.
 
 ## 11. Connecting an MCP client
 
