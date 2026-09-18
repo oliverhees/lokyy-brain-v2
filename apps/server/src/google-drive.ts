@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import type { AtlasConfig } from './config';
+import { extractPdfText } from './lib/extract-pdf';
 
 const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
 const REDIRECT_URI = 'http://localhost:4321/api/google/auth/callback';
@@ -157,16 +158,8 @@ export async function downloadFileContent(
   if (mimeType === 'application/pdf') {
     const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' });
     const binary = Buffer.from(res.data as ArrayBuffer);
-    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    const doc = await pdfjs.getDocument({ data: new Uint8Array(res.data as ArrayBuffer) }).promise;
-    const parts: string[] = [];
-    for (let i = 1; i <= doc.numPages; i++) {
-      const page = await doc.getPage(i);
-      const content = await page.getTextContent();
-      const text = content.items.map((it) => ('str' in it ? (it as { str: string }).str : '')).join(' ');
-      parts.push(text);
-    }
-    return { text: parts.join('\n\n'), binary, binaryExt: 'pdf' };
+    const text = await extractPdfText(new Uint8Array(res.data as ArrayBuffer));
+    return { text, binary, binaryExt: 'pdf' };
   }
 
   // DOCX — download as arraybuffer, extract text, also keep binary

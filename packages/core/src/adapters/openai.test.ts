@@ -224,3 +224,173 @@ describe('OpenAIAdapter', () => {
     expect(chunks.some((c) => (c as { kind: string; text?: string }).kind === 'delta' && (c as { text: string }).text === 'hi')).toBe(true);
   });
 });
+
+describe('OpenAIAdapter — EUrouter routing rules (LBV2-30)', () => {
+  const EU = 'https://api.eurouter.ai/api/v1';
+  const RULE = '3f1c2b9a-8d4e-4f6a-9b2c-1d2e3f4a5b6c';
+  const done = () => sseResponse(['data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n', 'data: [DONE]\n\n']);
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+
+  async function sentBody(cfg: { baseUrl?: string; ruleId?: string; model?: string }, requestModel = 'qwen3.6-27b') {
+    const fetchImpl = vi.fn().mockResolvedValue(done());
+    const adapter = new OpenAIAdapter({ apiKey: 'eur_k', model: cfg.model ?? 'qwen3.6-27b', baseUrl: cfg.baseUrl, ruleId: cfg.ruleId, fetchImpl: fetchImpl as unknown as typeof fetch });
+    for await (const _c of adapter.chat({ model: requestModel, messages: [{ role: 'user', content: 'hi' }] })) { /* drain */ }
+    return JSON.parse((fetchImpl.mock.calls[0]![1] as RequestInit).body as string) as Record<string, unknown>;
+  }
+
+  it('sends rule_id only, never model, when a route is configured', async () => {
+    const body = await sentBody({ baseUrl: EU, ruleId: RULE });
+    expect(body['rule_id']).toBe(RULE);
+    expect('model' in body).toBe(false);
+  });
+
+  it('sends model (legacy EUrouter setup without a route) and no rule_id', async () => {
+    const body = await sentBody({ baseUrl: EU });
+    expect('rule_id' in body).toBe(false);
+    expect(body['model']).toBe('qwen3.6-27b');
+  });
+
+  it('never sends rule_id to a non-EUrouter host', async () => {
+    const body = await sentBody({ baseUrl: 'https://api.openai.com', ruleId: RULE });
+    expect('rule_id' in body).toBe(false);
+    expect(body['model']).toBe('qwen3.6-27b');
+  });
+
+  it('rejects a rule id that is not a UUID', () => {
+    expect(() => new OpenAIAdapter({ apiKey: 'k', model: 'm', baseUrl: EU, ruleId: 'my-rule' })).toThrow('Invalid EUrouter rule id');
+  });
+
+  async function chatError(status: number, body: unknown): Promise<string | undefined> {
+    const fetchImpl = vi.fn().mockResolvedValue(json(body, status));
+    const adapter = new OpenAIAdapter({ apiKey: 'k', model: '', baseUrl: EU, ruleId: RULE, fetchImpl: fetchImpl as unknown as typeof fetch });
+    for await (const c of adapter.chat({ model: '', messages: [{ role: 'user', content: 'hi' }] })) {
+      if (c.kind === 'error') return c.error;
+    }
+    return undefined;
+  }
+
+  it('turns an unknown or disabled route at chat time into a friendly message', async () => {
+    expect(await chatError(400, { error: { code: 400, message: `Routing rule with ID '${RULE}' not found or not accessible`, type: 'invalid_request_error' } }))
+      .toBe('Route not found or disabled — choose a route again in Settings');
+  });
+
+  it('says the key is invalid on a 401 at chat time', async () => {
+    expect(await chatError(401, { error: { code: 401, message: 'Invalid credentials' } })).toBe('EUrouter key invalid or not authorised');
+  });
+
+  it('keeps other upstream errors as they are', async () => {
+    expect(await chatError(400, { error: { message: 'No providers available' } })).toMatch(/^HTTP 400: .*No providers available/);
+  });
+
+  function connection(handler: (url: string, init: RequestInit) => Response, ruleId: string | undefined = RULE) {
+    const fetchImpl = vi.fn().mockImplementation(async (url: string, init: RequestInit) => handler(url, init));
+    const adapter = new OpenAIAdapter({ apiKey: 'k', model: '', baseUrl: EU, ruleId, fetchImpl: fetchImpl as unknown as typeof fetch });
+    return { fetchImpl, adapter };
+  }
+  const rulesOk = json({ data: [{ id: RULE.toUpperCase(), name: 'EU only' }] });
+  const chatOk = () => json({ choices: [{ message: { content: '' }, finish_reason: 'length' }] });
+
+  it('testConnection: key via /routing-rules, then a minimal rule-only chat (empty text on 200 is success)', async () => {
+    const { fetchImpl, adapter } = connection((url) => (url.endsWith('/routing-rules') ? rulesOk.clone() : chatOk()));
+    expect(await adapter.testConnection()).toEqual({ ok: true });
+    expect(fetchImpl.mock.calls.map((c) => c[0])).toEqual([`${EU}/routing-rules`, `${EU}/chat/completions`]);
+    const body = JSON.parse(String((fetchImpl.mock.calls[1]![1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body).toEqual({ rule_id: RULE, messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 });
+  });
+
+  it('testConnection: wrong key', async () => {
+    const { fetchImpl, adapter } = connection(() => json({ error: 'unauthorized' }, 401));
+    expect(await adapter.testConnection()).toEqual({ ok: false, error: 'EUrouter key invalid or not authorised' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('testConnection: route missing from the list', async () => {
+    const { fetchImpl, adapter } = connection(() => json({ data: [{ id: '11111111-2222-4333-8444-555555555555', name: 'Other' }] }));
+    expect(await adapter.testConnection()).toEqual({ ok: false, error: 'EUrouter routing rule not found or disabled' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('testConnection: the route cannot answer (e.g. no provider)', async () => {
+    const { adapter } = connection((url) => (url.endsWith('/routing-rules') ? rulesOk.clone() : json({ error: { message: 'No providers available' } }, 400)));
+    const r = await adapter.testConnection();
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/^HTTP 400: /);
+  });
+
+  it('testConnection: EUrouter needs a route', async () => {
+    const { fetchImpl, adapter } = connection(() => json({ data: [] }), '');
+    expect(await adapter.testConnection()).toEqual({ ok: false, error: 'Select an EUrouter route' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe('OpenAIAdapter — PDF chat through EUrouter (LBV2-30)', () => {
+  const EU = 'https://api.eurouter.ai/api/v1';
+  const RULE = '3f1c2b9a-8d4e-4f6a-9b2c-1d2e3f4a5b6c';
+  const done = () => sseResponse(['data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n', 'data: [DONE]\n\n']);
+  const pdfMessage = {
+    role: 'user' as const,
+    content: [
+      { type: 'text' as const, text: 'Summarize the attached PDF.' },
+      { type: 'document' as const, media_type: 'application/pdf' as const, data: Buffer.from('%PDF-fake').toString('base64') },
+    ],
+  };
+
+  async function run(cfg: { extractPdfText?: (d: Uint8Array) => Promise<string>; maxDocumentChars?: number; baseUrl?: string }) {
+    const fetchImpl = vi.fn().mockResolvedValue(done());
+    const adapter = new OpenAIAdapter({
+      apiKey: 'k', model: 'gpt-4o', baseUrl: cfg.baseUrl ?? EU, ruleId: RULE,
+      extractPdfText: cfg.extractPdfText, maxDocumentChars: cfg.maxDocumentChars,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const chunks: ChatChunk[] = [];
+    for await (const c of adapter.chat({ model: 'gpt-4o', messages: [pdfMessage] })) chunks.push(c);
+    return { fetchImpl, chunks };
+  }
+
+  it('extracts the PDF text locally and sends it via chat/completions with rule_id only, never /responses', async () => {
+    const extract = vi.fn(async (d: Uint8Array) => { expect(Buffer.from(d).toString()).toBe('%PDF-fake'); return 'Hello EU PDF'; });
+    const { fetchImpl, chunks } = await run({ extractPdfText: extract });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${EU}/chat/completions`);
+    const body = JSON.parse(String(init.body)) as { model: string; rule_id: string; messages: Array<{ content: string }> };
+    expect('model' in body).toBe(false);
+    expect(body.rule_id).toBe(RULE);
+    expect(body.messages[0]!.content).toContain('Summarize the attached PDF.');
+    expect(body.messages[0]!.content).toContain('Hello EU PDF');
+    expect(chunks.some((c) => c.kind === 'done')).toBe(true);
+  });
+
+  it('asks the extractor to stop past the limit and refuses the PDF without calling EUrouter', async () => {
+    const extract = vi.fn(async () => 'x'.repeat(101));
+    const { fetchImpl, chunks } = await run({ extractPdfText: extract, maxDocumentChars: 100 });
+    expect(extract).toHaveBeenCalledWith(expect.any(Uint8Array), { maxChars: 100 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const err = chunks.find((c) => c.kind === 'error') as { error: string } | undefined;
+    expect(err?.error).toBe('The PDF text is too long for the model context (more than 100 characters). Use a shorter document or raise maxContextChars.');
+  });
+
+  it('reports extractor limits (size, pages, time) with their message', async () => {
+    const { fetchImpl, chunks } = await run({ extractPdfText: async () => { throw new Error('PDF has more than 500 pages'); } });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect((chunks.find((c) => c.kind === 'error') as { error: string } | undefined)?.error).toBe('Could not extract text from the PDF: PDF has more than 500 pages');
+  });
+
+  it('fails clearly when no local PDF extractor is configured', async () => {
+    const { fetchImpl, chunks } = await run({});
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect((chunks.find((c) => c.kind === 'error') as { error: string } | undefined)?.error).toBe('PDF text extraction is not available for EUrouter');
+  });
+
+  it('fails clearly when the PDF has no extractable text', async () => {
+    const { fetchImpl, chunks } = await run({ extractPdfText: async () => '   ' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect((chunks.find((c) => c.kind === 'error') as { error: string } | undefined)?.error).toBe('The PDF contains no extractable text');
+  });
+
+  it('keeps using the Responses API for other hosts', async () => {
+    const { fetchImpl } = await run({ baseUrl: 'https://api.openai.com', extractPdfText: async () => 'unused' });
+    expect(String(fetchImpl.mock.calls[0]![0])).toBe('https://api.openai.com/v1/responses');
+  });
+});

@@ -1,12 +1,17 @@
 import { create } from 'zustand';
 import type { ProviderName } from '@mindbase/core';
 import { apiGet } from '../lib/api';
+import { isEurouterUrl } from '../lib/eurouter';
 
 interface AtlasConfig {
   provider: ProviderName;
   model: string;
   apiKey: string;
   baseUrl: string;
+  /** EUrouter routing rule id (LBV2-30). */
+  ruleId?: string;
+  /** Display name of the route. */
+  ruleName?: string;
   autoSave: boolean;
   mergeSaves: boolean;
 }
@@ -52,7 +57,8 @@ export const useSettings = create<SettingsState>((set) => ({
   },
   isConfigured: (): boolean => {
     const s: SettingsState = useSettings.getState();
-    return s.loaded && !!s.model && (!!s.apiKey || !!s.baseUrl);
+    const routed = !!s.ruleId && isEurouterUrl(s.baseUrl);
+    return s.loaded && (!!s.model || routed) && (!!s.apiKey || !!s.baseUrl);
   },
   googleConnected: false,
   googleSyncFolderName: null,
