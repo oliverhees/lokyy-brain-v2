@@ -39,7 +39,7 @@ Vault files written before this change keep their old headings (`# MindBase Wiki
 
 ## Enforcement
 
-`scripts/check-brand.mjs` (`pnpm check:brand`, CI step "Brand guard") fails when the old product name or an upstream pointer (upstream repository owner, upstream author, upstream npm package) appears in `apps/web/src`, `apps/web/index.html`, `apps/portal/src`, `apps/mcp/src`, `apps/server/src`, `packages/core/src` or `schema/`. Test files are skipped (they may hold pre-rebrand fixtures). Wire identifiers go into the script's allowlist.
+`scripts/check-brand.mjs` (`pnpm check:brand`, CI step "Brand guard") fails when the old product name (case-insensitive) or an upstream pointer (upstream repository owner, upstream author, upstream npm package) appears in `apps/web/src`, `apps/web/index.html`, `apps/portal/src`, `apps/mcp/src`, `apps/server/src`, `packages/core/src` or `schema/`. Test files are skipped (they may hold pre-rebrand fixtures). Internal identifiers listed above (`MINDBASE_*`, `mindbase://`, `mindbase_*`, `@mindbase/*`, storage keys, the proxy header, the mDNS service type, the default data directory in code) are removed by the script's allowlist before matching.
 
 ## Consequences
 

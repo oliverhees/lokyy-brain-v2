@@ -283,6 +283,7 @@ async function visibilityChecks() {
     const fullInstr = full.getInstructions() ?? '';
     check(roInstr.length > 0 && mentionsWriteTool(roInstr).length === 0, 'readonly: instructions mention no write/hidden tools', mentionsWriteTool(roInstr).join(', '));
     check(fullInstr.includes('save_chat_excerpt'), 'full: instructions unchanged (mention save_chat_excerpt)');
+    check(!/mind ?base(?![_:])/i.test(roInstr) && roInstr.includes('Lokyy Brain'), 'readonly: instructions name Lokyy Brain, not the old product (LBV2-35)');
     const roPrompts = (await ro.listPrompts()).prompts.map((p) => p.name);
     const fullPrompts = (await full.listPrompts()).prompts.map((p) => p.name);
     check(fullPrompts.includes('audit'), 'full: audit prompt listed');

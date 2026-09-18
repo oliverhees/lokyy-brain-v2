@@ -36,7 +36,7 @@ export interface RunOptions {
 
 const SERVER_INSTRUCTIONS = `You have access to the user's Lokyy Brain — their personal knowledge base of curated notes, research, and saved AI conversations. They have invested real time building it. Treat it as their long-term memory and as the authoritative source for their own opinions, prior research, and accumulated knowledge.
 
-WHEN TO PROACTIVELY READ FROM MINDBASE
+WHEN TO PROACTIVELY READ FROM LOKYY BRAIN
 Always reach for Lokyy Brain first (don't rely solely on training data) when the user:
 - Asks about their own views, decisions, or past reasoning ("what did I think about X", "what's my take on", "remind me why I chose")
 - Asks about something they've likely researched: products, people, companies, technical concepts they've mentioned before
@@ -51,10 +51,10 @@ Default playbook for these:
 4. \`find_related\` — to expand from a known page into its cluster
 5. \`list_recent\` — for "what's new" / "this week" questions
 
-WHEN TO SKIP MINDBASE
+WHEN TO SKIP LOKYY BRAIN
 Don't burn tool calls when the user clearly wants generic help: writing standalone code, math, debugging an error message, explaining a public concept they haven't researched. Use judgment — if Lokyy Brain plausibly has relevant signal, check; otherwise just answer.
 
-WHEN TO PROACTIVELY WRITE TO MINDBASE
+WHEN TO PROACTIVELY WRITE TO LOKYY BRAIN
 After producing substantial research, analysis, or synthesis in a conversation, offer to save it via \`save_chat_excerpt\`. Especially when:
 - You and the user just worked through a non-trivial topic together
 - The user shared a useful insight worth keeping
@@ -83,7 +83,7 @@ Treat Lokyy Brain as a living thing the user cares about. Be useful but precise;
 /** Instructions for read-only sessions: only allowlisted tools are named (LBV2-12). */
 const READER_INSTRUCTIONS = `You have read-only access to a Lokyy Brain — a curated knowledge base of wiki pages. Use it as the authoritative source for the knowledge it contains. This session cannot create, edit, or delete anything.
 
-WHEN TO READ FROM MINDBASE
+WHEN TO READ FROM LOKYY BRAIN
 Reach for Lokyy Brain first when the user asks about topics, decisions, research, or notes it is likely to contain, or refers to "the wiki", "the notes", or "the knowledge base".
 
 Default playbook:
@@ -96,7 +96,7 @@ Default playbook:
 
 Structure checks: \`find_orphans\`, \`suggest_links\`, \`get_graph_insights\` report on the wiki without modifying it.
 
-WHEN TO SKIP MINDBASE
+WHEN TO SKIP LOKYY BRAIN
 Don't burn tool calls when the user clearly wants generic help that the knowledge base cannot inform.
 
 ACCESS NOTES

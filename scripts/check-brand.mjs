@@ -25,11 +25,24 @@ const EXTENSIONS = /\.(ts|tsx|js|mjs|html|md|json|css)$/;
 const SKIP = [/\.test\.tsx?$/, /\.spec\.tsx?$/, new RegExp(`\\${sep}__tests__\\${sep}`)];
 
 // Old product name, and pointers to the upstream project/author (repo, npm package, contact).
-const BRAND = /Mind ?[Bb]ase|frankchu91|haobing|@mindbase\/mcp-server/g;
+// Case-insensitive: "MINDBASE" in an LLM prompt is branding too.
+const BRAND = /mind ?base|frankchu91|haobing|@mindbase\/mcp-server/gi;
 
-// Wire-protocol names that are identifiers, not branding.
+// Internal identifiers that keep the old name on purpose (ADR 0001), removed before matching.
 const ALLOWLIST = [
-  'X-Mindbase-User',
+  /X-Mindbase-User/gi,          // proxy → vault identity header (wire protocol)
+  /\bMINDBASE_[A-Z0-9_]+/g,     // environment variables
+  /mindbase:(?:\/\/|\\\/\\\/)/g, // MCP resource URI scheme (also regex-escaped)
+  /@mindbase\/(?!mcp-server)[a-z0-9-]+/g, // workspace packages
+  /_*mindbase_[a-z0-9_]+/g,     // MCP tool names and other identifiers
+  /\bmindbase[.:][a-zA-Z][\w.-]*/g, // localStorage keys, DOM event names, mindbase.config.json
+  /\bmindbase-(?:mcp(?:-server|-http)?|app|username|tesseract)\b/g, // package/log prefixes, storage key, temp dir
+  /['"]mindbase-data['"]|--data-dir <path> .*mindbase-data/g, // default data dir in code and CLI help
+  /(?<=^\s*(?:\*|\/\/).*)~\/mindbase-data/g, // default data dir named in code comments
+  /\/tmp\/mindbase-[\w.-]+/g,     // design-mockup references in comments
+  /Usage: mindbase\b/g,         // name of the dev CLI binary
+  /\.config\/mindbase\/|'mindbase', 'server\.json'/g, // server config directory
+  /_mindbase\._tcp|type: 'mindbase'/g, // mDNS service type (discovery protocol)
 ];
 
 function walk(path, out) {
@@ -55,7 +68,7 @@ export function findViolations(root = ROOT, surfaces = SURFACES) {
       const lines = readFileSync(file, 'utf8').split('\n');
       lines.forEach((line, i) => {
         let cleaned = line;
-        for (const allowed of ALLOWLIST) cleaned = cleaned.split(allowed).join('');
+        for (const allowed of ALLOWLIST) cleaned = cleaned.replace(allowed, '');
         if (BRAND.test(cleaned)) {
           violations.push(`${relative(root, file)}:${i + 1}: ${line.trim()}`);
         }

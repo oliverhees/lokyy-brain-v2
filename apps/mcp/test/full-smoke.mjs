@@ -76,7 +76,7 @@ setTimeout(() => {
   } else {
     console.log('OK: serverInfo.name is "lokyy-brain"');
   }
-  if (!instructions.includes('Lokyy Brain') || /MindBase/.test(instructions)) {
+  if (!instructions.includes('Lokyy Brain') || /mind ?base(?![_:])/i.test(instructions)) {
     console.error('FAIL: server instructions must name "Lokyy Brain" and not the old product name');
     exitCode = 1;
   } else {
@@ -90,6 +90,15 @@ setTimeout(() => {
   } else {
     const tools = toolsRes.result.tools ?? [];
     const names = tools.map(t => t.name);
+    // LBV2-35: descriptions and schemas name neither the old product nor its default data dir.
+    const described = JSON.stringify(tools.map(t => ({ d: t.description, s: t.inputSchema })));
+    const stale = described.match(/mindbase-data|mind ?base(?![_:])/gi);
+    if (stale) {
+      console.error(`FAIL: tool descriptions mention the old product name: ${stale.join(', ')}`);
+      exitCode = 1;
+    } else {
+      console.log('OK: tool descriptions name no old product');
+    }
     console.log(`\nTotal tools: ${names.length}`);
 
     if (names.length < 27) {

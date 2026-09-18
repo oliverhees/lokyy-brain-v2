@@ -119,7 +119,7 @@ export function DataLocationView() {
                   type="text"
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  placeholder="/Users/you/mindbase or ~/mindbase"
+                  placeholder="/data/lokyy-brain"
                   spellCheck={false}
                   disabled={info.envOverride || saving}
                   className="flex-1 px-3 py-2 rounded outline-none font-mono text-[12.5px]"

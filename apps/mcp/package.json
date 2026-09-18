@@ -65,12 +65,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/frankchu91/mindbase",
+    "url": "https://github.com/oliverhees/lokyy-brain-v2",
     "directory": "apps/mcp"
   },
-  "homepage": "https://github.com/frankchu91/mindbase#readme",
-  "bugs": "https://github.com/frankchu91/mindbase/issues",
-  "author": "Haobing Chu <haobing0304@gmail.com>",
+  "homepage": "https://github.com/oliverhees/lokyy-brain-v2#readme",
+  "bugs": "https://github.com/oliverhees/lokyy-brain-v2/issues",
+  "author": "Oliver Hees <info@lokyy.de>",
   "license": "SEE LICENSE IN ../../NOTICE.md",
-  "mcpName": "io.github.frankchu91/mindbase"
+  "mcpName": "io.github.oliverhees/lokyy-brain-v2"
 }

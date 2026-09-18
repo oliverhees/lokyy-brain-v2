@@ -278,14 +278,8 @@ export function SettingsScreen({ onClose }: Props) {
               Obsidian Integration
             </h2>
             <p className="text-[12px] mb-4" style={{ color: 'var(--text-low)' }}>
-              Color Obsidian's graph view by tag, category, or visibility. Open{' '}
-              <code
-                className="px-1.5 py-0.5 rounded text-[11px]"
-                style={{ background: 'var(--surface-2)', color: 'var(--text-mid)' }}
-              >
-                ~/mindbase-data/
-              </code>{' '}
-              as an Obsidian vault.
+              Color Obsidian's graph view by tag, category, or visibility. Open your data directory (see
+              Data location) as an Obsidian vault.
             </p>
             <div className="flex gap-2">
               <button
