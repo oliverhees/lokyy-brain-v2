@@ -289,14 +289,18 @@ create_user alice "$(cat "$work/pass-alice")" vault-v01 && create_user bob "$(ca
 provision s && ok "MCP provisioning (provision.mjs, as the portal does)" || { cat "$work/provision.log"; bad "provisioning"; }
 isolation_checks s v15
 
-echo "== [s] provisioning: rotation, removal, a failing entry does not block others"
+echo "== [s] provisioning: invalid input refused as a whole; rotation and removal"
 old_alice=$(key alice) old_bob=$(key bob)
+cp "$work/clients.json" "$work/clients.before.json"
 PKG=s provision_run '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true},
-                      {"username":"zed","role":"writer","vault":"v01","allowVaultNameMismatch":true},
+                      {"username":"zed","role":"writer","vault":"v01","allowVaultNameMismatch":true}]'
+expect "invalid users input refused as a whole (duplicate vault)" "$(if [[ -s $work/clients.json ]]; then jq -r .status "$work/clients.json"; else echo refused; fi)" "refused"
+cp "$work/clients.before.json" "$work/clients.json"
+expect "refused run changed no key" "$(mcp_init "$old_alice" alice)/$(mcp_init "$old_bob" bob)" "200/200"
+PKG=s provision_run '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true},
                       {"username":"carl","role":"writer","vault":"v04","allowVaultNameMismatch":true}]' '["alice"]'
-expect "run status with one invalid entry" "$(jq -r .status "$work/clients.json")" "failed"
-expect "per-user status" "$(jq -r '[.users[] | "\(.username)=\(.status)"] | sort | join(",")' "$work/clients.json")" "alice=ok,carl=ok,zed=failed"
-expect "no key for the failed entry" "$(jq -r '.users[] | select(.username=="zed") | .apiKey // "none"' "$work/clients.json")" "none"
+expect "run status" "$(jq -r .status "$work/clients.json")" "ok"
+expect "per-user status" "$(jq -r '[.users[] | "\(.username)=\(.status)"] | sort | join(",")' "$work/clients.json")" "alice=ok,carl=ok"
 expect "bob removed" "$(jq -r '.removed | join(",")' "$work/clients.json")" "bob"
 expect "alice key rotated" "$([[ $(key alice) != "$old_alice" && -n $(key alice) ]] && echo new || echo same)" "new"
 wait_for "MCP endpoint answers after the MetaMCP restart" 240 mcp_ok "$(key alice)" alice

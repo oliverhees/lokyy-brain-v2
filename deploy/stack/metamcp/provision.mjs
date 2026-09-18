@@ -41,33 +41,27 @@ const token = (vault, readonly = false) => {
   return process.env[name] || fail(`${name} not set`);
 };
 if (!Array.isArray(spec.users)) fail('users must be an array');
-// LBV2-27: an invalid entry fails only that user (it is not provisioned and, like an unlisted user, has its
-// MetaMCP account removed); every other user is still processed.
+// Input is validated as a whole before anything changes: an invalid users file is refused and changes
+// nothing (tests/metamcp-attacks.sh "refused runs"). Runtime failures later are per user (see main).
 const seen = new Set();
 const vaultsSeen = new Set();
 const users = [];
 const failed = [];
 for (const u of spec.users) {
-  try {
-    if (typeof u.username !== 'string' || !/^[a-z][a-z0-9-]{1,30}$/.test(u.username) || u.username.includes('--')) fail(`invalid username: ${String(u.username).slice(0, 40)}`);
-    if (typeof u.vault !== 'string' || !VAULT_RE.test(u.vault)) fail(`invalid vault for ${u.username}`);
-    // A personal vault belongs to exactly one user and carries that user's name, unless explicitly allowed.
-    if (u.vault !== u.username && u.allowVaultNameMismatch !== true) fail(`${u.username}: vault must equal username (set "allowVaultNameMismatch": true to override)`);
-    if (vaultsSeen.has(u.vault)) fail(`vault ${u.vault} assigned to more than one user`);
-    if (u.vault === company) fail(`${u.username}: own vault must not be the company vault`);
-    if (!['reader', 'writer'].includes(u.role)) fail(`${u.username}: role must be reader or writer`);
-    if (seen.has(u.username)) fail(`duplicate user ${u.username}`);
-    token(u.vault); token(company, u.role === 'reader');
-    vaultsSeen.add(u.vault);
-    seen.add(u.username);
-    users.push(u);
-  } catch (e) {
-    log(`rejected entry: ${e.message}`);
-    if (typeof u.username === 'string' && /^[a-z][a-z0-9-]{1,30}$/.test(u.username)) failed.push({ username: u.username, role: u.role, vault: u.vault, status: 'failed', error: e.message });
-  }
+  if (typeof u.username !== 'string' || !/^[a-z][a-z0-9-]{1,30}$/.test(u.username) || u.username.includes('--')) fail(`invalid username: ${u.username}`);
+  if (typeof u.vault !== 'string' || !VAULT_RE.test(u.vault)) fail(`invalid vault for ${u.username}`);
+  // A personal vault belongs to exactly one user and carries that user's name, unless explicitly allowed.
+  if (u.vault !== u.username && u.allowVaultNameMismatch !== true) fail(`${u.username}: vault must equal username (set "allowVaultNameMismatch": true to override)`);
+  if (vaultsSeen.has(u.vault)) fail(`vault ${u.vault} assigned to more than one user`);
+  vaultsSeen.add(u.vault);
+  if (u.vault === company) fail(`${u.username}: own vault must not be the company vault`);
+  if (!['reader', 'writer'].includes(u.role)) fail(`${u.username}: role must be reader or writer`);
+  if (seen.has(u.username)) fail(`duplicate user ${u.username}`);
+  seen.add(u.username);
+  token(u.vault); token(company, u.role === 'reader');
+  users.push(u);
 }
-const inFile = new Set(spec.users.map((u) => u.username));
-for (const r of rotateList) if (r !== "*" && !inFile.has(r)) fail(`--rotate ${r}: not in users file`);
+for (const r of rotateList) if (r !== "*" && !seen.has(r)) fail(`--rotate ${r}: not in users file`);
 
 // ------------------------------------------------------------------ db + session
 const db = new Client({ connectionString: process.env.DATABASE_URL });
