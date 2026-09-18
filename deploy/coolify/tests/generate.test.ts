@@ -236,7 +236,8 @@ test('embed (LBV2-26 contract, on in the packages): one token and one network pe
     assert.equal(env.MINDBASE_EMBED_URL, `http://\${LOKYY_NET_PREFIX:-10.231}.${2 + k}.46:8080`, 'fixed address, not a name');
     assert.equal((c.services.embed.networks as Record<string, { ipv4_address?: string }>)[`embed-${v}`].ipv4_address, `\${LOKYY_NET_PREFIX:-10.231}.${2 + k}.46`);
     assert.equal(c.networks[`embed-${v}`].ipam?.config[0].ip_range, `\${LOKYY_NET_PREFIX:-10.231}.${2 + k}.32/29`);
-    assert.equal(env.MINDBASE_EMBED_TOKEN, `\${SERVICE_HEX_64_EMB${V}}`);
+    // embed requires >= 16 distinct characters: a random 64-char hex string misses one of its 16 digits ~25% of the time
+    assert.equal(env.MINDBASE_EMBED_TOKEN, `\${SERVICE_PASSWORD_64_EMB${V}}`);
     assert.equal(e.environment?.[`EMBED_TOKEN_${V}`], env.MINDBASE_EMBED_TOKEN, 'plain token = same magic var');
     assert.equal(e.environment?.[`EMBED_SOURCE_${V}`], c.networks[`embed-${v}`].ipam?.config[0].subnet);
     assert.deepEqual(netKeys(c, `vault-${v}`), ['egress', `embed-${v}`, `mcp-${v}`, `web-${v}`]);

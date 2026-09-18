@@ -109,7 +109,8 @@ const secret = {
   metamcpDb: magic.hex('metamcpdb'),
   metamcpAuth: magic.hex('metamcpauth'),
   metamcpAdmin: magic.password('metamcpadmin'),
-  embedToken: (v: string) => magic.hex(`emb${v}`),
+  // alphanumeric: the embed service wants >= 16 distinct characters, hex would miss that ~25% of the time
+  embedToken: (v: string) => `\${SERVICE_PASSWORD_64_${id(`emb${v}`)}}`,
 };
 
 /** /28 per network; slot k (1-based, firma = 0) gets <prefix>.<2+k>.0/28 (web) and .16/28 (mcp). */

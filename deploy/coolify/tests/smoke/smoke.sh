@@ -26,10 +26,12 @@ ok()  { echo "PASS $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1"; fail=$((fail + 1)); }
 expect() { if [[ "$2" =~ ^($3)$ ]]; then ok "$1 → $2"; else bad "$1 → $2 (expected $3)"; fi; }
 
+# Like Coolify: SERVICE_PASSWORD_64_* = 64 alphanumeric characters, SERVICE_HEX_64_* = 64 hex digits
+magic_value() { case $1 in SERVICE_PASSWORD_64_*) openssl rand -base64 192 | tr -dc 'A-Za-z0-9' | head -c 64 ;; SERVICE_PASSWORD_*) openssl rand -base64 96 | tr -dc 'A-Za-z0-9' | head -c 32 ;; *) openssl rand -hex 32 ;; esac; }
 # Coolify writes one random value per magic variable into the resource's .env; M is a superset of S.
 if [[ ! -f $env_file ]]; then
   (umask 077
-   { grep -oE 'SERVICE_[A-Z0-9_]+' "$coolify/compose-m.yml" | sort -u | while read -r v; do printf '%s=%s\n' "$v" "$(openssl rand -hex 32)"; done
+   { grep -oE 'SERVICE_[A-Z0-9_]+' "$coolify/compose-m.yml" | sort -u | while read -r v; do printf '%s=%s\n' "$v" "$(magic_value "$v")"; done
      printf 'BASE_DOMAIN=%s\nADMIN_EMAIL=ops@example.com\nLOKYY_NET_PREFIX=10.233\n' "$DOMAIN"; } >"$env_file")
 fi
 envv() { sed -n "s/^$1=//p" "$env_file"; }

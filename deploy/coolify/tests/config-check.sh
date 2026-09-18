@@ -17,9 +17,11 @@ node --test "$dir/../stack/tests/blueprint-check.test.ts" >"$tmp/bp.log" 2>&1 &&
 check "blueprint-check passes every shipped blueprint" '"$dir/../stack/tests/blueprint-check.sh" "$dir"/authentik/blueprints/*.yaml "$dir"/../stack/authentik/blueprints/*.yaml >/dev/null 2>&1'
 check "generator --check reports no stale file" 'node "$dir/generate.ts" --check'
 
+# Like Coolify: SERVICE_PASSWORD_64_* = 64 alphanumeric characters, SERVICE_HEX_64_* = 64 hex digits
+magic_value() { case $1 in SERVICE_PASSWORD_64_*) openssl rand -base64 192 | tr -dc 'A-Za-z0-9' | head -c 64 ;; SERVICE_PASSWORD_*) openssl rand -base64 96 | tr -dc 'A-Za-z0-9' | head -c 32 ;; *) openssl rand -hex 32 ;; esac; }
 # Emulates Coolify: one random value per magic variable referenced in the file.
 magic_env() {
-  grep -oE 'SERVICE_[A-Z0-9_]+' "$1" | sort -u | while read -r v; do printf '%s=%s\n' "$v" "$(openssl rand -hex 32)"; done
+  grep -oE 'SERVICE_[A-Z0-9_]+' "$1" | sort -u | while read -r v; do printf '%s=%s\n' "$v" "$(magic_value "$v")"; done
   printf 'BASE_DOMAIN=beta.example.test\nADMIN_EMAIL=ops@example.test\n'
 }
 
