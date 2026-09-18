@@ -7,7 +7,7 @@
  *    ("<title>\n\n<body>", the indexer's format); stale or missing vectors are left out,
  *  - results are ranked by the service's vectors,
  *  - a rejected token falls back to keyword search (no LLM call, no model load),
- *  - without the variables the old behaviour stays (LLM required).
+ *  - without the variables the old behaviour stays (LLM required); only one of them stops the server.
  * Run from apps/mcp/ after `pnpm build`: node test/semantic-search-embed-service.mjs
  */
 import { spawn } from 'node:child_process';
@@ -126,11 +126,11 @@ try {
   check('without the variables: unchanged (LLM required, no service call)', /LLM not configured/.test(resultText(r4)) && requests.length === before, resultText(r4));
   local.proc.kill();
 
+  // Only the URL set: the server refuses to start (details in test/embed-startup-check.mjs)
   const half = startMcp({ MINDBASE_EMBED_URL: serviceUrl, MINDBASE_EMBED_TOKEN: '' });
-  await new Promise((r) => setTimeout(r, 500));
-  const r5 = await half.call('semantic_search', { query: 'Weather' });
-  check('only URL set: no service call without a token (keyword fallback)', requests.length === before && /weather/.test(resultText(r5)), resultText(r5));
-  half.proc.kill();
+  const code = await new Promise((r) => { half.proc.on('exit', r); setTimeout(() => r('running'), 10000); });
+  check('only URL set: the MCP server exits at startup, no service call', code === 1 && requests.length === before, String(code));
+  if (code === 'running') half.proc.kill();
 } catch (e) {
   check('run', false, e.message);
 } finally {
