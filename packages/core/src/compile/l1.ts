@@ -49,6 +49,25 @@ export interface CompileL1Result {
   total_usage: { input_tokens: number; output_tokens: number };
 }
 
+/**
+ * Output cap per compile LLM call. Without an explicit max_tokens some
+ * OpenAI-compatible routers (EUrouter) assume the model's full output window
+ * and reject the request with "estimated tokens exceed context" (LBV2-32).
+ * Override with MINDBASE_COMPILE_MAX_TOKENS or CompileL1Options.max_tokens_per_call.
+ */
+export const DEFAULT_COMPILE_MAX_TOKENS = 4096;
+
+/** Returned when the model answers the compile prompt without calling any tool. */
+export const NO_TOOL_CALLS_ERROR =
+  "The selected model didn't return any tool calls, which ingest needs to write wiki pages. " +
+  'Choose a model (or EUrouter route) with tool-capable models.';
+
+function resolveMaxTokens(explicit: number | undefined): number {
+  if (explicit !== undefined) return explicit;
+  const fromEnv = parseInt(process.env['MINDBASE_COMPILE_MAX_TOKENS'] ?? '', 10);
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_COMPILE_MAX_TOKENS;
+}
+
 function summarizeTarget(call: ToolCall): string {
   const args = call.arguments as Record<string, unknown>;
   return (
@@ -181,6 +200,7 @@ export async function compileL1(opts: CompileL1Options): Promise<CompileL1Result
   const promptVersion = opts.promptVersion ?? 'compile/v2';
   const tokenBudget = opts.tokenBudget ?? 16_000;
   const maxIter = opts.max_iterations ?? parseInt(process.env['MINDBASE_INGEST_MAX_ITER'] ?? '10', 10);
+  const maxTokens = resolveMaxTokens(opts.max_tokens_per_call);
 
   opts.onProgress?.({ kind: 'started', text: `Compiling "${opts.raw.title}"` });
   opts.onProgress?.({ kind: 'searching', text: 'Searching your wiki for related concepts…' });
@@ -248,7 +268,7 @@ export async function compileL1(opts: CompileL1Options): Promise<CompileL1Result
         model: opts.model,
         messages,
         tools: L1_TOOLS,
-        ...(opts.max_tokens_per_call !== undefined ? { max_tokens: opts.max_tokens_per_call } : {}),
+        max_tokens: maxTokens,
       };
 
       const resp = await collectResponse(opts.adapter.chat(req));
@@ -263,6 +283,13 @@ export async function compileL1(opts: CompileL1Options): Promise<CompileL1Result
       totalOutput += resp.usage.output_tokens;
 
       const calls = resp.tool_calls;
+      if (calls.length === 0 && iter === 0) {
+        // The prompt demands tool calls (even `skip`); plain text on the first
+        // turn means the model/route can't do tool use — fail loudly.
+        lastError = NO_TOOL_CALLS_ERROR;
+        status = 'error';
+        break;
+      }
       if (calls.length === 0) {
         // No more tool calls → LLM has finished.
         opts.onProgress?.({ kind: 'done', iteration: iter });
@@ -398,6 +425,7 @@ export interface ApprovalMap {
 export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Plan> {
   const tokenBudget = opts.tokenBudget ?? 16_000;
   const maxIter = opts.max_iterations ?? parseInt(process.env['MINDBASE_INGEST_MAX_ITER'] ?? '10', 10);
+  const maxTokens = resolveMaxTokens(opts.max_tokens_per_call);
 
   const sourceSlugToExclude = opts.raw.id.startsWith('note:')
     ? opts.raw.id.slice('note:'.length)
@@ -434,7 +462,7 @@ export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Pl
         model: opts.model,
         messages,
         tools: L1_TOOLS,
-        ...(opts.max_tokens_per_call !== undefined ? { max_tokens: opts.max_tokens_per_call } : {}),
+        max_tokens: maxTokens,
       };
       const resp = await collectResponse(opts.adapter.chat(req));
       if (resp.error) { lastError = resp.error; break; }
@@ -444,6 +472,7 @@ export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Pl
       // Capture the LLM's narrative (assistant content) so the UI can stream
       // it as "takeaways" — the conversational layer above the actions.
       if (resp.content) takeawaysChunks.push(resp.content);
+      if (calls.length === 0 && iter === 0) { lastError = NO_TOOL_CALLS_ERROR; break; }
       if (calls.length === 0) break;
 
       messages.push({ role: 'assistant', content: resp.content ?? '', tool_calls: calls });
