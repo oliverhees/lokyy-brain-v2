@@ -37,7 +37,7 @@ describe('setup wizard', () => {
     const r = await h.service.setLlm('admin', { mode: 'shared', apiKey: KEY, ruleId: RULE_A.id });
     expect(r.failed).toEqual([]);
     expect(h.vaults.calls.map((c) => c.vault).sort()).toEqual(['firma', 'v01', 'v02', 'v03']);
-    expect(h.vaults.calls[0]).toEqual({ vault: 'firma', apiKey: KEY, ruleId: RULE_A.id });
+    expect(h.vaults.calls[0]).toEqual({ vault: 'firma', apiKey: KEY, ruleId: RULE_A.id, ruleName: 'eu-standard' });
     const st = await h.service.setupStatus();
     expect(st.llm?.vaults['v01']).toEqual({ keyHint: '••••1234', ruleId: RULE_A.id, ruleName: 'eu-standard' });
     expect(stateFile()).not.toContain('abcdefghijkl');

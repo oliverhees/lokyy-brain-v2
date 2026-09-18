@@ -66,10 +66,11 @@ describe('HttpVaultAdmin', () => {
       calls.push({ url: String(url), init: init! });
       return new Response('{"ok":true}', { status: 200 });
     });
-    await va.configureLlm('v01', { apiKey: 'sk-1234567890', ruleId: 'r-1' });
+    await va.configureLlm('v01', { apiKey: 'sk-1234567890', ruleId: 'r-1', ruleName: 'EU Standard' });
     expect(calls[0]!.url).toBe('http://lokyy-traefik:8090/v01/api/config');
     expect(calls[0]!.init.method).toBe('PUT');
-    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ provider: 'openai', baseUrl: 'https://api.eurouter.ai/api/v1', apiKey: 'sk-1234567890', ruleId: 'r-1' });
+    // vault config API of LBV2-30: route only (ruleId, ruleName for display), no model
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ provider: 'openai', baseUrl: 'https://api.eurouter.ai/api/v1', apiKey: 'sk-1234567890', ruleId: 'r-1', ruleName: 'EU Standard' });
   });
 
   it('throws on a refused config without echoing the body', async () => {

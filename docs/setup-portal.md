@@ -35,7 +35,7 @@ Volume `lokyy-state` at `LOKYY_STATE_DIR`, read-write for the portal only:
 |---|---|
 | `state.json` | company, LLM (masked key hints, route id/name per vault), SMTP without password, slot → user, retired slots, last provisioning run |
 | `secrets.json` | SMTP password, CSRF key (mode 600) |
-| `users.json` | derived, format of `provision.mjs` (`vault` = slot, `allowVaultNameMismatch: true`); mcp-gate may mount it read-only |
+| `users.json` | derived, format of `provision.mjs` (`vault` = slot, `allowVaultNameMismatch: true`), mode 600 (contains no keys, but usernames). mcp-gate needs only the user count: prefer `GATE_MAX_BINDINGS`; mounting this file would need a shared gid and mode 640 |
 | `audit.log` | JSON lines: admin actions, every vault config call, key reveal/rotation; no secrets or links |
 
 ### Environment
@@ -142,7 +142,9 @@ inside the portal container).
 - **LLM (EUrouter):** key + route only, no model. The portal lists the key's enabled routes (`GET
   /routing-rules`, which also checks the key live: "Der Schlüssel ist ungültig oder nicht berechtigt"), the admin
   picks one, the portal checks that the route belongs to the key and sends `{provider: "openai", baseUrl, apiKey,
-  ruleId}` to each vault. Shared or per vault. Keys stay only in the vaults; the portal stores `••••<last 4>`,
+  ruleId, ruleName}` to each vault (vault config API of LBV2-30; with a ruleId the vault sends `rule_id` and no
+  model). Saving is not rate limited on the vault side; the vault's probe limit (20/min per vault) applies only to
+  `POST /api/config/test` and the vault's own rules lookup. Shared or per vault. Keys stay only in the vaults; the portal stores `••••<last 4>`,
   route id and name.
 - **SMTP:** hosts that resolve to private or internal addresses are refused unless listed in `SMTP_ALLOWED_HOSTS`;
   checked on save and on every send, and the connection goes to the checked address (TLS verifies the hostname).
@@ -173,5 +175,7 @@ apps/portal/test/e2e/run.sh test       # Authentik adapter (restricted token) + 
 apps/portal/test/e2e/run.sh down
 # parallel stacks (e.g. QA and dev at the same time): own project, port and subnet block
 apps/portal/test/e2e/run.sh -p lokyy-portal-qa --port 18382 --net 3 up|test|down
+# positive LLM path with a real key (never printed): route list, pick a route, every vault answers a chat
+EUROUTER_ENV=<file with EUROUTER_API_KEY=…> apps/portal/test/e2e/run.sh … up|test
 node apps/portal/test/dev/serve.ts     # UI preview on 127.0.0.1:18390 against fakes (?as=anna for an employee)
 ```

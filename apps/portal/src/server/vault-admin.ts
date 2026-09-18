@@ -24,8 +24,9 @@ export class HttpVaultAdmin implements VaultAdmin {
     const res = await this.#fetch(`${this.#base}/${vault}/api/config`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      // ruleId: EUrouter route; the vault sends it as rule_id and no model (vault config field, LBV2-30)
-      body: JSON.stringify({ provider: 'openai', baseUrl: EUROUTER_BASE_URL, apiKey: llm.apiKey, ruleId: llm.ruleId }),
+      // Vault config API of LBV2-30: route only (ruleId sent as rule_id, ruleName for display), no model.
+      // Note: the vault's shared probe limit (20/min per vault) only applies to /api/config/test and rules.
+      body: JSON.stringify({ provider: 'openai', baseUrl: EUROUTER_BASE_URL, apiKey: llm.apiKey, ruleId: llm.ruleId, ...(llm.ruleName ? { ruleName: llm.ruleName } : {}) }),
       signal: AbortSignal.timeout(15_000),
     });
     await res.text().catch(() => '');

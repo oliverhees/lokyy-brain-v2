@@ -192,6 +192,7 @@ services:
     networks:
       web-v01: {}
       mcp-v01: { aliases: [upstream.vault-v01] }
+      egress: {}
 
   vault-v02:
     <<: *vault
@@ -227,6 +228,7 @@ services:
     networks:
       web-v02: {}
       mcp-v02: { aliases: [upstream.vault-v02] }
+      egress: {}
 
   vault-firma:
     <<: *vault
@@ -263,6 +265,7 @@ services:
     networks:
       web-firma: {}
       mcp-firma: { aliases: [upstream.vault-firma] }
+      egress: {}
 
   # ------------------------------------------------------------------ MetaMCP
   metamcp-db:
@@ -377,6 +380,8 @@ services:
       E2E_DOMAIN: portal.localhost
       E2E_PUBLIC_PORT: ${E2E_PUBLIC_PORT:-18380}
       E2E_NET_2: ${E2E_NET_2:-10.234.2}
+      # optional real EUrouter key for the positive LLM path (passed by name from run.sh, never printed)
+      E2E_EUROUTER_KEY: ${E2E_EUROUTER_KEY:-}
     networks: [edge]
 
 networks:
@@ -409,6 +414,12 @@ networks:
   mcp-firma:
     internal: true
     ipam: { config: [{ subnet: "${E2E_NET_9:-10.234.9}.0/24" }] }
+  # Vaults -> internet (EUrouter) only; inter-container traffic disabled (as deploy/stack)
+  egress:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"
+    ipam: { config: [{ subnet: "${E2E_NET_10:-10.234.10}.0/24" }] }
   mcp-upstream:
     internal: true
     ipam: { config: [{ subnet: "${E2E_NET_11:-10.234.11}.0/24" }] }

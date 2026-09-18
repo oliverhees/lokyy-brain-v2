@@ -37,6 +37,12 @@ if [[ ! -f $envfile ]]; then
   } >"$envfile"
 fi
 grep -q '^PORTAL_AUTHENTIK_TOKEN=' "$envfile" || echo "PORTAL_AUTHENTIK_TOKEN=$(gen)" >>"$envfile"
+# Optional real EUrouter key for the positive LLM path: EUROUTER_ENV=<file with EUROUTER_API_KEY=…>.
+# Loaded here, handed to containers by variable name only, never printed.
+if [[ -n ${EUROUTER_ENV:-} && -f $EUROUTER_ENV ]]; then
+  E2E_EUROUTER_KEY=$(sed -n 's/^EUROUTER_API_KEY=//p' "$EUROUTER_ENV" | head -1)
+  export E2E_EUROUTER_KEY
+fi
 export E2E_PROJECT=$project E2E_PUBLIC_PORT=$port
 for i in $(seq 0 11); do export "E2E_NET_$i=10.234.$((net * 16 + i))"; done
 export REPO_DIR=$repo PORTAL_DIR=$repo/apps/portal HOST_UID=$(id -u) HOST_GID=$(id -g)
@@ -79,6 +85,25 @@ case $cmd in
         }
         process.exit(bad ? 1 : 0);
       })();'
+    if [[ -n ${E2E_EUROUTER_KEY:-} ]]; then
+      # Positive LLM path: every vault answers a real route-only chat through EUrouter (config/test of LBV2-30)
+      "${compose[@]}" exec -T portal node -e '
+        const base = process.env.VAULT_ADMIN_URL;
+        (async () => {
+          let bad = 0;
+          for (const v of ["firma", "v01", "v02"]) {
+            const cfg = await (await fetch(base + "/" + v + "/api/config")).json();
+            const r = await fetch(base + "/" + v + "/api/config/test", { method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ provider: cfg.provider, apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, ruleId: cfg.ruleId }) });
+            const b = await r.json();
+            // With a ruleId the vault sends rule_id and no model (a stored model value is ignored).
+            const ok = b.ok === true && typeof cfg.ruleId === "string" && cfg.ruleId.length > 0;
+            console.log((ok ? "ok  " : "FAIL") + " vault " + v + " answered via route " + cfg.ruleName + (ok ? "" : " -> " + (b.error ?? r.status)));
+            if (!ok) bad++;
+          }
+          process.exit(bad ? 1 : 0);
+        })();'
+    fi
     ;;
   down)
     "${compose[@]}" --profile test down -v --remove-orphans

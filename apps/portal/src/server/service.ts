@@ -33,6 +33,8 @@ export interface VaultLlmConfig {
   apiKey: string;
   /** EUrouter route; the vault sends it as rule_id, without a model (vault config field ruleId, LBV2-30) */
   ruleId: string;
+  /** shown in the vault's settings (vault config field ruleName, LBV2-30) */
+  ruleName?: string;
 }
 
 export interface VaultAdmin {
@@ -172,7 +174,7 @@ export class PortalService {
     for (const w of wanted) {
       let ok = true;
       try {
-        await this.#d.vaultAdmin.configureLlm(w.vault, { apiKey: w.apiKey, ruleId: w.ruleId });
+        await this.#d.vaultAdmin.configureLlm(w.vault, { apiKey: w.apiKey, ruleId: w.ruleId, ruleName: names.get(w.vault)! });
         applied[w.vault] = { keyHint: hint(w.apiKey), ruleId: w.ruleId, ruleName: names.get(w.vault)! };
       } catch (e) {
         ok = false;

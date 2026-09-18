@@ -70,6 +70,21 @@ describe.runIf(enabled)('E2E: invite → accept → vault login → MCP tools/li
     expect(session.package).toBe('e2e');
   });
 
+  it.runIf(!!process.env['E2E_EUROUTER_KEY'])('setup with a real EUrouter key: real route list, pick a route, all vaults configured (route only)', async () => {
+    const apiKey = process.env['E2E_EUROUTER_KEY']!;
+    const routes = await portalApi(adminB, 'POST', '/api/admin/setup/llm/routes', { apiKey });
+    expect(routes.status).toBe(200);
+    const list = routes.json<{ routes: { id: string; name: string }[] }>().routes;
+    expect(list.length).toBeGreaterThan(0);
+    const llm = await portalApi(adminB, 'PUT', '/api/admin/setup/llm', { mode: 'shared', apiKey, ruleId: list[0]!.id });
+    expect(llm.status).toBe(200);
+    expect(llm.json()).toEqual({ failed: [] });
+    const setup = (await portalApi(adminB, 'GET', '/api/admin/setup')).json<{ llm: { vaults: Record<string, { ruleId: string; ruleName: string }> } }>();
+    expect(Object.keys(setup.llm.vaults).sort()).toEqual(['firma', 'v01', 'v02']);
+    expect(setup.llm.vaults['v01']).toMatchObject({ ruleId: list[0]!.id, ruleName: list[0]!.name });
+    // run.sh test then lets every vault answer a real chat through this route (vault /api/config/test)
+  });
+
   it('admin invites a reader: slot, Authentik groups, MetaMCP provisioning, invitation link', async () => {
     const r = await portalApi(adminB, 'POST', '/api/admin/users', { username: user, email: `${user}@example.com`, displayName: 'E2E Anna', role: 'reader' });
     expect(r.status).toBe(201);
