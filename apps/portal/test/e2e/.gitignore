@@ -1,0 +1,3 @@
+# generated secrets per compose project (run.sh)
+.env
+.env.*
