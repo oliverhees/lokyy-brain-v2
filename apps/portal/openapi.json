@@ -556,6 +556,16 @@
           },
           "404": {
             "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "description": "authentik_forbidden: authentik-gate refuses this account (e.g. made an admin in Authentik)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       },
@@ -596,7 +606,17 @@
             "$ref": "#/components/responses/Error"
           },
           "502": {
-            "description": "revocation_failed: the MetaMCP key could not be revoked; the user stays (disabled) for a retry"
+            "description": "revocation_failed (MetaMCP key not revoked) | authentik_failed; the user stays disabled for a retry either way"
+          },
+          "409": {
+            "description": "authentik_forbidden: authentik-gate refuses this account (e.g. made an admin in Authentik)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -643,6 +663,16 @@
           },
           "502": {
             "description": "revocation_failed | authentik_failed (the user is disabled in the portal anyway)"
+          },
+          "409": {
+            "description": "authentik_forbidden: authentik-gate refuses this account (e.g. made an admin in Authentik)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }

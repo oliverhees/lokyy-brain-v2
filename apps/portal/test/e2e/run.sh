@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # LBV2-28 — portal E2E stack.
 #   test/e2e/run.sh [-p project] [--port 18380] [--net TAG] up|test|down
-# Defaults: project lokyy-portal, 127.0.0.1:18380, subnets 10.234.0-11.0/24. For a parallel stack (e.g.
+# Defaults: project lokyy-portal, 127.0.0.1:18380, subnets 10.234.0-13.0/24. For a parallel stack (e.g.
 # QA) choose another project, port and net block: -p lokyy-portal-qa --port 18382 --net 3 uses subnets
-# 10.234.48-59.0/24 (block n = 16n…16n+11, n = 0…15). Secrets are generated once per project in
+# 10.234.48-61.0/24 (block n = 16n…16n+13, n = 0…15). Secrets are generated once per project in
 # test/e2e/.env.<project> (gitignored).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -37,6 +37,7 @@ if [[ ! -f $envfile ]]; then
   } >"$envfile"
 fi
 grep -q '^PORTAL_AUTHENTIK_TOKEN=' "$envfile" || echo "PORTAL_AUTHENTIK_TOKEN=$(gen)" >>"$envfile"
+grep -q '^PORTAL_GATE_SECRET=' "$envfile" || echo "PORTAL_GATE_SECRET=$(gen)" >>"$envfile"
 # Optional real EUrouter key for the positive LLM path: EUROUTER_ENV=<file with EUROUTER_API_KEY=…>.
 # Loaded here, handed to containers by variable name only, never printed.
 if [[ -n ${EUROUTER_ENV:-} && -f $EUROUTER_ENV ]]; then
@@ -44,7 +45,7 @@ if [[ -n ${EUROUTER_ENV:-} && -f $EUROUTER_ENV ]]; then
   export E2E_EUROUTER_KEY
 fi
 export E2E_PROJECT=$project E2E_PUBLIC_PORT=$port
-for i in $(seq 0 11); do export "E2E_NET_$i=10.234.$((net * 16 + i))"; done
+for i in $(seq 0 13); do export "E2E_NET_$i=10.234.$((net * 16 + i))"; done
 export REPO_DIR=$repo PORTAL_DIR=$repo/apps/portal HOST_UID=$(id -u) HOST_GID=$(id -g)
 compose=(docker compose -p "$project" -f compose.yml --env-file "$envfile")
 
@@ -59,7 +60,7 @@ wait_for() { # wait_for <description> <command...>
 
 case $cmd in
   up)
-    "${compose[@]}" build portal
+    "${compose[@]}" build portal authentik-gate
     "${compose[@]}" up -d
     wait_for "authentik blueprints" "${compose[@]}" exec -T authentik-server ak shell -c \
       'from authentik.flows.models import Flow; from authentik.core.models import Token; import sys; sys.exit(0 if Flow.objects.filter(slug="lokyy-set-password").exists() and Token.objects.filter(identifier="lokyy-portal-api").exists() else 1)'

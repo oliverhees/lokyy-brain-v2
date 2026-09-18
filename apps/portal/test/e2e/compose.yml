@@ -1,9 +1,10 @@
 # LBV2-28 — local E2E stack for the setup portal. Default project lokyy-portal, one host port
-# (127.0.0.1:18380, Traefik), subnets 10.234.0-11.0/24. Parallel stacks (e.g. QA): run.sh -p <project>
-# --port <port> --net <n> sets E2E_PROJECT, E2E_PUBLIC_PORT and E2E_NET_0…11 = 10.234.(16n+0…11).
+# (127.0.0.1:18380, Traefik), subnets 10.234.0-13.0/24. Parallel stacks (e.g. QA): run.sh -p <project>
+# --port <port> --net <n> sets E2E_PROJECT, E2E_PUBLIC_PORT and E2E_NET_0…13 = 10.234.(16n+0…13).
 # Mirrors the network model of deploy/stack and the
-# LBV2-28 compose contract: the portal is on edge + metamcp-internal + portal-admin, never on a vault
-# network; vault LLM config goes through Traefik's internal portal-admin entrypoint.
+# LBV2-28 compose contract: the portal is on edge + metamcp-internal + portal-admin + portal-gate, never
+# on a vault network; vault LLM config goes through Traefik's internal portal-admin entrypoint. The portal
+# holds no Authentik token: only authentik-gate does (portal-gate ↔ gate ↔ authentik-api ↔ Authentik).
 #   http://auth.portal.localhost:18380   Authentik        http://app.portal.localhost:18380   portal
 #   http://v01|v02|firma.portal.localhost:18380 vaults    http://mcp.portal.localhost:18380   mcp-gate
 # Start with test/e2e/run.sh (generates .env with random secrets). Uses the local images
@@ -95,7 +96,7 @@ services:
       - traefik.http.middlewares.authentik.forwardauth.trustForwardHeader=true
       - traefik.http.middlewares.authentik.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-uid
       - traefik.http.middlewares.vault-identity.headers.customrequestheaders.X-Mindbase-User=
-    networks: [edge, authentik-internal]
+    networks: [edge, authentik-internal, authentik-api]
 
   authentik-worker:
     image: ghcr.io/goauthentik/server:2026.8.2
@@ -106,6 +107,23 @@ services:
     volumes: *authentik-volumes
     shm_size: 512mb
     networks: [authentik-internal]
+
+  # ------------------------------------------------------------------- authentik-gate
+  # Sole holder of the least-privilege Authentik token; lets the portal manage only its own employees.
+  authentik-gate:
+    image: lokyy-authentik-gate:dev
+    build:
+      context: ../../../../deploy/stack/authentik-gate
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    environment:
+      AUTHENTIK_URL: http://authentik-server:9000
+      # least-privilege service account token (blueprint), not the bootstrap token
+      AUTHENTIK_API_TOKEN: ${PORTAL_AUTHENTIK_TOKEN:?run test/e2e/run.sh}
+      GATE_SECRET: ${PORTAL_GATE_SECRET:?run test/e2e/run.sh}
+    networks: [portal-gate, authentik-api]
 
   # ------------------------------------------------------------------- Portal
   portal:
@@ -119,6 +137,7 @@ services:
     mem_limit: 256m
     depends_on:
       metamcp: { condition: service_healthy }
+      authentik-gate: { condition: service_healthy }
     environment:
       LOKYY_DOMAIN: portal.localhost
       LOKYY_SLOTS: v01,v02
@@ -127,9 +146,9 @@ services:
       LOKYY_PACKAGE: e2e
       LOKYY_PUBLIC_SCHEME: http
       LOKYY_PUBLIC_PORT: ${E2E_PUBLIC_PORT:-18380}
-      AUTHENTIK_URL: http://authentik-server:9000
-      # least-privilege service account token (blueprint), not the bootstrap token
-      AUTHENTIK_API_TOKEN: ${PORTAL_AUTHENTIK_TOKEN}
+      # no Authentik token: everything goes through authentik-gate
+      AUTHENTIK_GATE_URL: http://authentik-gate:8080
+      AUTHENTIK_GATE_SECRET: ${PORTAL_GATE_SECRET}
       METAMCP_URL: http://metamcp:12008
       METAMCP_DATABASE_URL: postgresql://metamcp:${METAMCP_PG_PASS}@metamcp-db:5432/metamcp
       VAULT_ADMIN_URL: http://${E2E_NET_2:-10.234.2}.2:8090
@@ -154,6 +173,7 @@ services:
     networks:
       edge: {}
       metamcp-internal: {}
+      portal-gate: {}
       portal-admin: { ipv4_address: "${E2E_NET_2:-10.234.2}.3" }
 
   # ------------------------------------------------------------------- Vaults
@@ -372,7 +392,9 @@ services:
     environment:
       E2E: "1"
       AUTHENTIK_URL: http://authentik-server:9000
-      # restricted token (what the portal uses) and the bootstrap token (only for negative checks)
+      AUTHENTIK_GATE_URL: http://authentik-gate:8080
+      AUTHENTIK_GATE_SECRET: ${PORTAL_GATE_SECRET}
+      # token the gate holds (defence-in-depth checks) and the bootstrap token (test setup, negative checks)
       AUTHENTIK_API_TOKEN: ${PORTAL_AUTHENTIK_TOKEN}
       AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_API_TOKEN}
       AUTHENTIK_ADMIN_PASS: ${AUTHENTIK_ADMIN_PASS}
@@ -382,7 +404,7 @@ services:
       E2E_NET_2: ${E2E_NET_2:-10.234.2}
       # optional real EUrouter key for the positive LLM path (passed by name from run.sh, never printed)
       E2E_EUROUTER_KEY: ${E2E_EUROUTER_KEY:-}
-    networks: [edge]
+    networks: [edge, portal-gate]
 
 networks:
   edge:
@@ -423,6 +445,14 @@ networks:
   mcp-upstream:
     internal: true
     ipam: { config: [{ subnet: "${E2E_NET_11:-10.234.11}.0/24" }] }
+  # portal ↔ authentik-gate only
+  portal-gate:
+    internal: true
+    ipam: { config: [{ subnet: "${E2E_NET_12:-10.234.12}.0/24" }] }
+  # authentik-gate ↔ authentik-server only (not the Authentik database network)
+  authentik-api:
+    internal: true
+    ipam: { config: [{ subnet: "${E2E_NET_13:-10.234.13}.0/24" }] }
 
 volumes:
   lokyy-state:

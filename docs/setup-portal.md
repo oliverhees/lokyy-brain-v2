@@ -24,10 +24,11 @@ Service `portal`, image from `apps/portal/Dockerfile` (build context: repo root)
 `GET /healthz`. The container runs as `node`, needs no Docker socket and works with a read-only root
 filesystem; it writes only to `/state`. MetaMCP provisioning is done by the portal itself (lead decision).
 
-Networks: `edge` (Authentik API, MetaMCP HTTP, egress to `https://api.eurouter.ai` for the route lookup),
-`metamcp-internal` (MetaMCP Postgres: provisioning and immediate key revocation) and an internal network
-shared only with Traefik (portal traffic and the vault config entrypoint). Never a vault network
-(`web-*`, `mcp-*`).
+Networks: `edge` (MetaMCP HTTP, egress to `https://api.eurouter.ai` for the route lookup),
+`metamcp-internal` (MetaMCP Postgres: provisioning and immediate key revocation), an internal network
+shared only with Traefik (portal traffic and the vault config entrypoint) and the internal `portal-gate`
+network to `authentik-gate`. Never a vault network (`web-*`, `mcp-*`). The portal holds **no Authentik
+token**; every Authentik change goes through `authentik-gate` (below).
 
 Volume `lokyy-state` at `LOKYY_STATE_DIR`, read-write for the portal only:
 
@@ -45,13 +46,13 @@ Volume `lokyy-state` at `LOKYY_STATE_DIR`, read-write for the portal only:
 | `LOKYY_DOMAIN` | yes | base domain, e.g. `firma.de` |
 | `LOKYY_SLOTS` | yes | deployed slots, `v01,v02,…` |
 | `VAULT_PROXY_SECRET` | yes | ≥ 32 chars; Traefik sets it as `X-Vault-Proxy-Secret` on the `app.<domain>` router after forward-auth |
-| `AUTHENTIK_API_TOKEN` | yes | token of the `lokyy-portal` service account (least privilege, see Authentik) — **not** the bootstrap token |
+| `AUTHENTIK_GATE_SECRET` | yes | ≥ 32 chars, shared bearer secret with `authentik-gate` (its `GATE_SECRET`) |
 | `METAMCP_DATABASE_URL` | yes | `postgresql://metamcp:…@metamcp-db:5432/metamcp` |
 | `VAULT_ADMIN_URL` | yes | the vault config entrypoint, e.g. `http://<traefik ip on the portal network>:8090` |
 | `MCP_TOKEN_V01…`, `MCP_TOKEN_FIRMA`, `MCP_READONLY_TOKEN_FIRMA` | yes | vault MCP tokens (looked up by name like `provision.mjs`) |
 | `LOKYY_STATE_DIR` | no | `/state` |
 | `LOKYY_PACKAGE` | no | package name, shown to admins |
-| `AUTHENTIK_URL` / `METAMCP_URL` | no | `http://authentik-server:9000` / `http://metamcp:12008` |
+| `AUTHENTIK_GATE_URL` / `METAMCP_URL` | no | `http://authentik-gate:8080` / `http://metamcp:12008` |
 | `LOKYY_PUBLIC_SCHEME` / `LOKYY_PUBLIC_PORT` | no | `https` / none; public URLs are `<scheme>://<host>.<domain>[:port]` |
 | `AUTHENTIK_PUBLIC_URL`, `METAMCP_PUBLIC_BASE`, `PORTAL_PUBLIC_ORIGIN` | no | derived: `auth.`, `mcp.`, `app.<domain>` |
 | `METAMCP_ORIGIN` | no | Origin for MetaMCP's better-auth sign-in; defaults to `METAMCP_PUBLIC_BASE` (= MetaMCP `APP_URL`) |
@@ -74,6 +75,43 @@ Volume `lokyy-state` at `LOKYY_STATE_DIR`, read-write for the portal only:
 Working reference: `apps/portal/test/e2e/compose.yml` (`run.sh test` checks the allowed and refused routes from
 inside the portal container).
 
+### authentik-gate
+
+Service `authentik-gate`, image from `deploy/stack/authentik-gate/Dockerfile` (build context: that directory;
+TypeScript on Node 24 type stripping, Node built-ins only, tests run in the build), port 8080, runs as `node`,
+read-only root filesystem, `cap_drop: ALL`, no volumes. Healthcheck: unauthenticated `GET /v1/users` answers 401.
+It alone holds the `lokyy-portal` service-account token and lets the portal manage only its own employees.
+
+| Variable | Required | Default / meaning |
+|---|---|---|
+| `AUTHENTIK_API_TOKEN` | yes | token of the `lokyy-portal` service account (least privilege, below) — **not** the bootstrap token |
+| `GATE_SECRET` | yes | ≥ 32 chars, same value as the portal's `AUTHENTIK_GATE_SECRET` |
+| `AUTHENTIK_URL` | no | `http://authentik-server:9000` |
+| `PORT` / `GATE_RATE_PER_MINUTE` | no | `8080` / `120` (all calls together) |
+
+Networks: `portal-gate` (internal, portal ↔ gate only) and an internal network with `authentik-server` only
+(not the Authentik database network, no `edge`, no egress).
+
+API (bearer `GATE_SECRET`, JSON bodies ≤ 16 KB, nothing else is served):
+
+| Call | Does |
+|---|---|
+| `GET /v1/users` | managed users (path `lokyy`, policy below) |
+| `POST /v1/users/lookup {username}` | `absent`, `managed` + user, or `foreign` (nothing about foreign accounts) |
+| `POST /v1/users {username,name,email,slot,groups}` | create; the gate itself sets `path: lokyy`, `lokyy_managed: true`, `lokyy_slot` |
+| `PATCH /v1/users/:pk {name?,email?,isActive?,groups?}` | update; only allowlisted groups are changed, other memberships stay |
+| `POST /v1/users/:pk/recovery {tokenDuration}` | invitation (recovery) link, at most 14 days |
+| `DELETE /v1/users/:pk/sessions`, `DELETE /v1/users/:pk` | end sessions, delete |
+
+Every call on `:pk` fetches the target from Authentik first and is refused (403) unless it has
+`attributes.lokyy_managed = true`, is not a superuser, is not `akadmin`/`admin`/`root`/`lokyy-portal`, is an
+internal/external user and is in no superuser group, `authentik Admins` or `lokyy-admins`. Assignable groups:
+`vault-vNN`, `vault-firma-read`, `vault-firma-write`, `lokyy-users` only. No password endpoint, no passthrough,
+unknown fields are refused. Errors are generic (`401 unauthorized`, `403 forbidden_target`, `404 not_found`,
+`409 exists`, `413`, `422 group_missing`, `424 no_recovery_flow`, `429`, `502 upstream`); the audit log
+(stdout, JSON lines) names action, target and changed fields, never links or tokens. The portal shows a refusal
+as `authentik_forbidden` ("change this account in Authentik directly").
+
 ### Authentik
 
 - Mount `apps/portal/authentik/lokyy-portal.yaml` into `/blueprints/custom` (server and worker). It creates
@@ -89,9 +127,9 @@ inside the portal container).
   otherwise the outpost can send an empty `X-authentik-username`.
 - Setting akadmin's groups in a blueprint replaces them: keep `authentik Admins`
   (`groups: [!Find [authentik_core.group, [name, "authentik Admins"]], !KeyOf group-admins]`, LBV2-29).
-- **Portal service account (least privilege):** user `lokyy-portal` (type `service_account`) with a role
-  `lokyy-portal` and an API token (intent `api`, not expiring). Permissions, derived from the adapter's API
-  calls (`src/server/authentik.ts`):
+- **Service account of the gate (least privilege):** user `lokyy-portal` (type `service_account`) with a role
+  `lokyy-portal` and an API token (intent `api`, not expiring), handed only to `authentik-gate`. Permissions,
+  derived from the gate's API calls (`deploy/stack/authentik-gate/src/gate.ts`):
 
   | Permission | Used for |
   |---|---|
@@ -104,11 +142,12 @@ inside the portal container).
   | `authentik_core.add_user_to_group`, `authentik_core.remove_user_from_group` | group membership |
   | `authentik_core.view_authenticatedsession`, `authentik_core.delete_authenticatedsession` | end sessions on disable/remove |
 
-  Verified live: everything the portal does works with this token; it cannot create a recovery link for
-  akadmin (flow policy), cannot add anyone to a superuser group, sees only its own token and gets 403 for roles,
-  providers and flows. Residual risk: `change_user` is global in Authentik (no path scoping), so a stolen token
-  could still edit or deactivate other users (no takeover of admins: recovery is limited by the flow policy,
-  superuser groups need `enable_group_superuser`). Reference blueprint: `apps/portal/test/e2e/blueprints/e2e-stack.yaml`.
+  Verified live: everything the portal does works through the gate with this token; the token cannot create a
+  recovery link for akadmin (flow policy), cannot add anyone to a superuser group, sees only its own token and
+  gets 403 for roles, providers and flows. `change_user`, `delete_user` and `reset_user_password` are global in
+  Authentik (no path scoping) — the reason the token lives in the gate and not in the portal: a compromised
+  portal can only do what the gate's policy allows (verified live: every write on akadmin and on a
+  `lokyy-admins` member is refused). Reference blueprint: `apps/portal/test/e2e/blueprints/e2e-stack.yaml`.
 
 ## Behaviour
 
@@ -156,7 +195,8 @@ grants nothing); `/api/admin/*` needs `lokyy-admins`; CSRF: per-user HMAC token 
 JSON bodies only (16 KB); per-user rate limits (240/min, 10/min for invite, SMTP test, key reveal/rotate);
 CSP `default-src 'self'` without inline scripts or styles, `frame-ancestors 'none'`, `no-store` on the API;
 generic error bodies (Authentik/MetaMCP details only in the log). Secrets never leave the server except the
-caller's own MCP key on explicit reveal.
+caller's own MCP key on explicit reveal. No Authentik token in the portal: `authentik-gate` holds it and
+refuses anything but the portal's own employees.
 
 ## Known limits
 
@@ -170,8 +210,9 @@ caller's own MCP key on explicit reveal.
 
 ```bash
 pnpm -F @mindbase/portal test          # unit + API + UI tests (fakes for Authentik, MetaMCP, vaults, SMTP)
-apps/portal/test/e2e/run.sh up         # full stack: project lokyy-portal, 127.0.0.1:18380, 10.234.0-11.0/24
-apps/portal/test/e2e/run.sh test       # Authentik adapter (restricted token) + E2E + vault config route checks
+node --test deploy/stack/authentik-gate/test/*.test.ts  # gate policy + HTTP (the portal tests also run it in-process)
+apps/portal/test/e2e/run.sh up         # full stack: project lokyy-portal, 127.0.0.1:18380, 10.234.0-13.0/24
+apps/portal/test/e2e/run.sh test       # gate against real Authentik (refusals on akadmin/lokyy-admins) + E2E + vault config route checks
 apps/portal/test/e2e/run.sh down
 # parallel stacks (e.g. QA and dev at the same time): own project, port and subnet block
 apps/portal/test/e2e/run.sh -p lokyy-portal-qa --port 18382 --net 3 up|test|down
