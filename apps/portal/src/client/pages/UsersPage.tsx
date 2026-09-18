@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { UserPlus, Users } from 'lucide-react';
 import { de } from '../../shared/i18n/de.ts';
 import { ApiError, errorMessage } from '../api.ts';
-import { useApi, useLoad } from '../context.tsx';
+import { useApi, useLoad, usePolling } from '../context.tsx';
 import type { InviteResponse, Role, UserRow, UsersResponse } from '../types.ts';
 import { Alert, Badge, Button, Card, CopyBlock, Dialog, LoadError, Loading, RadioGroup, TextField, fieldError } from '../components/ui.tsx';
 
@@ -94,11 +94,13 @@ function InviteDialog({ open, onClose, onInvited }: { open: boolean; onClose: ()
 }
 
 // ------------------------------------------------------------------ page
-type Pending = { kind: 'remove' | 'disable'; user: UserRow } | null;
+type Pending = { kind: 'remove' | 'disable'; user: UserRow } | { kind: 'release'; slot: string; formerUsername: string } | null;
 
-export function UsersPage() {
+export function UsersPage({ pollMs = 3000 }: { pollMs?: number }) {
   const api = useApi();
   const { data, error, loading, reload } = useLoad((a) => a.get<UsersResponse>('/api/admin/users'));
+  // Provisioning happens in the metamcp container; follow it until nothing is pending.
+  usePolling(!!data && (data.lastProvisioning?.state === 'pending' || data.users.some((u) => u.provisioning === 'pending')), pollMs, reload);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -123,7 +125,7 @@ export function UsersPage() {
   if (loading && !data) return <Loading />;
   if (error && !data) return <LoadError message={errorMessage(error)} onRetry={reload} />;
   const d = data!;
-  const needsRetry = d.lastProvisioning?.status === 'failed' || d.users.some((u) => u.provisioning === 'failed');
+  const needsRetry = d.lastProvisioning?.state === 'failed' || d.users.some((u) => u.provisioning === 'failed');
 
   return (
     <div className="flex flex-col gap-6">
@@ -208,8 +210,15 @@ export function UsersPage() {
       {d.retired.length > 0 && (
         <Card title={t.retired.heading}>
           <p className="mb-2 text-sm text-muted">{t.retired.text}</p>
-          <ul className="list-inside list-disc text-sm text-fg">
-            {d.retired.map((r) => <li key={r.slot}>{t.retired.entry(r.slot, r.formerUsername)}</li>)}
+          <ul className="flex flex-col gap-1 text-sm text-fg">
+            {d.retired.map((r) => (
+              <li key={r.slot} className="flex flex-wrap items-center gap-2">
+                <span>{t.retired.entry(r.slot, r.formerUsername)}</span>
+                <Button variant="ghost" onClick={() => { setConfirmText(''); setPending({ kind: 'release', slot: r.slot, formerUsername: r.formerUsername }); }}>
+                  {t.retired.release}
+                </Button>
+              </li>
+            ))}
           </ul>
         </Card>
       )}
@@ -222,27 +231,46 @@ export function UsersPage() {
         <div className="flex justify-end"><Button onClick={() => setLink(null)}>{de.common.close}</Button></div>
       </Dialog>
 
-      <Dialog open={pending?.kind === 'disable'} title={pending ? t.disableDialog.heading(pending.user.displayName) : ''} onClose={() => setPending(null)}>
+      <Dialog open={pending?.kind === 'disable'} title={pending?.kind === 'disable' ? t.disableDialog.heading(pending.user.displayName) : ''} onClose={() => setPending(null)}>
         <p className="text-sm text-fg">{t.disableDialog.text}</p>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setPending(null)}>{de.common.cancel}</Button>
           <Button variant="danger" onClick={() => {
-            const u = pending!.user; setPending(null);
+            if (pending?.kind !== 'disable') return;
+            const u = pending.user; setPending(null);
             void act(`disable-${u.username}`, () => api.post(`${path(u)}/disable`), t.done.disabled);
           }}>{t.disableDialog.confirm}</Button>
         </div>
       </Dialog>
 
-      <Dialog open={pending?.kind === 'remove'} title={pending ? t.removeDialog.heading(pending.user.displayName) : ''} onClose={() => setPending(null)}>
+      <Dialog open={pending?.kind === 'remove'} title={pending?.kind === 'remove' ? t.removeDialog.heading(pending.user.displayName) : ''} onClose={() => setPending(null)}>
         <p className="text-sm text-fg">{t.removeDialog.text}</p>
-        {pending && <TextField label={t.removeDialog.confirmLabel(pending.user.username)} value={confirmText} autoComplete="off" spellCheck={false}
+        {pending?.kind === 'remove' && <TextField label={t.removeDialog.confirmLabel(pending.user.username)} value={confirmText} autoComplete="off" spellCheck={false}
           onChange={(e) => setConfirmText(e.target.value)} />}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setPending(null)}>{de.common.cancel}</Button>
-          <Button variant="danger" disabled={!pending || confirmText !== pending.user.username} onClick={() => {
-            const u = pending!.user; setPending(null);
+          <Button variant="danger" disabled={pending?.kind !== 'remove' || confirmText !== pending.user.username} onClick={() => {
+            if (pending?.kind !== 'remove') return;
+            const u = pending.user; setPending(null);
             void act(`remove-${u.username}`, () => api.del(path(u), { confirm: confirmText, keepData: true }), t.done.removed);
           }}>{t.removeDialog.confirm}</Button>
+        </div>
+      </Dialog>
+      <Dialog open={pending?.kind === 'release'} title={pending?.kind === 'release' ? t.releaseDialog.heading(pending.slot) : ''} onClose={() => setPending(null)}>
+        {pending?.kind === 'release' && (
+          <>
+            <Alert tone="warning">{t.releaseDialog.text(pending.formerUsername)}</Alert>
+            <TextField label={t.releaseDialog.confirmLabel(pending.slot)} value={confirmText} autoComplete="off" spellCheck={false}
+              onChange={(e) => setConfirmText(e.target.value)} />
+          </>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setPending(null)}>{de.common.cancel}</Button>
+          <Button variant="danger" disabled={pending?.kind !== 'release' || confirmText !== pending.slot} onClick={() => {
+            if (pending?.kind !== 'release') return;
+            const slot = pending.slot; setPending(null);
+            void act(`release-${slot}`, () => api.post(`/api/admin/slots/${encodeURIComponent(slot)}/release`, { confirm: confirmText }), t.done.released);
+          }}>{t.releaseDialog.confirm}</Button>
         </div>
       </Dialog>
     </div>

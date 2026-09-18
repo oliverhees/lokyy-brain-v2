@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Check } from 'lucide-react';
 import { de } from '../../shared/i18n/de.ts';
+import { EUROUTER_BASE_URL } from '../../shared/validation.ts';
 import { ApiError, errorMessage } from '../api.ts';
 import { useApi, useLoad } from '../context.tsx';
-import type { SetupStatus } from '../types.ts';
-import { Alert, Button, Card, LoadError, Loading, RadioGroup, TextField, fieldError } from '../components/ui.tsx';
+import type { Route, SetupStatus, VaultLlm } from '../types.ts';
+import { Alert, Button, Card, LoadError, Loading, RadioGroup, SelectField, TextField, fieldError } from '../components/ui.tsx';
 
 const t = de.setup;
 const STEPS = [t.steps.company, t.steps.llm, t.steps.smtp, t.steps.done];
@@ -33,6 +34,49 @@ function Stepper({ step }: { step: number }) {
   );
 }
 
+/** EUrouter key + "load routes" + route picker; routes are fetched server-side (validates the key). */
+function KeyAndRoute({ keyLabel, routeLabel, value, onChange, current, fields, prefix }: {
+  keyLabel: string; routeLabel: string; value: { apiKey: string; ruleId: string; routes: Route[] | null };
+  onChange: (v: { apiKey: string; ruleId: string; routes: Route[] | null }) => void;
+  current: VaultLlm | undefined; fields: Record<string, string>; prefix: string;
+}) {
+  const api = useApi();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<{ apiKey?: string; general?: string }>({});
+  const load = async () => {
+    setBusy(true); setErr({});
+    try {
+      const r = await api.post<{ routes: Route[] }>('/api/admin/setup/llm/routes', { apiKey: value.apiKey.trim() });
+      onChange({ ...value, routes: r.routes, ruleId: r.routes.some((x) => x.id === value.ruleId) ? value.ruleId : '' });
+    } catch (e) {
+      if (e instanceof ApiError && e.fields['apiKey']) setErr({ apiKey: fieldError(e.fields, 'apiKey') });
+      else setErr({ general: errorMessage(e) });
+      onChange({ ...value, routes: null, ruleId: '' });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      {current && <p className="text-sm text-muted">{t.llm.current(current.ruleName, current.keyHint)}</p>}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <TextField className="flex-1" label={keyLabel} type="password" autoComplete="off" spellCheck={false} value={value.apiKey}
+          hint={current ? t.llm.keepHint : undefined} error={err.apiKey ?? fieldError(fields, `${prefix}apiKey`)}
+          onChange={(e) => onChange({ apiKey: e.target.value, ruleId: '', routes: null })} />
+        <Button variant="secondary" busy={busy} disabled={value.apiKey.trim().length === 0} onClick={() => void load()}>{t.llm.loadRoutes}</Button>
+      </div>
+      {err.general && <Alert tone="error">{err.general}</Alert>}
+      {value.routes && value.routes.length === 0 && <Alert tone="warning">{t.llm.noRoutes}</Alert>}
+      <SelectField label={routeLabel} placeholder={t.llm.chooseRoute} value={value.ruleId} disabled={!value.routes || value.routes.length === 0}
+        hint={value.routes ? undefined : t.llm.routeHint} error={fieldError(fields, `${prefix}ruleId`)}
+        options={(value.routes ?? []).map((r) => ({ value: r.id, label: r.name }))} onChange={(ruleId) => onChange({ ...value, ruleId })} />
+    </div>
+  );
+}
+
+type KeyRoute = { apiKey: string; ruleId: string; routes: Route[] | null };
+const emptyKeyRoute = (): KeyRoute => ({ apiKey: '', ruleId: '', routes: null });
+
 function StepFrame({ heading, children, error, footer, onSubmit }:
   { heading: string; children: ReactNode; error: string | null; footer: ReactNode; onSubmit: (e: FormEvent) => void }) {
   const ref = useRef<HTMLHeadingElement>(null);
@@ -59,15 +103,18 @@ export function SetupPage({ onDone, initialStep }: { onDone: () => void; initial
   const [notice, setNotice] = useState<string | null>(null);
 
   const [company, setCompany] = useState('');
-  const [llm, setLlm] = useState({ mode: 'shared' as 'shared' | 'per-vault', model: '', sharedKey: '', keys: {} as Record<string, string> });
+  const [llmMode, setLlmMode] = useState<'shared' | 'per-vault'>('shared');
+  const [shared, setShared] = useState<KeyRoute>(emptyKeyRoute);
+  const [perVault, setPerVault] = useState<Record<string, KeyRoute>>({});
   const [smtp, setSmtp] = useState({ host: '', port: '587', secure: false, username: '', password: '', from: '' });
   const [testTo, setTestTo] = useState('');
+  const loadedMode = useRef(false);
 
   useEffect(() => {
     if (!data) return;
     setStep((s) => s ?? firstOpenStep(data));
     setCompany((c) => c || data.company?.name || '');
-    if (data.llm) setLlm((l) => ({ ...l, mode: data.llm!.mode, model: l.model || data.llm!.model }));
+    if (data.llm && !loadedMode.current) { loadedMode.current = true; setLlmMode(data.llm.mode); }
     if (data.smtp) setSmtp((s) => (s.host ? s : { host: data.smtp!.host, port: String(data.smtp!.port), secure: data.smtp!.secure, username: data.smtp!.username, password: '', from: data.smtp!.from }));
   }, [data]);
 
@@ -107,16 +154,19 @@ export function SetupPage({ onDone, initialStep }: { onDone: () => void; initial
       </StepFrame>
     );
   } else if (current === 1) {
-    const hints = s.llm?.keyHints ?? {};
+    const stored = s.llm?.vaults ?? {};
     const submitLlm = async (): Promise<boolean> => {
-      const unchanged = s.llm && llm.model === s.llm.model && llm.mode === s.llm.mode
-        && !llm.sharedKey && Object.values(llm.keys).every((k) => !k);
-      if (unchanged) return true;
-      const payload = llm.mode === 'shared'
-        ? { mode: 'shared', model: llm.model.trim(), sharedKey: llm.sharedKey.trim() }
-        : { mode: 'per-vault', model: llm.model.trim(), keys: Object.fromEntries(Object.entries(llm.keys).map(([k, v]) => [k, v.trim()])) };
+      let payload: unknown;
+      if (llmMode === 'shared') {
+        if (!shared.apiKey && s.llm && s.llm.mode === 'shared') return true; // unchanged
+        payload = { mode: 'shared', apiKey: shared.apiKey.trim(), ruleId: shared.ruleId };
+      } else {
+        const filled = Object.entries(perVault).filter(([, v]) => v.apiKey.trim());
+        if (filled.length === 0 && s.llm) return true; // unchanged
+        payload = { mode: 'per-vault', vaults: Object.fromEntries(filled.map(([v, x]) => [v, { apiKey: x.apiKey.trim(), ruleId: x.ruleId }])) };
+      }
       const r = await api.put<{ failed: string[] }>('/api/admin/setup/llm', payload);
-      setLlm((l) => ({ ...l, sharedKey: '', keys: {} }));
+      setShared(emptyKeyRoute()); setPerVault({});
       if (r.failed.length > 0) { reload(); setStepError(t.llm.failed(r.failed.join(', '))); return false; }
       return true;
     };
@@ -126,23 +176,23 @@ export function SetupPage({ onDone, initialStep }: { onDone: () => void; initial
         footer={<><Button variant="secondary" onClick={() => go(0)}>{de.common.back}</Button>
           <Button type="submit" busy={busy === 'llm'}>{de.common.next}</Button></>}>
         <p className="text-sm text-muted">{t.llm.intro}</p>
-        <p className="text-sm text-fg">{t.llm.endpoint}: <code className="rounded bg-subtle px-1 font-mono text-xs">https://api.eurouter.ai/api/v1</code></p>
-        <TextField label={t.llm.model} hint={t.llm.modelHint} value={llm.model} spellCheck={false} autoComplete="off" required
-          error={fieldError(fields, 'model')} onChange={(e) => setLlm((l) => ({ ...l, model: e.target.value }))} />
-        <RadioGroup legend={t.llm.mode} name="llm-mode" value={llm.mode} onChange={(mode) => setLlm((l) => ({ ...l, mode }))}
+        <p className="text-sm text-fg">{t.llm.endpoint}: <code className="rounded bg-subtle px-1 font-mono text-xs">{EUROUTER_BASE_URL}</code></p>
+        <RadioGroup legend={t.llm.mode} name="llm-mode" value={llmMode} onChange={setLlmMode}
           options={[{ value: 'shared', label: t.llm.modeShared }, { value: 'per-vault', label: t.llm.modePerVault }]} />
-        {llm.mode === 'shared' ? (
-          <TextField label={t.llm.sharedKey} type="password" autoComplete="off" spellCheck={false} value={llm.sharedKey}
-            hint={s.llm ? `${t.llm.keyEmptyKeeps} ${hints['firma'] ? t.llm.stored(hints['firma']) : ''}` : undefined}
-            error={fieldError(fields, 'sharedKey')} onChange={(e) => setLlm((l) => ({ ...l, sharedKey: e.target.value }))} />
+        {llmMode === 'shared' ? (
+          <KeyAndRoute keyLabel={t.llm.sharedKey} routeLabel={t.llm.route} value={shared} onChange={setShared}
+            current={s.llm?.mode === 'shared' ? stored['firma'] : undefined} fields={fields} prefix="" />
         ) : (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-muted">{t.llm.perVaultSkip}</p>
             {s.vaults.map((v) => (
-              <TextField key={v} label={t.llm.keyFor(v)} type="password" autoComplete="off" spellCheck={false} optional
-                value={llm.keys[v] ?? ''} hint={`${hints[v] ? t.llm.stored(hints[v]) : t.llm.notStored}. ${t.llm.keyEmptyKeeps}`}
-                error={fieldError(fields, `keys.${v}`)} onChange={(e) => setLlm((l) => ({ ...l, keys: { ...l.keys, [v]: e.target.value } }))} />
+              <fieldset key={v} className="flex flex-col gap-3 rounded-md border border-line p-4">
+                <legend className="px-1 text-sm font-semibold text-fg">{t.llm.vaultLegend(v)}</legend>
+                <KeyAndRoute keyLabel={t.llm.keyFor(v)} routeLabel={t.llm.routeFor(v)} value={perVault[v] ?? emptyKeyRoute()}
+                  onChange={(x) => setPerVault((p) => ({ ...p, [v]: x }))} current={stored[v]} fields={fields} prefix={`vaults.${v}.`} />
+              </fieldset>
             ))}
-            {fields['keys'] && <Alert tone="error">{fieldError(fields, 'keys')}</Alert>}
+            {fields['vaults'] && <Alert tone="error">{fieldError(fields, 'vaults')}</Alert>}
           </div>
         )}
       </StepFrame>

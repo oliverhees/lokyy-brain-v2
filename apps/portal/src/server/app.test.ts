@@ -15,7 +15,7 @@ beforeEach(() => {
   h = harness();
   app = createApp({
     service: h.service, audit: new AuditLog(join(h.dir, 'audit.log')), proxySecret: PROXY, csrfSecret: CSRF_SECRET,
-    publicOrigin: 'https://app.example.com', staticDir: null, log: () => {},
+    publicOrigin: 'https://app.example.com', packageName: 'team-10', staticDir: null, log: () => {},
   });
 });
 afterEach(() => h.cleanup());
@@ -62,6 +62,8 @@ describe('session', () => {
     expect(r.body).toMatchObject({ username: 'akadmin', isAdmin: true, csrfToken: csrfToken(CSRF_SECRET, 'akadmin'), hasAccess: false });
     const e = await as({ user: 'anna', groups: 'vault-v01' }, request(app).get('/api/session'));
     expect(e.body.isAdmin).toBe(false);
+    expect(r.body.package).toBe('team-10');
+    expect(e.body).not.toHaveProperty('package');
   });
 
   it('a duplicated groups header grants nothing', async () => {
