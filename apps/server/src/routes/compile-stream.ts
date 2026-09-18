@@ -200,6 +200,13 @@ export function compileStreamRoutes(ctx: ServerContext): Router {
         hybridSearch: makeHybridSearchClosure(ctx),
       });
 
+      if (plan.error) {
+        // Nothing to review — a `done` here would render as an empty plan.
+        emit('error', { error: plan.error });
+        res.end();
+        return;
+      }
+
       // Surface the LLM's narrative BEFORE the structured actions so the UI
       // can render takeaways → action review as a 4-phase flow.
       if (plan.takeaways) {
@@ -214,7 +221,7 @@ export function compileStreamRoutes(ctx: ServerContext): Router {
       const planId = `${rawId}-${Date.now().toString(36)}`;
       planCache.set(planId, { plan, rawDoc, cachedAt: Date.now() });
 
-      emit('done', { planId, usage: plan.total_usage, error: plan.error });
+      emit('done', { planId, usage: plan.total_usage });
     } catch (e) {
       emit('error', { error: (e as Error).message });
     }

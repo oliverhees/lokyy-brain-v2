@@ -36,6 +36,15 @@ async function* parseSSE(
   }
 }
 
+/** Error text for a non-2xx response: the server's `error` field if it sent JSON, else the status. */
+async function httpError(resp: Response): Promise<string> {
+  try {
+    const body = (await resp.json()) as { error?: unknown };
+    if (typeof body.error === 'string' && body.error) return body.error;
+  } catch { /* not JSON */ }
+  return `HTTP ${resp.status}`;
+}
+
 export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
   const [phase, setPhase] = useState<Phase>('planning');
   const [takeaways, setTakeaways] = useState<string>('');
@@ -74,7 +83,9 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
   async function runPlan(signal: AbortSignal): Promise<void> {
     try {
       const resp = await fetch(`/api/compile/${encodeURIComponent(rawId)}/plan`, { method: 'POST', signal });
-      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(await httpError(resp));
+      if (!resp.body) throw new Error(`HTTP ${resp.status}`);
+      let finished = false;
       for await (const { event, data } of parseSSE(resp.body.getReader())) {
         if (signal.aborted) return;
         if (event === 'takeaways') {
@@ -85,12 +96,24 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
         } else if (event === 'proposed') {
           setProposed((p) => [...p, data['action'] as ProposedAction]);
         } else if (event === 'done') {
-          setPlanId(data['planId'] as string);
-          setPhase('reviewing');
+          finished = true;
+          // Older servers put a planning failure into `done`; never show it as an empty plan.
+          if (typeof data['error'] === 'string' && data['error']) {
+            setError(data['error']);
+            setPhase('error');
+          } else {
+            setPlanId(data['planId'] as string);
+            setPhase('reviewing');
+          }
         } else if (event === 'error') {
-          setError(data['error'] as string);
+          finished = true;
+          setError((data['error'] as string | undefined) || 'Ingest failed.');
           setPhase('error');
         }
+      }
+      if (!finished && !signal.aborted) {
+        setError('The connection ended unexpectedly before the plan was ready. Please try again.');
+        setPhase('error');
       }
     } catch (e) {
       if ((e as Error).name === 'AbortError') return;
@@ -118,7 +141,8 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
         body: JSON.stringify({ approvals }),
         signal: ctl.signal,
       });
-      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(await httpError(resp));
+      if (!resp.body) throw new Error(`HTTP ${resp.status}`);
       for await (const { event, data } of parseSSE(resp.body.getReader())) {
         if (ctl.signal.aborted) return;
         if (event === 'exec') {
@@ -251,7 +275,12 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
             </div>
           )}
           {phase === 'error' && error && (
-            <div className="text-[12px] p-3 rounded" style={{ color: 'var(--error)', background: 'var(--bg-2)' }}>
+            <div
+              role="alert"
+              className="text-[12px] p-3 rounded whitespace-pre-wrap"
+              style={{ color: 'var(--error)', background: 'var(--bg-2)' }}
+              data-testid="ingest-error"
+            >
               {error}
             </div>
           )}

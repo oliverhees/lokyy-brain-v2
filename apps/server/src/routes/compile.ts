@@ -152,7 +152,9 @@ export function compileRoutes(ctx: ServerContext): Router {
         hotBody = hotBody.replace(/updated: .*/, `updated: ${new Date().toISOString()}`);
         await ctx.store.writeText('wiki/hot.md', hotBody);
       }
-      res.json({ ok: result.ok, error: result.error });
+      // Upstream LLM failure (provider rejected the call, model can't do tool
+      // calls) → 502 so clients can't mistake it for a successful compile.
+      res.status(result.ok ? 200 : 502).json({ ok: result.ok, error: result.error });
     } catch (e) {
       res.status(500).json({ ok: false, error: (e as Error).message });
     }
