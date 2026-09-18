@@ -49,9 +49,8 @@ In the same Coolify application change *Docker Compose location* to `/deploy/coo
 | What | Where |
 |---|---|
 | Admin password | Coolify env `SERVICE_PASSWORD_ADMIN` (user `akadmin`, e-mail `ADMIN_EMAIL`) |
-| All other secrets | Coolify env `SERVICE_*` (vault MCP tokens `SERVICE_HEX_64_MCP<SLOT>`, proxy secrets `SERVICE_HEX_64_PROXY<SLOT>`, Authentik API token `SERVICE_HEX_64_AUTHENTIKAPITOKEN`, …). Never change one by hand without the rotation procedure below |
-| Slot → person assignment | `users.json` in volume `lokyy-state` (written only by the portal; read-only for `mcp-gate` and `metamcp`) |
-| MCP endpoint + key per person | `metamcp-clients.json` in volume `lokyy-provision` (written by the provisioning watcher in `metamcp`, read-only for the portal, file mode 0640) |
+| All other secrets | Coolify env `SERVICE_*` (vault MCP tokens `SERVICE_HEX_64_MCP<SLOT>`, proxy secrets `SERVICE_HEX_64_PROXY<SLOT>`, the portal's Authentik service-account token `SERVICE_HEX_64_PORTALAKTOKEN`, …). Never change one by hand without the rotation procedure below |
+| Slot → person assignment, MCP keys | the portal: its private volume `lokyy-state` (`users.json`, mode 600) and MetaMCP (`metamcp-db`) |
 | Vault data | volumes `vault-<slot>` (and `vault-<slot>-home`), `vault-firma` |
 | Users, groups, MFA | volume `authentik-db` |
 | MCP accounts and keys (plain text) | volume `metamcp-db` — encrypt its backups |
@@ -87,7 +86,7 @@ Coolify-specific design:
 - `lokyy-traefik` routes from a baked-in file (Go template: `BASE_DOMAIN` and proxy secrets from its environment). It has no Docker socket and reads no labels, so coolify-proxy and the inner Traefik can never pick up each other's routes. It deletes aliasing headers (`X_authentik_username`) and refuses to start with an invalid `BASE_DOMAIN`.
 - Repository assets are baked into images (blueprint into the Authentik image, routes into the Traefik image, model manifest/prefetch/offline loader into the vault image, `init.sh` into the MetaMCP init image): no bind mounts into a checkout.
 - Networks are project-scoped with fixed /28 subnets from `LOKYY_NET_PREFIX`: infrastructure `<prefix>.0.x`, `egress` `<prefix>.1.0/26`, `firma` `<prefix>.2.x`, slot `vNN` `<prefix>.(2+NN).0/28` (web) and `.16/28` (mcp). S and M share the same names and subnets, so an upgrade only adds.
-- The Authentik bootstrap token (`SERVICE_HEX_64_AUTHENTIKAPITOKEN`) is the portal's API token. MCP provisioning runs inside `metamcp`: a supervisor starts MetaMCP and watches `users.json`; every new content is provisioned once (`deploy/stack/metamcp/provision.mjs`: removals first, every user on its own), results go to `lokyy-provision`, and MetaMCP is restarted when access changed (at most 3 times per 10 minutes). The portal never gets MetaMCP database access or vault tokens.
+- The portal provisions MetaMCP directly (MetaMCP API + database, vault tokens as env; `deploy/stack/metamcp/provision.mjs` behaviour: removals first, every user on its own, no key for a failed user) and restarts nothing itself. It talks to Authentik only with a least-privilege service account (`lokyy-portal`: 10 user/group/session permissions, no superuser); no bootstrap API token exists. `mcp-gate`'s session cap comes from the package size (slots × 20 × 1.25).
 
 Tests: `deploy/coolify/tests/config-check.sh` (static: generator tests, `docker compose config` with Coolify-like env, network/label/secret invariants for both packages) and `deploy/coolify/tests/smoke/smoke.sh` (live on a dev machine: package S behind a coolify-proxy stand-in, admin login, slot isolation, MCP keys, then upgrade to M with data kept).
 
