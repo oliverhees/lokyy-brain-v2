@@ -180,6 +180,8 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
       // X-Forwarded-For from coolify-proxy (rate-limit bucket per client, Authentik audit IP). Host and
       // Proto are pinned per router in dynamic.yml, so a co-located container can only forge the client IP.
       '--entrypoints.web.forwardedHeaders.trustedIPs=${LOKYY_TRUSTED_PROXY_CIDRS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}',
+      // X_authentik_username / X.Authentik.Username must not alias a managed header in WSGI-style backends
+      '--entrypoints.web.http.aliasheadersstrategy=delete',
       '--api.dashboard=false',
       '--log.level=INFO',
     ],
@@ -452,6 +454,7 @@ export function renderTraefikDynamic(pkg: PackageName): string {
     '      forwardAuth:',
     '        address: "http://authentik-server:9000/outpost.goauthentik.io/auth/traefik"',
     '        trustForwardHeader: true',
+    '        maxResponseBodySize: 1048576',
     // authResponseHeaders are deleted from the client request and replaced by Authentik's values
     '        authResponseHeaders: ["X-authentik-username", "X-authentik-groups", "X-authentik-email", "X-authentik-uid"]',
     // Defence in depth: legacy attribution header never reaches a vault from a client

@@ -19,6 +19,7 @@ services:
       - "--providers.file.filename=/etc/lokyy/dynamic.yml"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.web.forwardedHeaders.trustedIPs=${LOKYY_TRUSTED_PROXY_CIDRS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
+      - "--entrypoints.web.http.aliasheadersstrategy=delete"
       - "--api.dashboard=false"
       - "--log.level=INFO"
     environment:

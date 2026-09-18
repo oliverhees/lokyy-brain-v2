@@ -150,6 +150,8 @@ for (const pkg of pkgs) {
     const t = c.services['lokyy-traefik'];
     assert.ok(!(t.volumes ?? []).some((v) => v.includes('docker.sock')));
     assert.ok(!(t.command ?? []).some((a) => a.startsWith('--providers.docker')));
+    // X_authentik_username etc. must not reach WSGI-style backends as an alias of a managed header
+    assert.ok(t.command?.includes('--entrypoints.web.http.aliasheadersstrategy=delete'));
   });
 
   test(`${pkg}: subnets are distinct and inside LOKYY_NET_PREFIX`, () => {
@@ -167,6 +169,7 @@ for (const pkg of pkgs) {
       assert.ok(d.includes(`X-Vault-Proxy-Secret: "{{ env \`PROXY_SECRET_${v.toUpperCase()}\` }}"`), v);
       assert.ok(d.includes(`url: "http://vault-${v}:4321"`), v);
     }
+    assert.ok(d.includes('        maxResponseBodySize: 1048576\n'), 'forwardAuth response body limit');
     // env referenced by the template is provided to the container
     const env = c.services['lokyy-traefik'].environment ?? {};
     for (const m of d.matchAll(/env `([A-Z0-9_]+)`/g)) assert.ok(m[1] in env, `lokyy-traefik env ${m[1]}`);

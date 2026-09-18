@@ -1,0 +1,33 @@
+# LBV2-27 live smoke only: stands in for Coolify on a dev machine. A Traefik with the same provider
+# settings as coolify-proxy (Docker provider, exposedbydefault=false, entrypoints http/https) on a
+# project-local "coolify" network, published on 127.0.0.1:18280 (HTTPS, self-signed default cert).
+# Its constraint limits it to this compose project so other stacks on the host stay invisible.
+services:
+  coolify-proxy:
+    image: traefik:v3.7.13
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.constraints=Label(`com.docker.compose.project`,`lokyy-pkg`)
+      - --entrypoints.http.address=:80
+      - --entrypoints.https.address=:443
+      # Same resolver name as Coolify; the CA is unreachable on purpose, so the default self-signed cert is served
+      - --certificatesresolvers.letsencrypt.acme.caserver=https://127.0.0.1:9/directory
+      - --certificatesresolvers.letsencrypt.acme.storage=/tmp/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=http
+      - --log.level=INFO
+    ports: ["127.0.0.1:18280:443"]
+    volumes: [/var/run/docker.sock:/var/run/docker.sock:ro]
+    networks:
+      coolify:
+        ipv4_address: 10.233.250.2
+  lokyy-traefik:
+    labels:
+      - traefik.docker.network=lokyy-pkg-coolify
+networks:
+  coolify:
+    external: false
+    name: lokyy-pkg-coolify
+    ipam:
+      config:
+        - subnet: 10.233.250.0/28
