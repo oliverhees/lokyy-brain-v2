@@ -55,18 +55,26 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
+  function startPlan(): AbortController {
+    abortRef.current?.abort();
     setPhase('planning');
     setTakeaways('');
     setProposed([]);
     setApprovals({});
+    setPlanId(null);
     setExecResults([]);
     setError(null);
     const ctl = new AbortController();
     abortRef.current = ctl;
     void runPlan(ctl.signal);
-    return () => { ctl.abort(); abortRef.current = null; };
+    return ctl;
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    startPlan();
+    // Abort whatever runs now (the first plan or one started by Retry).
+    return () => { abortRef.current?.abort(); abortRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, rawId]);
 
@@ -301,6 +309,20 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
               style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
             >
               Apply approved
+            </button>
+          </div>
+        )}
+        {phase === 'error' && (
+          <div className="px-5 py-3 flex justify-end gap-2" style={{ borderTop: '0.5px solid var(--hairline)' }}>
+            <button onClick={onClose} className="text-[12px] px-3 py-1.5 cursor-pointer" style={{ color: 'var(--text-mid)' }}>
+              Close
+            </button>
+            <button
+              onClick={() => { startPlan(); }}
+              className="text-[12px] px-3 py-1.5 rounded cursor-pointer"
+              style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
+            >
+              Retry
             </button>
           </div>
         )}

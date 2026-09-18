@@ -10,6 +10,7 @@ import type { WikiIndex } from '../graph/index/wiki-index';
 import type { HybridResult } from '../search/hybrid';
 import type { CompileAction } from './audit';
 import { slugify } from '../notes/create-note';
+import { LLM_TIMEOUT_ERROR } from '../adapters/timeout';
 
 export type CompileL1ProgressEvent =
   | { kind: 'started'; text: string }
@@ -39,6 +40,10 @@ export interface CompileL1Options {
   tokenBudget?: number;
   promptVersion?: string;
   onProgress?: (event: CompileL1ProgressEvent) => void;
+  /** compileL1Plan only: extra attempts after a retryable failure (default MINDBASE_COMPILE_RETRIES or 1). */
+  retries?: number;
+  /** compileL1Plan only: wait before a retry (default MINDBASE_COMPILE_RETRY_DELAY_MS or 2000). */
+  retryDelayMs?: number;
 }
 
 export interface CompileL1Result {
@@ -69,6 +74,24 @@ export const NO_TOOL_CALLS_ERROR =
  */
 export const TOOL_CALL_NUDGE =
   'Now emit the tool calls for your plan. Respond with tool calls only, not with text.';
+
+export const DEFAULT_COMPILE_RETRY_DELAY_MS = 2000;
+
+/**
+ * Failures worth one more plan attempt: the model answered in text only (routes that spread
+ * over several providers are flaky here, LBV2-32 QA), rate limits, provider 5xx, timeouts and
+ * network errors. Rejected requests (other 4xx) and configuration errors are not retried.
+ */
+export function isRetryableCompileError(error: string): boolean {
+  if (error === NO_TOOL_CALLS_ERROR || error === LLM_TIMEOUT_ERROR) return true;
+  if (/^HTTP (429|5\d\d)\b/.test(error)) return true;
+  return /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|network/i.test(error);
+}
+
+function envCount(name: string, fallback: number): number {
+  const n = parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
 
 function resolveMaxTokens(explicit: number | undefined): number {
   if (explicit !== undefined) return explicit;
@@ -439,6 +462,22 @@ export interface ApprovalMap {
  * user approval.
  */
 export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Plan> {
+  const retries = opts.retries ?? envCount('MINDBASE_COMPILE_RETRIES', 1);
+  const delayMs = opts.retryDelayMs ?? envCount('MINDBASE_COMPILE_RETRY_DELAY_MS', DEFAULT_COMPILE_RETRY_DELAY_MS);
+  const usage = { input_tokens: 0, output_tokens: 0 };
+  for (let attempt = 0; ; attempt++) {
+    // Planning is a dry run, so repeating it from scratch cannot write anything twice.
+    const plan = await planOnce(opts);
+    usage.input_tokens += plan.total_usage.input_tokens;
+    usage.output_tokens += plan.total_usage.output_tokens;
+    if (!plan.error || attempt >= retries || !isRetryableCompileError(plan.error)) {
+      return { ...plan, total_usage: usage };
+    }
+    await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+  }
+}
+
+async function planOnce(opts: CompileL1Options): Promise<CompileL1Plan> {
   const tokenBudget = opts.tokenBudget ?? 16_000;
   const maxIter = opts.max_iterations ?? parseInt(process.env['MINDBASE_INGEST_MAX_ITER'] ?? '10', 10);
   const maxTokens = resolveMaxTokens(opts.max_tokens_per_call);

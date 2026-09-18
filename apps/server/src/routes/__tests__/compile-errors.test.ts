@@ -8,6 +8,8 @@ import { NO_TOOL_CALLS_ERROR, type LLMAdapter, type RawDoc } from '@mindbase/cor
 import { createContext, type ServerContext } from '../../context.js';
 import { compileRoutes } from '../compile.js';
 import { compileStreamRoutes } from '../compile-stream.js';
+import { ingestStreamRoutes } from '../ingest-stream.js';
+import { COMPILE_ERROR_MESSAGES } from '../../lib/compile-errors.js';
 
 // Keep the local embedding model out of the test (compile's recall step embeds the source).
 vi.mock('../../lib/embedder.js', () => ({ embed: async () => new Array(1024).fill(0) }));
@@ -59,6 +61,7 @@ describe('compile error propagation (LBV2-32)', () => {
 
   beforeEach(async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubEnv('MINDBASE_COMPILE_RETRY_DELAY_MS', '0');
     outer = await mkdtemp(join(tmpdir(), 'compile-errors-test-'));
     const dataDir = join(outer, 'data');
     await mkdir(dataDir, { recursive: true });
@@ -68,9 +71,11 @@ describe('compile error propagation (LBV2-32)', () => {
     app.use(express.json());
     app.use('/api/compile', compileRoutes(ctx));
     app.use('/api/compile', compileStreamRoutes(ctx));
+    app.use('/api/wiki/ingest-stream', ingestStreamRoutes(ctx));
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     await rm(outer, { recursive: true, force: true });
   });
@@ -79,7 +84,8 @@ describe('compile error propagation (LBV2-32)', () => {
     ctx.getAdapter = () => upstream400;
     const res = await request(app).post(`/api/compile/${RAW.id}`).send({});
     expect(res.status).toBe(502);
-    expect(res.body).toEqual({ ok: false, error: 'HTTP 400: estimated tokens exceed context' });
+    // Audit L1: fixed message for users, provider body only in the server log.
+    expect(res.body).toEqual({ ok: false, error: COMPILE_ERROR_MESSAGES.rejected });
   });
 
   it('POST /api/compile/:rawId answers 502 with the tool-call error for text-only models', async () => {
@@ -99,7 +105,22 @@ describe('compile error propagation (LBV2-32)', () => {
     const events = sseEvents(res.body as string);
     expect(events.map((e) => e.event)).not.toContain('done');
     const err = events.find((e) => e.event === 'error');
-    expect(err?.data['error']).toBe('HTTP 400: estimated tokens exceed context');
+    expect(err?.data['error']).toBe(COMPILE_ERROR_MESSAGES.rejected);
+    expect(JSON.stringify(events)).not.toContain('estimated tokens');
+  });
+
+  it('ingest stream never forwards the provider body (complete summary + summary.error)', async () => {
+    ctx.getAdapter = () => upstream400;
+    const res = await request(app).post(`/api/wiki/ingest-stream/${RAW.id}`).buffer(true).parse((r, cb) => {
+      let body = '';
+      r.on('data', (c: Buffer) => { body += c.toString(); });
+      r.on('end', () => cb(null, body));
+    });
+    const text = res.body as string;
+    expect(text).not.toContain('estimated tokens');
+    const events = sseEvents(text);
+    expect(events.find((e) => e.event === 'summary')?.data['error']).toBe(COMPILE_ERROR_MESSAGES.rejected);
+    expect(events.find((e) => e.event === 'complete')?.data['summary']).toBe(`Compile failed: ${COMPILE_ERROR_MESSAGES.rejected}`);
   });
 
   it('plan stream surfaces the no-tool-calls error', async () => {

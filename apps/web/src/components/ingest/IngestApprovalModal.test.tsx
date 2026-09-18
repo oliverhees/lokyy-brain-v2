@@ -70,6 +70,25 @@ describe('IngestApprovalModal errors (LBV2-32)', () => {
     expect(alertText()).toMatch(/ended unexpectedly/i);
   });
 
+  it('offers Retry in the error state and re-runs the plan', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(sse([['started', { rawId: 'raw1' }], ['error', { error: 'The LLM provider is temporarily unavailable. Try again in a moment.' }]]))
+      .mockResolvedValueOnce(sse([
+        ['started', { rawId: 'raw1' }],
+        ['proposed', { action: { id: 'a1', call: { id: 'a1', name: 'create_concept', arguments: { name: 'Rhine' } }, simulatedResult: { ok: true } } }],
+        ['done', { planId: 'p2' }],
+      ]));
+    await render();
+    const retry = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Retry');
+    expect(retry).toBeDefined();
+    await act(async () => { retry!.click(); });
+    for (let i = 0; i < 5; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('/api/compile/raw1/plan');
+    expect(alertText()).toBeNull();
+    expect(container.textContent).toContain('Plan: 1 action');
+  });
+
   it('a successful plan still reaches the review phase', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       sse([

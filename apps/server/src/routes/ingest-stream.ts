@@ -3,6 +3,7 @@ import { compileL1 } from '@mindbase/core';
 import type { ServerContext } from '../context';
 import { makeHybridSearchClosure } from '../lib/compile-deps';
 import { appendChangesLog } from '../lib/changes-log';
+import { publicCompileError, publicCompileSummary } from '../lib/compile-errors';
 
 export function ingestStreamRoutes(ctx: ServerContext): Router {
   const router = Router();
@@ -34,7 +35,7 @@ export function ingestStreamRoutes(ctx: ServerContext): Router {
         model: ctx.config.model,
         wikiIndex: ctx.wikiIndex,
         hybridSearch: makeHybridSearchClosure(ctx),
-        onProgress: (e) => emit(e.kind, e),
+        onProgress: (e) => emit(e.kind, e.kind === 'complete' ? { ...e, summary: publicCompileSummary(e.summary) } : e),
       });
 
       if (result.ok) {
@@ -57,13 +58,13 @@ export function ingestStreamRoutes(ctx: ServerContext): Router {
 
       emit('summary', {
         ok: result.ok,
-        error: result.error,
+        error: result.error === undefined ? undefined : publicCompileError(result.error),
         aborted_reason: result.aborted_reason,
         action_count: result.tool_results.length,
         tokens: result.total_usage,
       });
     } catch (e) {
-      emit('error', { error: (e as Error).message });
+      emit('error', { error: publicCompileError((e as Error).message) });
     }
 
     res.end();

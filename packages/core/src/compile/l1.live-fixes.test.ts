@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { compileL1, compileL1Plan, DEFAULT_COMPILE_MAX_TOKENS, NO_TOOL_CALLS_ERROR, TOOL_CALL_NUDGE } from './l1';
+import { compileL1, compileL1Plan, DEFAULT_COMPILE_MAX_TOKENS, DEFAULT_COMPILE_RETRY_DELAY_MS, NO_TOOL_CALLS_ERROR, TOOL_CALL_NUDGE, isRetryableCompileError } from './l1';
 import { MemoryStore } from '../storage/memory_store';
 import { WikiIndex } from '../graph/index/wiki-index';
 import type { LLMAdapter } from '../adapters/types';
@@ -104,7 +104,7 @@ describe('compile without tool calls (LBV2-32 C)', () => {
 
   it('compileL1Plan reports the same error instead of an empty plan', async () => {
     const { adapter } = recordingAdapter([textOnly]);
-    const plan = await compileL1Plan({ ...(await base()), adapter });
+    const plan = await compileL1Plan({ ...(await base()), adapter, retryDelayMs: 0 });
     expect(plan.proposed).toHaveLength(0);
     expect(plan.error).toBe(NO_TOOL_CALLS_ERROR);
   });
@@ -130,7 +130,7 @@ describe('compile without tool calls (LBV2-32 C)', () => {
 
   it('fails after the nudge if the model still answers in text only', async () => {
     const { adapter, requests } = recordingAdapter([textOnly, textOnly, skipCall]);
-    const plan = await compileL1Plan({ ...(await base()), adapter });
+    const plan = await compileL1Plan({ ...(await base()), adapter, retries: 0 });
     expect(plan.error).toBe(NO_TOOL_CALLS_ERROR);
     expect(requests).toHaveLength(2);
     const result = await compileL1({ ...(await base()), adapter: recordingAdapter([textOnly, textOnly, skipCall]).adapter });
@@ -144,5 +144,56 @@ describe('compile without tool calls (LBV2-32 C)', () => {
     const plan = await compileL1Plan({ ...(await base()), adapter: recordingAdapter([skipCall, textOnly]).adapter });
     expect(plan.error).toBeUndefined();
     expect(plan.proposed).toHaveLength(1);
+  });
+});
+
+describe('plan retry (LBV2-32 QA: flaky multi-provider routes)', () => {
+  const errorTurn = (error: string): ChatChunk[] => [{ kind: 'error', error }, { kind: 'done', usage: { input_tokens: 0, output_tokens: 0 } }];
+
+  it('retries the whole plan once after NO_TOOL_CALLS (text-only even after the nudge)', async () => {
+    const { adapter, requests } = recordingAdapter([textOnly, textOnly, skipCall, textOnly]);
+    const plan = await compileL1Plan({ ...(await base()), adapter, retryDelayMs: 0 });
+    expect(plan.error).toBeUndefined();
+    expect(plan.proposed.map((p) => p.call.name)).toEqual(['skip']);
+    // Second attempt starts from a fresh conversation (no nudge, no earlier turns).
+    expect(requests[2]!.messages.some((m) => m.content === TOOL_CALL_NUDGE)).toBe(false);
+  });
+
+  it.each(['HTTP 503: no provider', 'HTTP 429: slow down', 'HTTP 502: bad gateway', 'LLM provider did not respond in time', 'fetch failed'])(
+    'retries after a transient provider error: %s', async (error) => {
+      const { adapter } = recordingAdapter([errorTurn(error), skipCall, textOnly]);
+      const plan = await compileL1Plan({ ...(await base()), adapter, retryDelayMs: 0 });
+      expect(plan.error).toBeUndefined();
+      expect(plan.proposed).toHaveLength(1);
+    });
+
+  it('does not retry a request the provider rejected (HTTP 400/401)', async () => {
+    for (const error of ['HTTP 400: estimated tokens exceed context', 'HTTP 401: bad key']) {
+      const { adapter, requests } = recordingAdapter([errorTurn(error), skipCall]);
+      const plan = await compileL1Plan({ ...(await base()), adapter, retryDelayMs: 0 });
+      expect(plan.error).toBe(error);
+      expect(requests).toHaveLength(1);
+    }
+  });
+
+  it('gives up after one retry and reports the last error', async () => {
+    const { adapter, requests } = recordingAdapter([errorTurn('HTTP 503: a'), errorTurn('HTTP 503: b'), skipCall]);
+    const plan = await compileL1Plan({ ...(await base()), adapter, retryDelayMs: 0 });
+    expect(plan.error).toBe('HTTP 503: b');
+    expect(requests).toHaveLength(2);
+  });
+
+  it('retries: 0 disables the retry; the default waits a backoff before retrying', async () => {
+    const off = recordingAdapter([errorTurn('HTTP 503: a'), skipCall]);
+    expect((await compileL1Plan({ ...(await base()), adapter: off.adapter, retries: 0 })).error).toBe('HTTP 503: a');
+    expect(DEFAULT_COMPILE_RETRY_DELAY_MS).toBeGreaterThan(0);
+    expect(isRetryableCompileError(NO_TOOL_CALLS_ERROR)).toBe(true);
+    expect(isRetryableCompileError('HTTP 404: rule not found')).toBe(false);
+  });
+
+  it('usage adds up across attempts', async () => {
+    const { adapter } = recordingAdapter([textOnly, textOnly, skipCall, textOnly]);
+    const plan = await compileL1Plan({ ...(await base()), adapter, retryDelayMs: 0 });
+    expect(plan.total_usage.input_tokens).toBe(40);
   });
 });

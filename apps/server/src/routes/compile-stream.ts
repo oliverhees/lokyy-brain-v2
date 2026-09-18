@@ -5,6 +5,7 @@ import type { ServerContext } from '../context';
 import { isValidSlug } from '../safe-path';
 import { makeHybridSearchClosure } from '../lib/compile-deps';
 import { classifyNoteAsync } from '../lib/classify-worker';
+import { publicCompileError, publicCompileSummary } from '../lib/compile-errors';
 
 // Separate from `compileRoutes` because Express's manual SSE pattern needs
 // explicit `res.write` instead of `res.json`.
@@ -106,7 +107,7 @@ export function compileStreamRoutes(ctx: ServerContext): Router {
               break;
             case 'complete':
               emit('complete', {
-                summary: event.summary,
+                summary: publicCompileSummary(event.summary),
                 ...(event.navigateTo ? { navigateTo: event.navigateTo } : {}),
                 tokensUsed: event.tokensUsed,
                 durationMs: event.durationMs,
@@ -134,7 +135,7 @@ export function compileStreamRoutes(ctx: ServerContext): Router {
         }
       }
     } catch (e) {
-      emit('error', { message: (e as Error).message });
+      emit('error', { message: publicCompileError((e as Error).message) });
     } finally {
       res.end();
     }
@@ -202,7 +203,7 @@ export function compileStreamRoutes(ctx: ServerContext): Router {
 
       if (plan.error) {
         // Nothing to review — a `done` here would render as an empty plan.
-        emit('error', { error: plan.error });
+        emit('error', { error: publicCompileError(plan.error) });
         res.end();
         return;
       }
@@ -223,7 +224,7 @@ export function compileStreamRoutes(ctx: ServerContext): Router {
 
       emit('done', { planId, usage: plan.total_usage });
     } catch (e) {
-      emit('error', { error: (e as Error).message });
+      emit('error', { error: publicCompileError((e as Error).message) });
     }
     res.end();
   });
