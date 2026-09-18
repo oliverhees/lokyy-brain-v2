@@ -54,6 +54,10 @@
 - **LLM provider requests time out** (LBV2-14): a provider that sends nothing for `MINDBASE_LLM_TIMEOUT_MS` (default 120000 ms, integer 1000–3600000) is aborted with the generic error `LLM provider did not respond in time`, so a hanging provider no longer blocks `ask_wiki`, compile or chat (and a reader's `ask_wiki` budget) indefinitely. The timer restarts with every stream chunk. An invalid value stops the web server and the MCP server (HTTP and stdio) at startup.
 
 ### Fixed
+- LBV2-32 (live EUrouter E2E): compile sends `max_tokens` (default 4096, `MINDBASE_COMPILE_MAX_TOKENS`); EUrouter rejected compile requests without it (`estimated tokens exceed context`).
+- LBV2-32: ingest shows compile failures. `POST /api/compile/:rawId` answers `502` (same `{ ok, error }` body) instead of `200` when compile fails; the plan stream sends `error` instead of `done`; the ingest dialog shows the message (`role="alert"`) instead of an empty "Plan: 0 actions".
+- LBV2-32: a model that answers the compile prompt without any tool call fails the ingest with a clear message instead of writing nothing. The EUrouter connection test probes tool calling and returns a `warning` for routes without it (Settings: **Save anyway**).
+- LBV2-32: the MCP server re-reads `mindbase.config.json` on change (throttled by `MINDBASE_MCP_CONFIG_RELOAD_MS`, default 1 s); invalid files keep the last good config. Before, LLM config changes needed an MCP restart.
 - Web trash (LBV2-14): `GET /api/trash` no longer fails with 500 in the default project layout; list, restore, permanent delete and empty operate on the global trash of the data directory.
 
 ### Licensing
