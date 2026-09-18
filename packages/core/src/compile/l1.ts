@@ -10,6 +10,7 @@ import type { WikiIndex } from '../graph/index/wiki-index';
 import type { HybridResult } from '../search/hybrid';
 import type { CompileAction } from './audit';
 import { slugify } from '../notes/create-note';
+import { LLM_TIMEOUT_ERROR } from '../adapters/timeout';
 
 export type CompileL1ProgressEvent =
   | { kind: 'started'; text: string }
@@ -39,6 +40,10 @@ export interface CompileL1Options {
   tokenBudget?: number;
   promptVersion?: string;
   onProgress?: (event: CompileL1ProgressEvent) => void;
+  /** compileL1Plan only: extra attempts after a retryable failure (default MINDBASE_COMPILE_RETRIES or 1). */
+  retries?: number;
+  /** compileL1Plan only: wait before a retry (default MINDBASE_COMPILE_RETRY_DELAY_MS or 2000). */
+  retryDelayMs?: number;
 }
 
 export interface CompileL1Result {
@@ -47,6 +52,78 @@ export interface CompileL1Result {
   aborted_reason?: 'max_iterations';
   tool_results: Array<{ call: ToolCall; result: ToolResult }>;
   total_usage: { input_tokens: number; output_tokens: number };
+}
+
+/**
+ * Output cap per compile LLM call. Without an explicit max_tokens some
+ * OpenAI-compatible routers (EUrouter) assume the model's full output window
+ * and reject the request with "estimated tokens exceed context" (LBV2-32).
+ * Override with MINDBASE_COMPILE_MAX_TOKENS or CompileL1Options.max_tokens_per_call.
+ */
+export const DEFAULT_COMPILE_MAX_TOKENS = 4096;
+
+/** Returned when the model answers the compile prompt without calling any tool. */
+export const NO_TOOL_CALLS_ERROR =
+  "The selected model didn't return any tool calls, which ingest needs to write wiki pages. " +
+  'Choose a model (or EUrouter route) with tool-capable models.';
+
+/**
+ * Sent once when the first turn is text only. The system prompt asks for a
+ * takeaways narrative before the first tool call, and some models end the
+ * turn right after it (seen live on EUrouter, LBV2-32).
+ */
+export const TOOL_CALL_NUDGE =
+  'Now emit the tool calls for your plan. Respond with tool calls only, not with text.';
+
+export const DEFAULT_COMPILE_RETRY_DELAY_MS = 2000;
+/** Upper bound for plan retries: each retry is a full, paid LLM plan run (LBV2-32 audit). */
+export const MAX_COMPILE_RETRIES = 3;
+const DEFAULT_COMPILE_RETRIES = 1;
+
+/** Retries from the option or MINDBASE_COMPILE_RETRIES; invalid → default, above the cap → cap (both warn). */
+function resolveRetries(explicit: number | undefined): number {
+  const raw = explicit ?? process.env['MINDBASE_COMPILE_RETRIES'];
+  if (raw === undefined || raw === '') return DEFAULT_COMPILE_RETRIES;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    console.warn(`[compile] MINDBASE_COMPILE_RETRIES must be an integer 0..${MAX_COMPILE_RETRIES}; using ${DEFAULT_COMPILE_RETRIES}`);
+    return DEFAULT_COMPILE_RETRIES;
+  }
+  if (n > MAX_COMPILE_RETRIES) {
+    console.warn(`[compile] MINDBASE_COMPILE_RETRIES=${n} is above ${MAX_COMPILE_RETRIES}; using ${MAX_COMPILE_RETRIES}`);
+    return MAX_COMPILE_RETRIES;
+  }
+  return n;
+}
+
+/** Short, body-free reason for the retry log line. */
+function retryReason(error: string): string {
+  if (error === NO_TOOL_CALLS_ERROR) return 'no tool calls';
+  if (error === LLM_TIMEOUT_ERROR) return 'timeout';
+  const status = /^HTTP (\d{3})\b/.exec(error)?.[1];
+  return status ? `HTTP ${status}` : 'network error';
+}
+
+/**
+ * Failures worth one more plan attempt: the model answered in text only (routes that spread
+ * over several providers are flaky here, LBV2-32 QA), rate limits, provider 5xx, timeouts and
+ * network errors. Rejected requests (other 4xx) and configuration errors are not retried.
+ */
+export function isRetryableCompileError(error: string): boolean {
+  if (error === NO_TOOL_CALLS_ERROR || error === LLM_TIMEOUT_ERROR) return true;
+  if (/^HTTP (429|5\d\d)\b/.test(error)) return true;
+  return /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|network/i.test(error);
+}
+
+function envCount(name: string, fallback: number): number {
+  const n = parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function resolveMaxTokens(explicit: number | undefined): number {
+  if (explicit !== undefined) return explicit;
+  const fromEnv = parseInt(process.env['MINDBASE_COMPILE_MAX_TOKENS'] ?? '', 10);
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_COMPILE_MAX_TOKENS;
 }
 
 function summarizeTarget(call: ToolCall): string {
@@ -181,6 +258,7 @@ export async function compileL1(opts: CompileL1Options): Promise<CompileL1Result
   const promptVersion = opts.promptVersion ?? 'compile/v2';
   const tokenBudget = opts.tokenBudget ?? 16_000;
   const maxIter = opts.max_iterations ?? parseInt(process.env['MINDBASE_INGEST_MAX_ITER'] ?? '10', 10);
+  const maxTokens = resolveMaxTokens(opts.max_tokens_per_call);
 
   opts.onProgress?.({ kind: 'started', text: `Compiling "${opts.raw.title}"` });
   opts.onProgress?.({ kind: 'searching', text: 'Searching your wiki for related concepts…' });
@@ -240,6 +318,8 @@ export async function compileL1(opts: CompileL1Options): Promise<CompileL1Result
   let lastError: string | undefined;
   let aborted: 'max_iterations' | undefined;
   let status: 'success' | 'partial' | 'error' = 'success';
+  let sawToolCall = false;
+  let nudged = false;
 
   // Step 4: multi-turn tool-use loop
   try {
@@ -248,7 +328,7 @@ export async function compileL1(opts: CompileL1Options): Promise<CompileL1Result
         model: opts.model,
         messages,
         tools: L1_TOOLS,
-        ...(opts.max_tokens_per_call !== undefined ? { max_tokens: opts.max_tokens_per_call } : {}),
+        max_tokens: maxTokens,
       };
 
       const resp = await collectResponse(opts.adapter.chat(req));
@@ -263,6 +343,19 @@ export async function compileL1(opts: CompileL1Options): Promise<CompileL1Result
       totalOutput += resp.usage.output_tokens;
 
       const calls = resp.tool_calls;
+      if (calls.length === 0 && !sawToolCall) {
+        // The prompt demands tool calls (even `skip`). Text only: nudge once,
+        // then fail loudly instead of "succeeding" with no wiki changes.
+        if (!nudged) {
+          nudged = true;
+          messages.push({ role: 'assistant', content: resp.content ?? '' }, { role: 'user', content: TOOL_CALL_NUDGE });
+          continue;
+        }
+        lastError = NO_TOOL_CALLS_ERROR;
+        status = 'error';
+        break;
+      }
+      if (calls.length > 0) sawToolCall = true;
       if (calls.length === 0) {
         // No more tool calls → LLM has finished.
         opts.onProgress?.({ kind: 'done', iteration: iter });
@@ -396,8 +489,26 @@ export interface ApprovalMap {
  * user approval.
  */
 export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Plan> {
+  const retries = resolveRetries(opts.retries);
+  const delayMs = opts.retryDelayMs ?? envCount('MINDBASE_COMPILE_RETRY_DELAY_MS', DEFAULT_COMPILE_RETRY_DELAY_MS);
+  const usage = { input_tokens: 0, output_tokens: 0 };
+  for (let attempt = 0; ; attempt++) {
+    // Planning is a dry run, so repeating it from scratch cannot write anything twice.
+    const plan = await planOnce(opts);
+    usage.input_tokens += plan.total_usage.input_tokens;
+    usage.output_tokens += plan.total_usage.output_tokens;
+    if (!plan.error || attempt >= retries || !isRetryableCompileError(plan.error)) {
+      return { ...plan, total_usage: usage };
+    }
+    console.warn(`[compile] retry ${attempt + 1}/${retries} ${retryReason(plan.error)}`);
+    await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+  }
+}
+
+async function planOnce(opts: CompileL1Options): Promise<CompileL1Plan> {
   const tokenBudget = opts.tokenBudget ?? 16_000;
   const maxIter = opts.max_iterations ?? parseInt(process.env['MINDBASE_INGEST_MAX_ITER'] ?? '10', 10);
+  const maxTokens = resolveMaxTokens(opts.max_tokens_per_call);
 
   const sourceSlugToExclude = opts.raw.id.startsWith('note:')
     ? opts.raw.id.slice('note:'.length)
@@ -427,6 +538,8 @@ export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Pl
   let totalInput = 0;
   let totalOutput = 0;
   let lastError: string | undefined;
+  let sawToolCall = false;
+  let nudged = false;
 
   try {
     for (let iter = 0; iter < maxIter; iter++) {
@@ -434,7 +547,7 @@ export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Pl
         model: opts.model,
         messages,
         tools: L1_TOOLS,
-        ...(opts.max_tokens_per_call !== undefined ? { max_tokens: opts.max_tokens_per_call } : {}),
+        max_tokens: maxTokens,
       };
       const resp = await collectResponse(opts.adapter.chat(req));
       if (resp.error) { lastError = resp.error; break; }
@@ -444,7 +557,17 @@ export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Pl
       // Capture the LLM's narrative (assistant content) so the UI can stream
       // it as "takeaways" — the conversational layer above the actions.
       if (resp.content) takeawaysChunks.push(resp.content);
+      if (calls.length === 0 && !sawToolCall) {
+        if (!nudged) {
+          nudged = true;
+          messages.push({ role: 'assistant', content: resp.content ?? '' }, { role: 'user', content: TOOL_CALL_NUDGE });
+          continue;
+        }
+        lastError = NO_TOOL_CALLS_ERROR;
+        break;
+      }
       if (calls.length === 0) break;
+      sawToolCall = true;
 
       messages.push({ role: 'assistant', content: resp.content ?? '', tool_calls: calls });
       for (const call of calls) {

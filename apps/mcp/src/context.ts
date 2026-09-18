@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import { FileStore, ProjectScopedStore, SearchIndex, FeedStore, CardStore, TemplateStore, WikiIndex, reindex, createAdapter, isValidProjectId, type LLMAdapter, type Store } from '@mindbase/core';
 import { SynthesisCache } from './lib/synthesis-cache.js';
 import { extractPdfText } from './lib/extract-pdf.js';
+import { createConfigReloader, configReloadIntervalMs } from './lib/config-reloader.js';
 
 export interface MCPConfig {
   provider: 'openai' | 'anthropic' | 'deepseek' | 'ollama';
@@ -27,9 +28,16 @@ export interface Context {
   cards: CardStore;
   templates: TemplateStore;
   synthesisCache: SynthesisCache;
-  config: MCPConfig | null;       // null if config file missing
+  /** Current mindbase.config.json (re-read on change); null if the file is missing. */
+  readonly config: MCPConfig | null;
   getAdapter: () => LLMAdapter;   // throws if config missing
   reindex: () => Promise<void>;
+  /**
+   * Rebuilds the search index if wiki pages changed on disk since the last build (e.g. the web
+   * server compiled new concept pages). Throttled by MINDBASE_MCP_INDEX_SYNC_MS; call before
+   * serving a request.
+   */
+  syncSearchIndex: () => Promise<void>;
   /** Identifies the calling client if detectable (from MCP_CLIENT env var). */
   mcpClient: string;
   /**
@@ -54,7 +62,7 @@ const isDir = (p: string) => fs.stat(p).then((st) => st.isDirectory(), () => fal
  * decision is re-checked per call until the project directory exists (the web server may scaffold or
  * migrate it after this process started; the MCP server itself never migrates, to avoid racing it).
  */
-async function openStore(dataDir: string): Promise<Store> {
+async function openStore(dataDir: string): Promise<{ store: Store; resolve: (p: string) => Promise<string> }> {
   const raw = new FileStore(dataDir);
   const projectId = (await currentProjectId(dataDir)) ?? 'default';
   if (!isValidProjectId(projectId)) throw new Error('config.json currentProjectId is not a valid project id');
@@ -74,7 +82,7 @@ async function openStore(dataDir: string): Promise<Store> {
       }
     } catch { /* no legacy dir */ }
   }
-  return {
+  const store: Store = {
     writeText: async (p, c) => (await pick()).writeText(p, c),
     readText: async (p) => (await pick()).readText(p),
     writeJSON: async (p, v) => (await pick()).writeJSON(p, v),
@@ -85,6 +93,62 @@ async function openStore(dataDir: string): Promise<Store> {
     listDir: async (p) => (await pick()).listDir(p),
     remove: async (p) => (await pick()).remove(p),
   };
+  /** Absolute path of a store path under the layout currently in use. */
+  const resolve = async (p: string): Promise<string> =>
+    (await pick()) === raw ? path.join(dataDir, p) : path.join(dataDir, 'projects', projectId, p);
+  return { store, resolve };
+}
+
+const WIKI_LAYERS = ['notes', 'concepts'] as const;
+
+/**
+ * Keyword index over both root-wiki layers: `wiki/notes` (user pages) and `wiki/concepts`
+ * (where compile writes). Hit paths keep the layer (`wiki/<layer>/<slug>.md`), which the
+ * reader view uses to filter by visibility.
+ */
+async function buildSearchIndex(store: Store): Promise<SearchIndex> {
+  const index = new SearchIndex();
+  for (const layer of WIKI_LAYERS) {
+    let entries: Awaited<ReturnType<Store['listDir']>> = [];
+    try { entries = await store.listDir(`wiki/${layer}`); } catch { continue; }
+    for (const entry of entries) {
+      if (entry.kind !== 'file' || !entry.name.endsWith('.md')) continue;
+      const slug = entry.name.replace(/\.md$/, '');
+      let body: string;
+      try { body = await store.readText(`wiki/${layer}/${entry.name}`); } catch { continue; }
+      let title = slug;
+      try {
+        const meta = await store.readJSON<{ title: string }>(`wiki/${layer}/${slug}.meta.json`);
+        title = meta.title;
+      } catch { /* keep slug */ }
+      index.add({ path: `wiki/${layer}/${entry.name}`, title, body, type: 'concept' });
+    }
+  }
+  return index;
+}
+
+/** Page files of both layers with mtime and size; changes when another process writes a page. */
+async function wikiSignature(store: Store, resolve: (p: string) => Promise<string>): Promise<string> {
+  const parts: string[] = [];
+  for (const layer of WIKI_LAYERS) {
+    let entries: Awaited<ReturnType<Store['listDir']>> = [];
+    try { entries = await store.listDir(`wiki/${layer}`); } catch { continue; }
+    for (const entry of entries) {
+      if (entry.kind !== 'file' || !(entry.name.endsWith('.md') || entry.name.endsWith('.meta.json'))) continue;
+      const rel = `wiki/${layer}/${entry.name}`;
+      try {
+        const st = await fs.stat(await resolve(rel));
+        parts.push(`${rel}:${st.mtimeMs}:${st.size}`);
+      } catch { /* vanished between list and stat */ }
+    }
+  }
+  return parts.sort().join('\n');
+}
+
+/** MINDBASE_MCP_INDEX_SYNC_MS: minimum ms between freshness checks of the search index (default 2000). */
+function indexSyncIntervalMs(env: NodeJS.ProcessEnv): number {
+  const n = Number(env['MINDBASE_MCP_INDEX_SYNC_MS']);
+  return env['MINDBASE_MCP_INDEX_SYNC_MS'] !== undefined && Number.isFinite(n) && n >= 0 ? n : 2000;
 }
 
 export async function loadContext(opts: {
@@ -98,35 +162,46 @@ export async function loadContext(opts: {
   const dataDir = expandHome(opts.dataDir ?? process.env['MINDBASE_DATA_DIR'] ?? path.join(os.homedir(), 'mindbase-data'));
   await fs.mkdir(dataDir, { recursive: true });
 
-  const store = await openStore(dataDir);
+  const { store, resolve } = await openStore(dataDir);
   const feeds = new FeedStore(dataDir);
   const cards = new CardStore(dataDir);
   const templates = new TemplateStore(dataDir);
   await templates.ensureDefaults();
   const synthesisCache = new SynthesisCache(dataDir);
 
-  let config: MCPConfig | null = null;
-  try {
-    const text = await fs.readFile(path.join(dataDir, 'mindbase.config.json'), 'utf-8');
-    config = JSON.parse(text) as MCPConfig;
-  } catch { /* ok — read-only tools still work */ }
+  // Missing config is ok — read-only tools still work. Re-read on change (LBV2-32).
+  const configFile = createConfigReloader<MCPConfig>(path.join(dataDir, 'mindbase.config.json'), {
+    minIntervalMs: configReloadIntervalMs(process.env),
+    log: (line) => { process.stderr.write(line); },
+  });
+  configFile.current();
 
-  // Build a fresh search index from disk on each start (cheap for personal-scale wikis)
-  const searchIndex = new SearchIndex();
-  try {
-    const entries = await store.listDir('wiki/notes');
-    for (const entry of entries) {
-      if (entry.kind !== 'file' || !entry.name.endsWith('.md')) continue;
-      const slug = entry.name.replace(/\.md$/, '');
-      const body = await store.readText(`wiki/notes/${entry.name}`);
-      let title = slug;
+  // Search index over notes + concepts; rebuilt when page files change on disk (LBV2-32).
+  const searchIndex = await buildSearchIndex(store);
+  let signature = await wikiSignature(store, resolve);
+  let lastSync = Date.now();
+  let syncing: Promise<void> | null = null;
+  const rebuildSearchIndex = async (): Promise<void> => {
+    const next = await wikiSignature(store, resolve);
+    // Replace internal state
+    Object.assign(searchIndex, await buildSearchIndex(store));
+    signature = next;
+  };
+  const syncSearchIndex = (): Promise<void> => {
+    if (syncing) return syncing;
+    if (Date.now() - lastSync < indexSyncIntervalMs(process.env)) return Promise.resolve();
+    lastSync = Date.now();
+    syncing = (async () => {
       try {
-        const meta = await store.readJSON<{ title: string }>(`wiki/notes/${slug}.meta.json`);
-        title = meta.title;
-      } catch { /* keep slug */ }
-      searchIndex.add({ path: `wiki/notes/${slug}.md`, title, body, type: 'concept' });
-    }
-  } catch { /* wiki/notes may not exist yet */ }
+        if ((await wikiSignature(store, resolve)) !== signature) await rebuildSearchIndex();
+      } catch (e) {
+        process.stderr.write(`[mindbase-mcp] search index sync failed: ${(e as Error).message}\n`);
+      } finally {
+        syncing = null;
+      }
+    })();
+    return syncing;
+  };
 
   // Open the persistent graph index (shared path with server: <dataDir>/.index/db.sqlite).
   // Empty index → lazy reindex from disk so graph tools work even on first launch.
@@ -150,8 +225,9 @@ export async function loadContext(opts: {
     cards,
     templates,
     synthesisCache,
-    config,
+    get config() { return configFile.current(); },
     getAdapter: () => {
+      const config = configFile.current();
       if (!config) throw new Error('LLM not configured');
       return createAdapter(config.provider, {
         apiKey: config.apiKey,
@@ -162,24 +238,8 @@ export async function loadContext(opts: {
         maxDocumentChars: config.maxContextChars,
       });
     },
-    reindex: async () => {
-      // Rebuild index from disk
-      const fresh = new SearchIndex();
-      const entries = await store.listDir('wiki/notes');
-      for (const entry of entries) {
-        if (entry.kind !== 'file' || !entry.name.endsWith('.md')) continue;
-        const slug = entry.name.replace(/\.md$/, '');
-        const body = await store.readText(`wiki/notes/${entry.name}`);
-        let title = slug;
-        try {
-          const meta = await store.readJSON<{ title: string }>(`wiki/notes/${slug}.meta.json`);
-          title = meta.title;
-        } catch { /* keep slug */ }
-        fresh.add({ path: `wiki/notes/${slug}.md`, title, body, type: 'concept' });
-      }
-      // Replace internal state
-      Object.assign(searchIndex, fresh);
-    },
+    reindex: rebuildSearchIndex,
+    syncSearchIndex,
     mcpClient: process.env['MCP_CLIENT'] ?? 'unknown',
     allowLocalFilePaths: opts.allowLocalFilePaths,
   };

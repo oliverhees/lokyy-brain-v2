@@ -66,6 +66,8 @@ export { createAdapter } from './adapters/registry';
 export type { LLMAdapter, AdapterConfig } from './adapters/types';
 export { EurouterHttpError, EUROUTER_HOST, EUROUTER_RULE_NOT_FOUND, EUROUTER_KEY_INVALID, EUROUTER_ROUTE_REQUIRED, EUROUTER_ROUTE_UNAVAILABLE, eurouterChatError, isEurouterBaseUrl, isEurouterRuleId, eurouterRulesUrl, listEurouterRules } from './adapters/eurouter';
 export type { EurouterRule } from './adapters/eurouter';
+export { probeToolCalling, TOOL_PROBE_TOOL, ROUTE_NO_TOOLS_WARNING } from './adapters/tool-probe';
+export type { ToolProbeResult } from './adapters/tool-probe';
 export { readLlmTimeoutMs, DEFAULT_LLM_TIMEOUT_MS, LLM_TIMEOUT_ERROR } from './adapters/timeout';
 export { SearchIndex } from './search/index';
 export type { SearchDoc, SearchResult } from './search/index';
@@ -78,7 +80,7 @@ export type { HybridQuery, HybridResult, SearchFilters, SnippetResult } from './
 export { multilingualTokenize } from './search/tokenizer';
 export { ingestPaste } from './ingest/paste';
 export { ingestFile } from './ingest/file';
-export { compileL1, compileL1Plan, compileL1Execute } from './compile/l1';
+export { compileL1, compileL1Plan, compileL1Execute, DEFAULT_COMPILE_MAX_TOKENS, DEFAULT_COMPILE_RETRY_DELAY_MS, MAX_COMPILE_RETRIES, NO_TOOL_CALLS_ERROR, TOOL_CALL_NUDGE, isRetryableCompileError } from './compile/l1';
 export type { CompileL1Result } from './compile/l1';
 export type { CompileL1ProgressEvent } from './compile/l1';
 export type { CompileL1Plan, ProposedAction, ApprovalMap } from './compile/l1';

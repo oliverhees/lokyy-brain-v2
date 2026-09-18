@@ -43,19 +43,30 @@ async function getEmbeddings(texts: string[], baseUrl: string, apiKey: string): 
 
 interface Page { slug: string; title: string; content: string }
 
+/**
+ * Pages of both root-wiki layers. Concepts (where compile writes) come first and win a slug that
+ * exists in both layers, like the vault's embedding indexer, so cached vectors match (LBV2-32).
+ */
 async function listPages(ctx: Context): Promise<Page[]> {
-  const entries = await ctx.store.listDir('wiki/notes');
   const pages: Page[] = [];
-  for (const entry of entries) {
-    if (entry.kind !== 'file' || !entry.name.endsWith('.md')) continue;
-    const slug = entry.name.replace(/\.md$/, '');
-    const body = await ctx.store.readText(`wiki/notes/${entry.name}`);
-    let title = slug;
-    try {
-      const m = await ctx.store.readJSON<MetaJson>(`wiki/notes/${slug}.meta.json`);
-      title = m.title;
-    } catch { /* ok */ }
-    pages.push({ slug, title, content: body });
+  const seen = new Set<string>();
+  for (const layer of ['concepts', 'notes'] as const) {
+    let entries: Awaited<ReturnType<Context['store']['listDir']>> = [];
+    try { entries = await ctx.store.listDir(`wiki/${layer}`); } catch { continue; }
+    for (const entry of entries) {
+      if (entry.kind !== 'file' || !entry.name.endsWith('.md')) continue;
+      const slug = entry.name.replace(/\.md$/, '');
+      if (seen.has(slug)) continue;
+      let body: string;
+      try { body = await ctx.store.readText(`wiki/${layer}/${entry.name}`); } catch { continue; }
+      seen.add(slug);
+      let title = slug;
+      try {
+        const m = await ctx.store.readJSON<MetaJson>(`wiki/${layer}/${slug}.meta.json`);
+        title = m.title;
+      } catch { /* ok */ }
+      pages.push({ slug, title, content: body });
+    }
   }
   return pages;
 }
@@ -115,10 +126,10 @@ export async function handle(ctx: Context, rawInput: unknown) {
     // Fallback to keyword search
     const keyword = ctx.searchIndex.search(query).slice(0, limit);
     const results = await Promise.all(keyword.map(async (h) => {
-      const slug = h.path.replace(/^wiki\/notes\//, '').replace(/\.md$/, '');
+      const slug = h.path.replace(/^wiki\/(notes|concepts)\//, '').replace(/\.md$/, '');
       let title = slug;
       try {
-        const m = await ctx.store.readJSON<MetaJson>(`wiki/notes/${slug}.meta.json`);
+        const m = await ctx.store.readJSON<MetaJson>(h.path.replace(/\.md$/, '.meta.json'));
         title = m.title;
       } catch { /* ok */ }
       return { slug, title, one_liner: '', score: h.score };

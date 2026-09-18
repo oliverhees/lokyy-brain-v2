@@ -17,6 +17,16 @@ export const definition = {
   },
 };
 
+const WIKI_LAYERS = ['notes', 'concepts'] as const;
+
+/** Body from the first layer that has the page (notes, then concepts — compile writes concepts). */
+async function readFromLayers(ctx: Context, slug: string): Promise<{ body: string; layer: (typeof WIKI_LAYERS)[number] }> {
+  for (const layer of WIKI_LAYERS) {
+    try { return { body: await ctx.store.readText(`wiki/${layer}/${slug}.md`), layer }; } catch { /* next layer */ }
+  }
+  throw new Error('not found');
+}
+
 export async function handle(ctx: Context, rawInput: unknown) {
   const parsed = inputSchema.safeParse(rawInput);
   if (!parsed.success) return errorResult(`Invalid input: ${parsed.error.issues[0]?.message ?? 'parse error'}`);
@@ -24,10 +34,10 @@ export async function handle(ctx: Context, rawInput: unknown) {
 
   try {
     if (!isSafeSlug(slug)) throw new Error('invalid slug'); // handled exactly like a missing page
-    const body = await ctx.store.readText(`wiki/notes/${slug}.md`);
+    const { body, layer } = await readFromLayers(ctx, slug);
     let frontmatter: Partial<MetaJson> = {};
     try {
-      frontmatter = await ctx.store.readJSON<MetaJson>(`wiki/notes/${slug}.meta.json`);
+      frontmatter = await ctx.store.readJSON<MetaJson>(`wiki/${layer}/${slug}.meta.json`);
     } catch { /* meta missing */ }
 
     const graph = ctx.wikiIndex.buildGraph();
@@ -38,14 +48,16 @@ export async function handle(ctx: Context, rawInput: unknown) {
   } catch {
     // Look for similar slugs to suggest
     const suggestions: string[] = [];
-    try {
-      const entries = await ctx.store.listDir('wiki/notes');
-      for (const e of entries) {
-        if (e.kind !== 'file' || !e.name.endsWith('.md')) continue;
-        const s = e.name.replace(/\.md$/, '');
-        if (s.includes(slug.toLowerCase()) || slug.toLowerCase().includes(s)) suggestions.push(s);
-      }
-    } catch { /* ok */ }
+    for (const layer of WIKI_LAYERS) {
+      try {
+        const entries = await ctx.store.listDir(`wiki/${layer}`);
+        for (const e of entries) {
+          if (e.kind !== 'file' || !e.name.endsWith('.md')) continue;
+          const s = e.name.replace(/\.md$/, '');
+          if (!suggestions.includes(s) && (s.includes(slug.toLowerCase()) || slug.toLowerCase().includes(s))) suggestions.push(s);
+        }
+      } catch { /* ok */ }
+    }
     return errorResult(
       `Page not found: '${slug}'`,
       suggestions.length > 0 ? `Did you mean: ${suggestions.slice(0, 3).join(', ')}?` : 'Use search_wiki to find the right slug.',

@@ -117,15 +117,17 @@ export function createMcpServer(ctx: Awaited<ReturnType<typeof loadContext>>, pr
   );
 
   if (profile === 'full') {
-    registerTools(server, ctx, profile);
-    registerResources(server, ctx, profile);
+    // Pages written by the web server (compile → wiki/concepts) become searchable without a restart.
+    registerTools(server, ctx, profile, ctx.syncSearchIndex);
+    registerResources(server, ctx, profile, ctx.syncSearchIndex);
   } else {
     // Readers get a context that hides internal/pii pages; visibility is re-read per request.
     const { rate, tokenWindow } = readerLlmLimits();
     const sessionLlmWindow = new SlidingWindow(rate.perSession, rate.windowMs);
     const view = createReaderView(ctx, () => acquireAll([sessionLlmWindow, tokenWindow]));
-    registerTools(server, view.ctx, profile, view.refresh);
-    registerResources(server, view.ctx, profile, view.refresh);
+    const beforeRequest = async (): Promise<void> => { await ctx.syncSearchIndex(); await view.refresh(); };
+    registerTools(server, view.ctx, profile, beforeRequest);
+    registerResources(server, view.ctx, profile, beforeRequest);
   }
   registerPrompts(server, profile);
   return server;
