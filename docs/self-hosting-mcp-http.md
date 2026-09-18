@@ -59,7 +59,7 @@ The remaining `node_modules` is about 360 MB; the largest packages are `tesserac
 
 `deploy/build-server.mjs` rewrites `import.meta.dirname` in server sources to the original source directory, so `schema/`, `apps/web/dist` and `.env` resolve as they do in development. The build fails if server code uses `import.meta.url`, `import.meta.filename`, `__dirname` or `__filename`, because those would silently point to `dist/` in the bundle.
 
-**Embedding model cache (`/models`).** The web server's embedding indexer and the MCP server load the BGE-M3 model through `@xenova/transformers`, which downloads it from Hugging Face on first use (about 560 MB) and caches it in the package directory. In the image that cache directory is a symlink to `/models`, owned by `vault`. Without a mount the model is downloaded again after every container recreation. To keep it, mount a named volume:
+**Embedding model cache (`/models`).** Without the [shared embedding service](#shared-embedding-service), the web server (embedding indexer and hybrid search) loads the BGE-M3 model in-process through `@xenova/transformers`, which downloads it from Hugging Face on first use (about 560 MB) and caches it in the package directory. The MCP server does not load the model in that mode: its `semantic_search` calls the configured LLM provider's OpenAI-compatible `/v1/embeddings` endpoint (subject to `VAULT_LLM_ALLOWED_HOSTS`) and falls back to keyword search. In the image that cache directory is a symlink to `/models`, owned by `vault`. Without a mount the model is downloaded again after every container recreation. To keep it, mount a named volume:
 
 ```bash
 docker run ... -v lokyy-models:/models ...
@@ -67,9 +67,56 @@ docker run ... -v lokyy-models:/models ...
 
 One volume can be shared by several vault containers; the files are read-only after the download. Without outbound access to `huggingface.co` the download fails; the indexer logs the failure per page and keyword search keeps working.
 
+With the model in-process, every vault holds it in memory (measured 2.62 GiB peak per vault). For several vaults on one server use the [shared embedding service](#shared-embedding-service) instead: the vault then does not need `/models` at all.
+
+### Shared embedding service
+
+`deploy/stack/embed` (LBV2-26) loads BGE-M3 once for all vaults of a server. Build it with `docker build -f deploy/Dockerfile --target embed .`; `deploy/stack/compose.yml` shows the complete wiring.
+
+**Vault side.** Set both variables on the vault container (web server and MCP process read them):
+
+| Variable | Effect |
+|---|---|
+| `MINDBASE_EMBED_URL` | Base URL of the service, e.g. `http://embed:8080`. Plain `http(s)` URL without credentials, query or fragment. |
+| `MINDBASE_EMBED_TOKEN` | This vault's own token (`openssl rand -hex 32`). Never share a token between vaults. |
+| `MINDBASE_EMBED_TIMEOUT_MS` | Optional, per attempt, default `90000` (a batch of 4 worst-case texts plus up to 30 s queue wait). A timed-out request is **not** retried: the service may still be computing it. |
+| `MINDBASE_EMBED_RETRIES` | Optional, extra attempts on `408`, `429`, `502`, `503`, `504` and connection errors, default `2` (exponential backoff from 500 ms; `Retry-After` is honoured up to 10 s). Not retried: `500` (the service failed on this text, e.g. an inference timeout after which it restarts; the indexer also skips such a page until its content changes), other `4xx` and the client's own timeout. The client sends at most 4 texts per request. |
+| `MINDBASE_EMBED_SWEEP_MS` | Optional, default `60000`, `0` = off. After its first run the web server's embedding indexer re-checks all pages at this interval: pages whose embedding failed (e.g. the service was restarting) and pages written by another process (the MCP server) are embedded without a restart; unchanged pages cost only a hash check. While runs fail the interval doubles up to 30 min. |
+
+With both set, the vault never loads the model (setting only one, or an invalid URL, stops the web server and the MCP server at startup): page indexing and hybrid search in the web server, and `semantic_search` in the MCP server (no LLM configuration needed), go to `POST <url>/embed`. `semantic_search` embeds only the query: page vectors come from the web server's indexer cache and are used only while their content hash matches the page, so pages that are not indexed yet (or whose indexed text includes OCR output) are left out until the indexer has embedded them. Service errors are logged without text content; hybrid search falls back to keyword results, `semantic_search` to keyword search. Without both variables the in-process behaviour is unchanged. The service URL comes from the operator, not from the vault configuration, so `VAULT_LLM_ALLOWED_HOSTS` does not apply to it; requests never follow redirects.
+
+Vectors are interchangeable with in-process ones (same model files, mean pooling, normalisation, 8000-character cut and 2048-token cap; `deploy/stack/tests/embed.sh` compares them), so an existing embedding cache stays valid when you switch. **Token cap:** every text is truncated to 2048 tokens (`EMBED_MAX_TOKENS` in `packages/core`), in the service and in-process, because attention memory grows with the square of the token count and 8000 characters of CJK text or symbols are up to ~8000 tokens. 8000 characters of German or English prose are about 1800–2300 tokens, so at most the tail of a very long page is not represented in its vector (the indexer embeds one vector per page, title plus body). Embeddings computed in-process before this cap may differ for such long pages until they are re-indexed.
+
+**Service side** (`EMBED_*` environment of the `embed` container):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `EMBED_VAULTS` | required | Comma-separated vault names: lowercase words joined by single dashes, at most 63 characters, not starting with `sha256-` (e.g. `anna,ben,firma` or the slots `v01,…,v30,firma`). |
+| `EMBED_TOKEN_SHA256_<VAULT>` or `EMBED_TOKEN_<VAULT>` | one of them required per vault | The vault's token as SHA-256 hex digest (preferred; `deploy/stack/embed-tokens.sh` derives it) or in plain text (32–512 printable characters with at least 16 distinct ones, e.g. `openssl rand -hex 32`; for platforms that can only inject generated secrets, e.g. Coolify). Vault names upper case, `-` → `_` (e.g. `EMBED_TOKEN_V01`). Plain tokens are hashed at startup and removed from the process environment; the container's initial environment (`docker inspect`, `/proc/1/environ`) still shows them, so prefer hashes where possible. Both forms for one vault, a missing or malformed value, or two vaults with the same token stop the service at startup; errors and logs never contain token values. |
+| `EMBED_SOURCE_<VAULT>` | unset | Comma-separated IPv4 networks. When set, that vault's token is accepted only from these addresses (its own network), so a token that leaks to another vault is useless there. Set it for every vault. |
+| `EMBED_MAX_TEXTS` / `EMBED_MAX_CHARS` / `EMBED_MAX_BODY_BYTES` | `16` / `8000` / `1048576` | Per request; larger requests get `400` or `413` before any inference. |
+| `EMBED_MAX_TOKENS` | `2048` | Tokens per text; longer texts are truncated by the tokenizer. Keep it equal to `EMBED_MAX_TOKENS` in `packages/core` so vectors match in-process ones. |
+| `EMBED_MAX_REQUEST_TOKENS` | `8192` | Tokens per request after truncation (counted with the tokenizer before queueing); more is `413`. |
+| `EMBED_PRIORITY_MAX_CHARS` | `512` | Requests with at most this many characters in total (search queries) are served before bulk requests. |
+| `EMBED_ONNX_ARENA` | unset (off) | `1` turns ONNX Runtime's CPU memory arena back on. Off by default: the arena keeps the largest buffers of every sequence length and never returns them. |
+| `EMBED_BULK_EVERY` | `4` | After this many short (priority) texts in a row, the next text goes to a waiting bulk request, so one vault flooding short requests cannot stop other vaults' indexing. |
+| `EMBED_INFERENCE_TIMEOUT_MS` | `60000` | Per text. An inference that takes longer fails its request with `500` and the process exits (ONNX runs cannot be aborted); the container's restart policy brings it back, vaults use keyword search meanwhile. |
+| `EMBED_RATE_PER_SEC` / `EMBED_BURST` | `20` / `200` | Texts per second per vault (token bucket); over the limit `429` with `Retry-After`. |
+| `EMBED_MAX_PENDING_PER_VAULT` / `EMBED_MAX_QUEUE` | `4` / `64` | Queued plus running requests per vault (`429`) and in total (`503`). |
+| `EMBED_QUEUE_TIMEOUT_MS` | `30000` | A request that has not started within this time gets `503`. |
+| `EMBED_MODELS_DIR` / `EMBED_PORT` | `/models` / `8080` | Read-only model cache (filled and verified by `model-prefetch`) and listen port. |
+
+Texts are embedded one at a time (each run uses all cores). Short requests (search queries) go first, even between the texts of a running bulk request, except that every `EMBED_BULK_EVERY`-th text goes to waiting bulk work; within each class vaults take turns, so one vault's indexing run cannot starve another vault's search: a query waits at most for the one text that is being embedded (worst case a 2048-token text, a few seconds). Bulk indexing throughput is shared by all vaults; with many vaults importing at once, first-time indexing takes correspondingly longer. A client that disconnects cancels its remaining texts. Error bodies are static (`{"error":"unauthorized"}`, …); log lines carry vault name, text count, status and duration, never text or token material. `GET /healthz` answers `200` once the model is loaded.
+
+**Network model.** Give each vault its own internal network that contains only that vault and the service (`embed-<vault>` in `deploy/stack`), and do not attach the service to any other network: it needs no outbound access, and a vault reaches only the service's address on its own network. The service has no proxy or forwarding code (anything but `POST /embed` and `GET /healthz` is `404`/`405`). Run it with a read-only root filesystem, `cap_drop: [ALL]`, `no-new-privileges`, `sysctls: net.ipv4.ip_forward: "0"` (Docker enables forwarding in the container by default; the service is on every vault's network and must never route between them), a `pids_limit` and a memory limit.
+
+**Residual risk.** The service is a shared component on every vault's embed network. A compromised vault can send it arbitrary input (bounded by the limits above) and try to exploit the HTTP server, tokenizer or ONNX runtime. If that succeeded, the attacker would control a process with a network path to every vault's embed network, i.e. to every other vault's ports; those still require the proxy secret (web) or bearer token (MCP), but the lateral step is possible. The service holds no vault data, no plain tokens and no credentials, and has no outbound network. Mitigations in place: the limits and fair queue, token plus source-network binding, static errors, no forwarding, hardened container. Also in place: token cap and per-request token budget (bounded memory per text), inference timeout with restart, packet forwarding off. Further hardening, not done yet: a seccomp profile, dropping the ONNX runtime's unused execution providers, egress/ingress firewall rules on the host so the service can only answer (not open) connections towards vaults, and one service per vault group if a server mixes trust domains.
+
 ## Configuration
 
 ### MCP HTTP transport (`apps/mcp/src/http.ts`)
+
+**Data layout (LBV2-26).** The MCP server reads and writes the same project-scoped layout as the web server: `projects/<currentProjectId>/…` (`config.json`, default `default`). Only a legacy data dir (`wiki/` present, `projects/<id>/` absent) is served unscoped until the web server has migrated it. Before this fix the MCP server used `<dataDir>/wiki/notes`, so notes created via MCP did not appear in the web app; such stray pages are reported at MCP startup and must be moved to `projects/<id>/wiki/notes` by hand.
 
 The server validates every integer variable at startup. A value that is not an integer, or is below the minimum, makes the process exit with code 1. The server never silently falls back to the default. An unset or empty variable uses the default.
 

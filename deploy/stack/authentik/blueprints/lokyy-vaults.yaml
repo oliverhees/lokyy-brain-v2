@@ -78,7 +78,7 @@ entries:
     attrs: &provider
       name: vault-anna
       mode: forward_single
-      external_host: http://anna.vault.localhost:18080
+      external_host: !Format ["http://anna.vault.localhost:%s", !Env [STACK_HTTP_PORT, "18080"]]
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       access_token_validity: hours=8
@@ -96,7 +96,7 @@ entries:
     attrs:
       <<: *provider
       name: vault-ben
-      external_host: http://ben.vault.localhost:18080
+      external_host: !Format ["http://ben.vault.localhost:%s", !Env [STACK_HTTP_PORT, "18080"]]
   - model: authentik_core.application
     id: app-ben
     identifiers: { slug: vault-ben }
@@ -112,7 +112,7 @@ entries:
     attrs:
       <<: *provider
       name: vault-firma
-      external_host: http://firma.vault.localhost:18080
+      external_host: !Format ["http://firma.vault.localhost:%s", !Env [STACK_HTTP_PORT, "18080"]]
   - model: authentik_core.application
     id: app-firma
     identifiers: { slug: vault-firma }
@@ -128,7 +128,7 @@ entries:
     attrs:
       <<: *provider
       name: metamcp-admin
-      external_host: http://mcp.localhost:18080
+      external_host: !Format ["http://mcp.localhost:%s", !Env [STACK_HTTP_PORT, "18080"]]
   - model: authentik_core.application
     id: app-metamcp
     identifiers: { slug: metamcp-admin }
@@ -148,5 +148,5 @@ entries:
         - !KeyOf provider-firma
         - !KeyOf provider-metamcp
       config:
-        authentik_host: http://auth.localhost:18080
-        authentik_host_browser: http://auth.localhost:18080
+        authentik_host: !Format ["http://auth.localhost:%s", !Env [STACK_HTTP_PORT, "18080"]]
+        authentik_host_browser: !Format ["http://auth.localhost:%s", !Env [STACK_HTTP_PORT, "18080"]]

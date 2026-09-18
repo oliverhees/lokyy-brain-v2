@@ -1,0 +1,7 @@
+{
+  "name": "lokyy-embed",
+  "private": true,
+  "type": "module",
+  "description": "Shared BGE-M3 embedding service for hosted vaults (LBV2-26). Node built-ins only; @xenova/transformers comes from the vault image.",
+  "scripts": { "test": "node --test test/*.test.ts" }
+}

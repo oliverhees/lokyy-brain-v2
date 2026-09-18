@@ -5,6 +5,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 deadline=$(( $(date +%s) + ${1:-300} ))
+P=$(sed -nE "s/^STACK_HTTP_PORT=([0-9]+)$/\1/p" .env 2>/dev/null | tail -1)
+P=${P:-${STACK_HTTP_PORT:-18080}}
 
 step() { # step <description> <command...>
   local what=$1; shift
@@ -27,7 +29,7 @@ import sys; sys.exit(0 if BlueprintInstance.objects.filter(name='lokyy-vaults', 
 }
 routes() {
   for v in anna ben firma; do
-    [[ $(curl -s -o /dev/null -w '%{http_code}' "http://$v.vault.localhost:18080/") == 302 ]] || return 1
+    [[ $(curl -s -o /dev/null -w '%{http_code}' "http://$v.vault.localhost:$P/") == 302 ]] || return 1
   done
 }
 signup_closed() {
