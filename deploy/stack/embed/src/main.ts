@@ -1,12 +1,12 @@
 // Entry point of the shared embedding service (LBV2-26). Configuration only via environment:
-//   EMBED_VAULTS=anna,ben,firma and EMBED_TOKEN_SHA256_<VAULT>=sha256(token) per vault (required),
+//   EMBED_VAULTS=anna,ben,firma and per vault EMBED_TOKEN_SHA256_<VAULT>=sha256(token) or EMBED_TOKEN_<VAULT>=token,
 //   EMBED_SOURCE_<VAULT>=<cidr>[,…] (optional: accept that vault's token only from its own network)
 //   EMBED_MODELS_DIR (default /models, read-only), EMBED_TRANSFORMERS_FROM (where @xenova/transformers
 //   is resolved from, default the vault image's /app/apps/server/), EMBED_PORT (default 8080), limits below.
 // Loads BGE-M3 once, offline, with the same pooling and normalisation as the in-process vault embedder.
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { configureTransformersEnv, parseSourceConfig, parseTokenConfig, type Ipv4Net, type TransformersEnv } from './config.ts';
+import { configureTransformersEnv, parseSourceConfig, parseTokenConfig, plainTokenVars, type Ipv4Net, type TransformersEnv } from './config.ts';
 import { createEmbedService } from './service.ts';
 
 export const MODEL_ID = 'Xenova/bge-m3';
@@ -38,6 +38,9 @@ try {
 } catch (e) {
   fatal((e as Error).message);
 }
+// Only hashes are kept: plain tokens leave process.env (the container's initial environment in
+// /proc/1/environ cannot be changed; prefer EMBED_TOKEN_SHA256_<VAULT> where the platform allows).
+for (const name of plainTokenVars([...tokens!.keys()])) delete process.env[name];
 
 const maxTexts = int('EMBED_MAX_TEXTS', 32);
 const burst = int('EMBED_BURST', 200);

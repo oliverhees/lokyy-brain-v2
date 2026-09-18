@@ -1,16 +1,24 @@
 // Configuration helpers for the embed service. Everything here fails closed: a missing or malformed
 // setting stops the service instead of starting it with weaker checks.
+import { createHash } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 
 const VAULT_RE = /^[a-z][a-z0-9-]{0,62}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
+const envSuffix = (vault: string) => vault.toUpperCase().replaceAll('-', '_');
 /** Env var holding a vault's token hash: EMBED_TOKEN_SHA256_<VAULT>, upper case, `-` → `_`. */
-export const tokenHashVar = (vault: string) => `EMBED_TOKEN_SHA256_${vault.toUpperCase().replaceAll('-', '_')}`;
+export const tokenHashVar = (vault: string) => `EMBED_TOKEN_SHA256_${envSuffix(vault)}`;
+/** Env var holding a vault's plain token: EMBED_TOKEN_<VAULT> (e.g. Coolify magic variables). */
+export const tokenPlainVar = (vault: string) => `EMBED_TOKEN_${envSuffix(vault)}`;
+/** Plain token variables of these vaults; main.ts deletes them from process.env after parsing. */
+export const plainTokenVars = (vaults: readonly string[]) => vaults.map(tokenPlainVar);
 
 /**
- * Reads the vault → sha256(token) mapping. `vaultsCsv` is EMBED_VAULTS (e.g. "anna,ben,firma"); each
- * vault needs EMBED_TOKEN_SHA256_<VAULT> as 64 hex characters. The service never sees plain tokens.
+ * Reads the vault → sha256(token) mapping. `vaultsCsv` is EMBED_VAULTS (e.g. "anna,ben,firma" or
+ * "v01,…,v30,firma"). Per vault exactly one of EMBED_TOKEN_SHA256_<VAULT> (64 hex characters) or
+ * EMBED_TOKEN_<VAULT> (plain, 32–512 printable characters, hashed here) must be set. Only hashes are
+ * kept; errors never contain token values.
  */
 export function parseTokenConfig(vaultsCsv: string, env: Record<string, string | undefined>): Map<string, string> {
   const vaults = vaultsCsv.split(',').map((v) => v.trim()).filter(Boolean);
@@ -20,10 +28,20 @@ export function parseTokenConfig(vaultsCsv: string, env: Record<string, string |
   for (const vault of vaults) {
     if (!VAULT_RE.test(vault)) throw new Error(`invalid vault name in EMBED_VAULTS: ${vault}`);
     if (tokens.has(vault)) throw new Error(`duplicate vault in EMBED_VAULTS: ${vault}`);
-    const name = tokenHashVar(vault);
-    const hash = (env[name] ?? '').trim().toLowerCase();
-    if (!SHA256_RE.test(hash)) throw new Error(`${name} must be the sha256 hex digest of the vault's token`);
-    if (seen.has(hash)) throw new Error(`two vaults use the same token (${name})`);
+    const hashName = tokenHashVar(vault);
+    const plainName = tokenPlainVar(vault);
+    const hashed = (env[hashName] ?? '').trim();
+    const plain = env[plainName] ?? '';
+    if (hashed && plain) throw new Error(`both ${plainName} and ${hashName} are set; set only one`);
+    let hash: string;
+    if (plain) {
+      if (!/^[\x21-\x7e]{32,512}$/.test(plain)) throw new Error(`${plainName} must be 32–512 printable characters without spaces`);
+      hash = createHash('sha256').update(plain, 'utf8').digest('hex');
+    } else {
+      hash = hashed.toLowerCase();
+      if (!SHA256_RE.test(hash)) throw new Error(`${hashName} (sha256 hex digest) or ${plainName} is required`);
+    }
+    if (seen.has(hash)) throw new Error(`two vaults use the same token (${vault})`);
     seen.add(hash);
     tokens.set(vault, hash);
   }
@@ -73,7 +91,7 @@ const mask = (bits: number) => (bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>>
 export function parseSourceConfig(vaults: readonly string[], env: Record<string, string | undefined>): Map<string, Ipv4Net[]> {
   const out = new Map<string, Ipv4Net[]>();
   for (const vault of vaults) {
-    const name = `EMBED_SOURCE_${vault.toUpperCase().replaceAll('-', '_')}`;
+    const name = `EMBED_SOURCE_${envSuffix(vault)}`;
     const raw = env[name];
     if (raw === undefined) continue;
     const nets = raw.split(',').map((c) => c.trim()).map((cidr) => {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTokenConfig, parseSourceConfig, inNetworks, configureTransformersEnv } from '../src/config.ts';
+import { parseTokenConfig, parseSourceConfig, plainTokenVars, inNetworks, configureTransformersEnv } from '../src/config.ts';
 
 const H1 = '1'.repeat(64);
 const H2 = 'ab'.repeat(32);
@@ -58,4 +58,44 @@ test('address matching handles IPv4-mapped IPv6 and rejects anything else', () =
   assert.equal(inNetworks('10.232.12.16', nets), false);
   assert.equal(inNetworks('::1', nets), false);
   assert.equal(inNetworks(undefined, nets), false);
+});
+
+test('plain tokens (EMBED_TOKEN_<VAULT>, e.g. Coolify magic env) are hashed at startup', async () => {
+  const { createHash } = await import('node:crypto');
+  const plain = 'p'.repeat(40);
+  const m = parseTokenConfig('v01,v30,firma', {
+    EMBED_TOKEN_V01: plain,
+    EMBED_TOKEN_SHA256_V30: H2,
+    EMBED_TOKEN_FIRMA: 'f'.repeat(64),
+  });
+  assert.equal(m.get('v01'), createHash('sha256').update(plain).digest('hex'));
+  assert.equal(m.get('v30'), H2);
+  assert.equal(m.get('firma'), createHash('sha256').update('f'.repeat(64)).digest('hex'));
+});
+
+test('plain and hashed token for the same vault is a startup error; weak plain tokens are refused', () => {
+  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: 'p'.repeat(40), EMBED_TOKEN_SHA256_V01: H1 }), /both EMBED_TOKEN_V01 and EMBED_TOKEN_SHA256_V01/);
+  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: 'short' }), /EMBED_TOKEN_V01 must be/);
+  assert.throws(() => parseTokenConfig('v01', { EMBED_TOKEN_V01: `${'p'.repeat(40)} x` }), /EMBED_TOKEN_V01 must be/);
+  assert.throws(() => parseTokenConfig('v01,v02', { EMBED_TOKEN_V01: 'q'.repeat(40), EMBED_TOKEN_V02: 'q'.repeat(40) }), /same token/);
+});
+
+test('error messages never contain a plain token', () => {
+  const secret = 's'.repeat(40);
+  for (const env of [{ EMBED_TOKEN_V01: secret, EMBED_TOKEN_SHA256_V01: H1 }, { EMBED_TOKEN_V01: secret, EMBED_TOKEN_V02: secret }]) {
+    try { parseTokenConfig('v01,v02', env); assert.fail('expected an error'); } catch (e) {
+      assert.ok(!(e as Error).message.includes(secret));
+    }
+  }
+});
+
+test('plainTokenVars lists the plain token variables to scrub from process.env', () => {
+  assert.deepEqual(plainTokenVars(['v01', 'my-firma']), ['EMBED_TOKEN_V01', 'EMBED_TOKEN_MY_FIRMA']);
+});
+
+test('slot names v01..v30 and firma are valid vault names', () => {
+  const env: Record<string, string> = { EMBED_TOKEN_SHA256_FIRMA: 'f'.repeat(64) };
+  const names = Array.from({ length: 30 }, (_, i) => `v${String(i + 1).padStart(2, '0')}`);
+  names.forEach((n, i) => { env[`EMBED_TOKEN_SHA256_${n.toUpperCase()}`] = i.toString(16).padStart(64, '0'); });
+  assert.equal(parseTokenConfig([...names, 'firma'].join(','), env).size, 31);
 });

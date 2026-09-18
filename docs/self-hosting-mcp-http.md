@@ -90,8 +90,8 @@ Vectors are interchangeable with in-process ones (same model files, mean pooling
 
 | Variable | Default | Effect |
 |---|---|---|
-| `EMBED_VAULTS` | required | Comma-separated vault names (`^[a-z][a-z0-9-]*$`). |
-| `EMBED_TOKEN_SHA256_<VAULT>` | required | SHA-256 hex digest of that vault's token (upper case, `-` → `_`). The service only ever sees hashes; missing, malformed or duplicate hashes stop it at startup. `deploy/stack/embed-tokens.sh` derives them from `EMBED_TOKEN_<VAULT>`. |
+| `EMBED_VAULTS` | required | Comma-separated vault names (`^[a-z][a-z0-9-]*$`, e.g. `anna,ben,firma` or the slots `v01,…,v30,firma`). |
+| `EMBED_TOKEN_SHA256_<VAULT>` or `EMBED_TOKEN_<VAULT>` | one of them required per vault | The vault's token as SHA-256 hex digest (preferred; `deploy/stack/embed-tokens.sh` derives it) or in plain text (32–512 printable characters, for platforms that can only inject generated secrets, e.g. Coolify). Vault names upper case, `-` → `_` (e.g. `EMBED_TOKEN_V01`). Plain tokens are hashed at startup and removed from the process environment; the container's initial environment (`docker inspect`, `/proc/1/environ`) still shows them, so prefer hashes where possible. Both forms for one vault, a missing or malformed value, or two vaults with the same token stop the service at startup; errors and logs never contain token values. |
 | `EMBED_SOURCE_<VAULT>` | unset | Comma-separated IPv4 networks. When set, that vault's token is accepted only from these addresses (its own network), so a token that leaks to another vault is useless there. Set it for every vault. |
 | `EMBED_MAX_TEXTS` / `EMBED_MAX_CHARS` / `EMBED_MAX_BODY_BYTES` | `32` / `8000` / `1048576` | Per request; larger requests get `400` or `413` before any inference. |
 | `EMBED_RATE_PER_SEC` / `EMBED_BURST` | `20` / `200` | Texts per second per vault (token bucket); over the limit `429` with `Retry-After`. |
