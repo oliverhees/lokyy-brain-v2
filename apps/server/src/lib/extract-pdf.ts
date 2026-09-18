@@ -60,8 +60,9 @@ export async function extractPdfText(data: Uint8Array, opts: ExtractPdfOptions =
     const parts: string[] = [];
     let chars = 0;
     for (let i = 1; i <= doc.numPages; i++) {
-      // pdfjs work can run as one long promise chain that never yields to the
-      // timer, so the deadline is also checked per page.
+      // pdfjs runs its fake worker on the main thread: the work can be one long
+      // promise chain that never yields to the timer, so the deadline is also
+      // checked here, between pages. A single expensive page still runs to completion.
       if (Date.now() > deadline) throw timedOut();
       const page = await doc.getPage(i);
       const content = await page.getTextContent();

@@ -34,20 +34,9 @@ async function fetchUrlContent(url: string): Promise<{ title: string; text: stri
 
   // PDF
   if (contentType.includes('application/pdf') || url.toLowerCase().endsWith('.pdf')) {
-    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    const buf = await res.arrayBuffer();
-    const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
-    const parts: string[] = [];
-    for (let i = 1; i <= doc.numPages; i++) {
-      const page = await doc.getPage(i);
-      const content = await page.getTextContent();
-      const pageText = content.items
-        .map((it) => ('str' in it ? (it as { str: string }).str : ''))
-        .join(' ');
-      parts.push(pageText);
-    }
+    // Bounded like every PDF extraction: size, page cap, timeout (LBV2-30).
+    const text = await extractPdfText(new Uint8Array(await res.arrayBuffer()));
     // Try to get title from first line or URL
-    const text = parts.join('\n\n');
     const firstLine = text.split('\n').find((l) => l.trim().length > 10)?.trim() ?? url;
     return { title: firstLine.slice(0, 120), text, kind: 'pdf' };
   }
