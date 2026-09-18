@@ -76,6 +76,33 @@ export const TOOL_CALL_NUDGE =
   'Now emit the tool calls for your plan. Respond with tool calls only, not with text.';
 
 export const DEFAULT_COMPILE_RETRY_DELAY_MS = 2000;
+/** Upper bound for plan retries: each retry is a full, paid LLM plan run (LBV2-32 audit). */
+export const MAX_COMPILE_RETRIES = 3;
+const DEFAULT_COMPILE_RETRIES = 1;
+
+/** Retries from the option or MINDBASE_COMPILE_RETRIES; invalid → default, above the cap → cap (both warn). */
+function resolveRetries(explicit: number | undefined): number {
+  const raw = explicit ?? process.env['MINDBASE_COMPILE_RETRIES'];
+  if (raw === undefined || raw === '') return DEFAULT_COMPILE_RETRIES;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    console.warn(`[compile] MINDBASE_COMPILE_RETRIES must be an integer 0..${MAX_COMPILE_RETRIES}; using ${DEFAULT_COMPILE_RETRIES}`);
+    return DEFAULT_COMPILE_RETRIES;
+  }
+  if (n > MAX_COMPILE_RETRIES) {
+    console.warn(`[compile] MINDBASE_COMPILE_RETRIES=${n} is above ${MAX_COMPILE_RETRIES}; using ${MAX_COMPILE_RETRIES}`);
+    return MAX_COMPILE_RETRIES;
+  }
+  return n;
+}
+
+/** Short, body-free reason for the retry log line. */
+function retryReason(error: string): string {
+  if (error === NO_TOOL_CALLS_ERROR) return 'no tool calls';
+  if (error === LLM_TIMEOUT_ERROR) return 'timeout';
+  const status = /^HTTP (\d{3})\b/.exec(error)?.[1];
+  return status ? `HTTP ${status}` : 'network error';
+}
 
 /**
  * Failures worth one more plan attempt: the model answered in text only (routes that spread
@@ -462,7 +489,7 @@ export interface ApprovalMap {
  * user approval.
  */
 export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Plan> {
-  const retries = opts.retries ?? envCount('MINDBASE_COMPILE_RETRIES', 1);
+  const retries = resolveRetries(opts.retries);
   const delayMs = opts.retryDelayMs ?? envCount('MINDBASE_COMPILE_RETRY_DELAY_MS', DEFAULT_COMPILE_RETRY_DELAY_MS);
   const usage = { input_tokens: 0, output_tokens: 0 };
   for (let attempt = 0; ; attempt++) {
@@ -473,6 +500,7 @@ export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Pl
     if (!plan.error || attempt >= retries || !isRetryableCompileError(plan.error)) {
       return { ...plan, total_usage: usage };
     }
+    console.warn(`[compile] retry ${attempt + 1}/${retries} ${retryReason(plan.error)}`);
     await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
   }
 }

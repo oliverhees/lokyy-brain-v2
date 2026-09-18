@@ -80,7 +80,7 @@ export type { HybridQuery, HybridResult, SearchFilters, SnippetResult } from './
 export { multilingualTokenize } from './search/tokenizer';
 export { ingestPaste } from './ingest/paste';
 export { ingestFile } from './ingest/file';
-export { compileL1, compileL1Plan, compileL1Execute, DEFAULT_COMPILE_MAX_TOKENS, DEFAULT_COMPILE_RETRY_DELAY_MS, NO_TOOL_CALLS_ERROR, TOOL_CALL_NUDGE, isRetryableCompileError } from './compile/l1';
+export { compileL1, compileL1Plan, compileL1Execute, DEFAULT_COMPILE_MAX_TOKENS, DEFAULT_COMPILE_RETRY_DELAY_MS, MAX_COMPILE_RETRIES, NO_TOOL_CALLS_ERROR, TOOL_CALL_NUDGE, isRetryableCompileError } from './compile/l1';
 export type { CompileL1Result } from './compile/l1';
 export type { CompileL1ProgressEvent } from './compile/l1';
 export type { CompileL1Plan, ProposedAction, ApprovalMap } from './compile/l1';

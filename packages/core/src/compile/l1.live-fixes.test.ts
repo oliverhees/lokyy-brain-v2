@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { compileL1, compileL1Plan, DEFAULT_COMPILE_MAX_TOKENS, DEFAULT_COMPILE_RETRY_DELAY_MS, NO_TOOL_CALLS_ERROR, TOOL_CALL_NUDGE, isRetryableCompileError } from './l1';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { compileL1, compileL1Plan, DEFAULT_COMPILE_MAX_TOKENS, DEFAULT_COMPILE_RETRY_DELAY_MS, NO_TOOL_CALLS_ERROR, TOOL_CALL_NUDGE, isRetryableCompileError, MAX_COMPILE_RETRIES } from './l1';
 import { MemoryStore } from '../storage/memory_store';
 import { WikiIndex } from '../graph/index/wiki-index';
 import type { LLMAdapter } from '../adapters/types';
@@ -195,5 +195,44 @@ describe('plan retry (LBV2-32 QA: flaky multi-provider routes)', () => {
     const { adapter } = recordingAdapter([textOnly, textOnly, skipCall, textOnly]);
     const plan = await compileL1Plan({ ...(await base()), adapter, retryDelayMs: 0 });
     expect(plan.total_usage.input_tokens).toBe(40);
+  });
+});
+
+describe('plan retry limits and logging (LBV2-32 audit/QA)', () => {
+  const errorTurn = (error: string): ChatChunk[] => [{ kind: 'error', error }, { kind: 'done', usage: { input_tokens: 0, output_tokens: 0 } }];
+  afterEach(() => { delete process.env['MINDBASE_COMPILE_RETRIES']; vi.restoreAllMocks(); });
+
+  it('caps MINDBASE_COMPILE_RETRIES at MAX_COMPILE_RETRIES and warns', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env['MINDBASE_COMPILE_RETRIES'] = '50';
+    const { adapter, requests } = recordingAdapter(Array.from({ length: 10 }, () => errorTurn('HTTP 503: x')));
+    await compileL1Plan({ ...(await base()), adapter, retryDelayMs: 0 });
+    expect(MAX_COMPILE_RETRIES).toBe(3);
+    expect(requests).toHaveLength(1 + MAX_COMPILE_RETRIES);
+    expect(warn.mock.calls.some(([m]) => /MINDBASE_COMPILE_RETRIES/.test(String(m)))).toBe(true);
+  });
+
+  it('invalid MINDBASE_COMPILE_RETRIES uses the default (1) and warns', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env['MINDBASE_COMPILE_RETRIES'] = 'many';
+    const { adapter, requests } = recordingAdapter([errorTurn('HTTP 503: x'), errorTurn('HTTP 503: y'), skipCall]);
+    await compileL1Plan({ ...(await base()), adapter, retryDelayMs: 0 });
+    expect(requests).toHaveLength(2);
+    expect(warn.mock.calls.some(([m]) => /MINDBASE_COMPILE_RETRIES/.test(String(m)))).toBe(true);
+  });
+
+  it('an explicit retries option is capped too', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { adapter, requests } = recordingAdapter(Array.from({ length: 10 }, () => errorTurn('HTTP 503: x')));
+    await compileL1Plan({ ...(await base()), adapter, retryDelayMs: 0, retries: 9 });
+    expect(requests).toHaveLength(1 + MAX_COMPILE_RETRIES);
+  });
+
+  it('logs one line per retry with attempt, limit and a short reason (no provider body)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { adapter } = recordingAdapter([errorTurn('HTTP 503: PROVIDERBODY'), textOnly, textOnly, skipCall, textOnly]);
+    await compileL1Plan({ ...(await base()), adapter, retryDelayMs: 0, retries: 2 });
+    const lines = warn.mock.calls.map(([m]) => String(m)).filter((m) => m.startsWith('[compile] retry'));
+    expect(lines).toEqual(['[compile] retry 1/2 HTTP 503', '[compile] retry 2/2 no tool calls']);
   });
 });

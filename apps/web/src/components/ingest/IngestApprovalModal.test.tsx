@@ -89,6 +89,22 @@ describe('IngestApprovalModal errors (LBV2-32)', () => {
     expect(container.textContent).toContain('Plan: 1 action');
   });
 
+  it('close button has an accessible name; backlinks/index actions get real labels (QA)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      sse([
+        ['started', { rawId: 'raw1' }],
+        ['proposed', { action: { id: 'a1', call: { id: 'a1', name: 'add_to_index', arguments: { title: 'Basel', path: 'wiki/concepts/basel.md' } }, simulatedResult: { ok: true } } }],
+        ['proposed', { action: { id: 'a2', call: { id: 'a2', name: 'update_source_backlinks', arguments: { raw_id: 'raw1', linked_concepts: ['basel'] } }, simulatedResult: { ok: true } } }],
+        ['done', { planId: 'p1' }],
+      ]),
+    );
+    await render();
+    expect(container.querySelector('button[aria-label="Close"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('?');
+    expect(container.textContent).toContain('add_to_index Basel');
+    expect(container.textContent).toContain('update_source_backlinks basel');
+  });
+
   it('a successful plan still reaches the review phase', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       sse([

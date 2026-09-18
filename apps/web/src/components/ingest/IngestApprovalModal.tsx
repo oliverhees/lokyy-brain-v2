@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles, Check, X, Loader2 } from 'lucide-react';
 import type { ProposedAction, ApprovalMap } from '@mindbase/core';
+import { ingestActionLabel } from '../../lib/ingest-action-label';
 
 interface Props {
   rawId: string;
@@ -198,8 +199,8 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
             {phase === 'done' && 'Done'}
             {phase === 'error' && 'Error'}
           </span>
-          <button onClick={onClose} className="ml-auto p-1 cursor-pointer" style={{ color: 'var(--text-mid)' }}>
-            <X size={14} />
+          <button onClick={onClose} aria-label="Close" title="Close" className="ml-auto p-1 cursor-pointer" style={{ color: 'var(--text-mid)' }}>
+            <X size={14} aria-hidden="true" />
           </button>
         </div>
 
@@ -232,12 +233,7 @@ export function IngestApprovalModal({ rawId, open, onClose, onDone }: Props) {
               {proposed.map((action) => {
                 const approved = approvals[action.id] !== false;
                 const execResult = execResults.find((r) => r.id === action.id);
-                const args = action.call.arguments as Record<string, unknown>;
-                const title =
-                  (args['name'] as string) ??
-                  (args['concept_name'] as string) ??
-                  (args['from'] as string) ??
-                  '?';
+                const title = ingestActionLabel(action.call);
                 return (
                   <div
                     key={action.id}
