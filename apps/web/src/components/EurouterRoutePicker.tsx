@@ -97,11 +97,9 @@ export function EurouterRoutePicker({ provider, baseUrl, apiKey, value, onChange
           {state.rules.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
         <div id={helpId} data-testid="eurouter-route-help" className={hintClass} style={{ color: 'var(--text-mid)' }}>
-          {selected?.model
-            ? <>This route uses <code>{selected.model}</code>. Leave Model empty to let the route decide.</>
-            : selected
-              ? 'The route decides providers and fallbacks. Leave Model empty to let the route decide.'
-              : 'Without a route, EUrouter routes by the model below.'}
+          {selected
+            ? <>The route filters and prioritizes providers for the model below.{selected.model && <> Its default model is <code>{selected.model}</code>.</>}</>
+            : 'Without a route, EUrouter picks providers for the model below.'}
         </div>
       </>
     );

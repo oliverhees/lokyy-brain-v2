@@ -205,10 +205,9 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
   }, [settings.loaded]);
 
   const selected = PROVIDERS.find((p) => p.id === selectedId)!;
-  // EUrouter selects by route (rule id); with a route the model is optional.
+  // EUrouter: the route (rule id) filters and prioritizes providers; the model is still required.
   const usesEurouter = selected.configProvider === 'openai' && isEurouterUrl(baseUrl);
   const effectiveRuleId = usesEurouter ? ruleId : '';
-  const canTest = !!model || !!effectiveRuleId;
 
   const stepIndex = step === 'provider' ? 0 : step === 'configure' ? 1 : 2;
 
@@ -585,9 +584,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
                 <EurouterRoutePicker provider={selected.configProvider} baseUrl={baseUrl} apiKey={apiKey} value={ruleId} onChange={setRuleId} />
               )}
               <div>
-                <div className="text-[10.5px] tracking-[1px] uppercase font-semibold mb-1.5" style={{ color: 'var(--text-mid)' }}>
-                  Model {usesEurouter && effectiveRuleId ? '(optional with a route)' : ''}
-                </div>
+                <div className="text-[10.5px] tracking-[1px] uppercase font-semibold mb-1.5" style={{ color: 'var(--text-mid)' }}>Model</div>
                 <input
                   type="text"
                   value={model}
@@ -602,7 +599,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
             <div className="flex justify-center">
               <button
                 onClick={testConnection}
-                disabled={testing || saving || !canTest}
+                disabled={testing || saving || !model}
                 className="px-5 py-3 rounded-full text-[13px] font-semibold disabled:opacity-40"
                 style={{ background: 'rgba(255,255,255,0.95)', color: 'var(--text-inverse)' }}
               >
@@ -645,7 +642,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
               Your second brain<br /><span className="accent-italic">is online.</span>
             </div>
             <div className="text-[13px] mb-8" style={{ color: 'var(--text-mid)' }}>
-              {selected.label} · {model || 'route'} · ready to compile.
+              {selected.label} · {model} · ready to compile.
             </div>
             <button
               onClick={saveAndFinish}

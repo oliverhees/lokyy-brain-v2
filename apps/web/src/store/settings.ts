@@ -54,7 +54,7 @@ export const useSettings = create<SettingsState>((set) => ({
   },
   isConfigured: (): boolean => {
     const s: SettingsState = useSettings.getState();
-    return s.loaded && (!!s.model || !!s.ruleId) && (!!s.apiKey || !!s.baseUrl);
+    return s.loaded && !!s.model && (!!s.apiKey || !!s.baseUrl);
   },
   googleConnected: false,
   googleSyncFolderName: null,

@@ -28,9 +28,9 @@ function sse(ctx: ServerContext, res: Response): (e: OpEvent) => void {
   };
 }
 
-/** No model and no EUrouter route (a route may pick the model, LBV2-30), or no endpoint. */
+/** No model or no endpoint. An EUrouter route does not replace the model (LBV2-30). */
 export function llmUnconfigured(config: AtlasConfig): boolean {
-  return (!config.model && !config.ruleId) || (!config.apiKey && !config.baseUrl && config.provider !== 'ollama');
+  return !config.model || (!config.apiKey && !config.baseUrl && config.provider !== 'ollama');
 }
 
 async function opsCtx(ctx: ServerContext, req: Request): Promise<OpsCtx | { error: string }> {

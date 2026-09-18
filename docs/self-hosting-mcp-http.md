@@ -306,13 +306,13 @@ VAULT_LLM_ALLOWED_HOSTS=api.eurouter.ai,ollama:11434
 
 ### EUrouter routes (routing rules)
 
-EUrouter selects providers, fallbacks and optionally the model through **routing rules** ("routes"), identified by a UUID. With EUrouter the route is the setting that matters; the model id is secondary.
+EUrouter **routing rules** ("routes") filter and prioritize the providers for a request. A rule has a display name (may contain spaces) and a UUID; the vault stores the UUID, which stays valid when the rule is renamed. The model is still required: EUrouter's own example sends `model` together with the rule.
 
 - **Config.** `ruleId` in `mindbase.config.json` (UUID). It is kept only while `baseUrl` points to `api.eurouter.ai`; saving another endpoint drops it. A value that is not a UUID is refused (`400 Invalid EUrouter rule id`). Changing only the route never asks for the API key again; changing `baseUrl` still does.
-- **Requests.** Chat requests to `api.eurouter.ai` carry `rule_id` as a top-level body field next to `model`. With a route and an empty `model`, `model` is left out so the route decides. `rule_id` is never sent to any other host. The web server and the MCP process both read `ruleId`. Not covered: PDF chat (Responses API) and embeddings, which do not send a route.
+- **Requests.** Chat requests to `api.eurouter.ai` carry `rule_id` as a top-level body field next to `model`. `rule_id` is never sent to any other host. The web server and the MCP process both read `ruleId`. Not covered: PDF chat (Responses API) and embeddings, which do not send a route.
 - **Connection test.** For `api.eurouter.ai`, `POST /api/config/test` checks the key with `GET /api/v1/routing-rules` (EUrouter's `/models` is public and accepts any key). A wrong key fails; a configured route that is not in the key's list of enabled rules fails with `EUrouter routing rule not found or disabled`. Other errors stay generic.
 - **Route list for the UI.** `GET /api/config/eurouter/rules` lists the rules for the stored key; `POST /api/config/eurouter/rules` with `{ provider, baseUrl, apiKey }` does the same for a key typed into the form (the masked key resolves to the stored key only for the stored provider and endpoint, as in `/api/config/test`). Both return only `{ rules: [{ id, name, model }] }`, are **admin-only in guarded mode (GET included)** because they use the stored key, answer `400` when the endpoint is not EUrouter and a generic `502 Could not load EUrouter routes` on upstream errors (details are logged without the key).
-- **Web UI.** Settings → Provider → **EUrouter** shows a Route picker (rule name shown, id stored) with loading, empty and error states. With a route selected the Model field is optional.
+- **Web UI.** Settings → Provider → **EUrouter** shows a Route picker (rule name shown, id stored) with loading, empty and error states. The Model field stays required.
 
 ### Container
 

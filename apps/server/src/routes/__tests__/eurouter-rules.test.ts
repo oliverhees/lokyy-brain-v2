@@ -199,7 +199,7 @@ describe('EUrouter routing rules (LBV2-30)', () => {
     it('passes for the stored key and an existing rule', async () => {
       mockEurouter();
       const res = await request(app).post('/api/config/test').set(ADMIN)
-        .send({ provider: 'openai', model: '', baseUrl: EU, apiKey: MASKED_SECRET, ruleId: RULE });
+        .send({ provider: 'openai', model: 'gpt-4o', baseUrl: EU, apiKey: MASKED_SECRET, ruleId: RULE });
       expect(res.body).toEqual({ ok: true });
     });
 
@@ -219,10 +219,10 @@ describe('EUrouter routing rules (LBV2-30)', () => {
   });
 });
 
-describe('ops readiness with a route and no model (LBV2-30)', () => {
-  it('counts a route without a model as configured', async () => {
+describe('ops readiness with a route (LBV2-30)', () => {
+  it('still needs a model when a route is set (EUrouter requires model)', async () => {
     const { llmUnconfigured } = await import('../ops.js');
-    expect(llmUnconfigured({ ...BASE, model: '', ruleId: RULE })).toBe(false);
+    expect(llmUnconfigured({ ...BASE, model: '', ruleId: RULE })).toBe(true);
     expect(llmUnconfigured({ ...BASE, model: '' })).toBe(true);
     expect(llmUnconfigured({ ...BASE })).toBe(false);
   });

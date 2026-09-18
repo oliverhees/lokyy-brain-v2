@@ -125,10 +125,9 @@ export class OpenAIAdapter implements LLMAdapter {
     this.ruleId = config.ruleId && isEurouterBaseUrl(this.baseUrl) ? config.ruleId : undefined;
   }
 
-  /** `model` + `rule_id` for chat bodies. With a rule the model is optional (the rule may pick it). */
+  /** `model` + `rule_id` for chat bodies. EUrouter still needs the model; the rule filters and prioritizes providers. */
   private routing(model: string): Record<string, string> {
-    if (!this.ruleId) return { model };
-    return model ? { model, rule_id: this.ruleId } : { rule_id: this.ruleId };
+    return this.ruleId ? { model, rule_id: this.ruleId } : { model };
   }
 
   /** Build the chat completions URL, handling various baseUrl formats:

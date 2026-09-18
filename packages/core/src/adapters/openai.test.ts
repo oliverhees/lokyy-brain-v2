@@ -244,10 +244,10 @@ describe('OpenAIAdapter — EUrouter routing rules (LBV2-30)', () => {
     expect(body['model']).toBe('qwen3.6-27b');
   });
 
-  it('omits model when it is empty and a rule selects it', async () => {
+  it('keeps model in the body with a rule (EUrouter requires it; the rule filters providers)', async () => {
     const body = await sentBody({ baseUrl: EU, ruleId: RULE, model: '' }, '');
     expect(body['rule_id']).toBe(RULE);
-    expect('model' in body).toBe(false);
+    expect('model' in body).toBe(true);
   });
 
   it('sends no rule_id without a configured rule', async () => {

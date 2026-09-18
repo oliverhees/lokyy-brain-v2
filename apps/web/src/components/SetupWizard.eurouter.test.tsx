@@ -4,12 +4,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { SetupWizard } from './SetupWizard';
 import { useSettings } from '../store/settings';
 
-// LBV2-30: EUrouter as a provider with a Route picker; the route id is stored, the model is optional.
+// LBV2-30: EUrouter as a provider with a Route picker; the route id is stored, the model stays required.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const EU = 'https://api.eurouter.ai/api/v1';
 const RULE = '3f1c2b9a-8d4e-4f6a-9b2c-1d2e3f4a5b6c';
-const CONFIG = { provider: 'openai', model: '', apiKey: '********', hasApiKey: true, baseUrl: EU, ruleId: RULE, autoSave: true, mergeSaves: false };
+const CONFIG = { provider: 'openai', model: 'gpt-4o', apiKey: '********', hasApiKey: true, baseUrl: EU, ruleId: RULE, autoSave: true, mergeSaves: false };
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -57,7 +57,7 @@ afterEach(() => {
 });
 
 describe('SetupWizard EUrouter route (LBV2-30)', () => {
-  it('detects EUrouter, preselects the stored route and saves it without a model', async () => {
+  it('detects EUrouter, preselects the stored route and saves it with the model', async () => {
     const calls = mockServer();
     await act(async () => { root.render(<SetupWizard mode="settings" />); });
     await flush();
@@ -74,21 +74,22 @@ describe('SetupWizard EUrouter route (LBV2-30)', () => {
     await act(async () => { save.click(); });
     await flush();
     const test = calls.find((c) => c.url.endsWith('/api/config/test'));
-    expect(test?.body).toMatchObject({ provider: 'openai', baseUrl: EU, model: '', ruleId: RULE });
+    expect(test?.body).toMatchObject({ provider: 'openai', baseUrl: EU, model: 'gpt-4o', ruleId: RULE });
     const put = calls.find((c) => c.method === 'PUT');
-    expect(put?.body).toMatchObject({ provider: 'openai', baseUrl: EU, ruleId: RULE });
+    expect(put?.body).toMatchObject({ provider: 'openai', baseUrl: EU, model: 'gpt-4o', ruleId: RULE });
   });
 
-  it('needs a model again when no route is chosen', async () => {
+  it('needs a model even with a route selected', async () => {
     mockServer();
     await act(async () => { root.render(<SetupWizard mode="settings" />); });
     await flush();
     await act(async () => { button('EUrouter').click(); });
     await flush();
-    const select = container.querySelector('[data-testid="eurouter-route-select"]') as HTMLSelectElement;
+    expect((container.querySelector('[data-testid="eurouter-route-select"]') as HTMLSelectElement).value).toBe(RULE);
+    const modelInput = [...container.querySelectorAll('input')].find((i) => i.value === 'gpt-4o')!;
     await act(async () => {
-      select.value = '';
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(modelInput, '');
+      modelInput.dispatchEvent(new Event('input', { bubbles: true }));
     });
     expect(button('Test & Save').disabled).toBe(true);
   });
