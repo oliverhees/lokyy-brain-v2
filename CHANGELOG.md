@@ -56,7 +56,7 @@
 ### Fixed
 - LBV2-32 (live EUrouter E2E): compile sends `max_tokens` (default 4096, `MINDBASE_COMPILE_MAX_TOKENS`); EUrouter rejected compile requests without it (`estimated tokens exceed context`).
 - LBV2-32: ingest shows compile failures. `POST /api/compile/:rawId` answers `502` (same `{ ok, error }` body) instead of `200` when compile fails; the plan stream sends `error` instead of `done`; the ingest dialog shows the message (`role="alert"`) instead of an empty "Plan: 0 actions".
-- LBV2-32: a model that answers the compile prompt without any tool call fails the ingest with a clear message instead of writing nothing. The EUrouter connection test probes tool calling and returns a `warning` for routes without it (Settings: **Save anyway**).
+- LBV2-32: when the first compile turn is text only (takeaways narrative, then stop — seen live), compile asks once more for the tool calls; a model that still returns none fails the ingest with a clear message instead of writing nothing. The EUrouter connection test probes tool calling and returns a `warning` for routes without it (Settings: **Save anyway**).
 - LBV2-32: the MCP server re-reads `mindbase.config.json` on change (throttled by `MINDBASE_MCP_CONFIG_RELOAD_MS`, default 1 s); invalid files keep the last good config. Before, LLM config changes needed an MCP restart.
 - Web trash (LBV2-14): `GET /api/trash` no longer fails with 500 in the default project layout; list, restore, permanent delete and empty operate on the global trash of the data directory.
 

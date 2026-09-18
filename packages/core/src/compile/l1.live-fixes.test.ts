@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { compileL1, compileL1Plan, DEFAULT_COMPILE_MAX_TOKENS, NO_TOOL_CALLS_ERROR } from './l1';
+import { compileL1, compileL1Plan, DEFAULT_COMPILE_MAX_TOKENS, NO_TOOL_CALLS_ERROR, TOOL_CALL_NUDGE } from './l1';
 import { MemoryStore } from '../storage/memory_store';
 import { WikiIndex } from '../graph/index/wiki-index';
 import type { LLMAdapter } from '../adapters/types';
@@ -17,7 +17,7 @@ function recordingAdapter(scripts: ChatChunk[][]): { adapter: LLMAdapter; reques
     name: 'mock',
     supportsTools: true,
     async *chat(req: ChatRequest): AsyncIterable<ChatChunk> {
-      requests.push(req);
+      requests.push({ ...req, messages: [...req.messages] }); // snapshot: the loop keeps appending
       const script = scripts[turn++] ?? [{ kind: 'done', usage: { input_tokens: 0, output_tokens: 0 } }];
       for (const chunk of script) yield chunk;
     },
@@ -107,6 +107,34 @@ describe('compile without tool calls (LBV2-32 C)', () => {
     const plan = await compileL1Plan({ ...(await base()), adapter });
     expect(plan.proposed).toHaveLength(0);
     expect(plan.error).toBe(NO_TOOL_CALLS_ERROR);
+  });
+
+  it('nudges once when the first turn is only the takeaways narrative (plan)', async () => {
+    const { adapter, requests } = recordingAdapter([textOnly, skipCall, textOnly]);
+    const plan = await compileL1Plan({ ...(await base()), adapter });
+    expect(plan.error).toBeUndefined();
+    expect(plan.proposed.map((p) => p.call.name)).toEqual(['skip']);
+    expect(plan.takeaways).toContain('Here is a summary of the source');
+    const second = requests[1]!.messages;
+    expect(second[second.length - 2]).toMatchObject({ role: 'assistant' });
+    expect(second[second.length - 1]).toEqual({ role: 'user', content: TOOL_CALL_NUDGE });
+  });
+
+  it('nudges once when the first turn is only the takeaways narrative (direct compile)', async () => {
+    const { adapter, requests } = recordingAdapter([textOnly, skipCall, textOnly]);
+    const result = await compileL1({ ...(await base()), adapter });
+    expect(result.ok).toBe(true);
+    expect(result.tool_results.map((t) => t.call.name)).toEqual(['skip']);
+    expect(requests[1]!.messages.at(-1)).toEqual({ role: 'user', content: TOOL_CALL_NUDGE });
+  });
+
+  it('fails after the nudge if the model still answers in text only', async () => {
+    const { adapter, requests } = recordingAdapter([textOnly, textOnly, skipCall]);
+    const plan = await compileL1Plan({ ...(await base()), adapter });
+    expect(plan.error).toBe(NO_TOOL_CALLS_ERROR);
+    expect(requests).toHaveLength(2);
+    const result = await compileL1({ ...(await base()), adapter: recordingAdapter([textOnly, textOnly, skipCall]).adapter });
+    expect(result.error).toBe(NO_TOOL_CALLS_ERROR);
   });
 
   it('a text-only final turn after tool calls is still a normal finish', async () => {

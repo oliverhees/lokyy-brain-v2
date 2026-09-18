@@ -62,6 +62,14 @@ export const NO_TOOL_CALLS_ERROR =
   "The selected model didn't return any tool calls, which ingest needs to write wiki pages. " +
   'Choose a model (or EUrouter route) with tool-capable models.';
 
+/**
+ * Sent once when the first turn is text only. The system prompt asks for a
+ * takeaways narrative before the first tool call, and some models end the
+ * turn right after it (seen live on EUrouter, LBV2-32).
+ */
+export const TOOL_CALL_NUDGE =
+  'Now emit the tool calls for your plan. Respond with tool calls only, not with text.';
+
 function resolveMaxTokens(explicit: number | undefined): number {
   if (explicit !== undefined) return explicit;
   const fromEnv = parseInt(process.env['MINDBASE_COMPILE_MAX_TOKENS'] ?? '', 10);
@@ -260,6 +268,8 @@ export async function compileL1(opts: CompileL1Options): Promise<CompileL1Result
   let lastError: string | undefined;
   let aborted: 'max_iterations' | undefined;
   let status: 'success' | 'partial' | 'error' = 'success';
+  let sawToolCall = false;
+  let nudged = false;
 
   // Step 4: multi-turn tool-use loop
   try {
@@ -283,13 +293,19 @@ export async function compileL1(opts: CompileL1Options): Promise<CompileL1Result
       totalOutput += resp.usage.output_tokens;
 
       const calls = resp.tool_calls;
-      if (calls.length === 0 && iter === 0) {
-        // The prompt demands tool calls (even `skip`); plain text on the first
-        // turn means the model/route can't do tool use — fail loudly.
+      if (calls.length === 0 && !sawToolCall) {
+        // The prompt demands tool calls (even `skip`). Text only: nudge once,
+        // then fail loudly instead of "succeeding" with no wiki changes.
+        if (!nudged) {
+          nudged = true;
+          messages.push({ role: 'assistant', content: resp.content ?? '' }, { role: 'user', content: TOOL_CALL_NUDGE });
+          continue;
+        }
         lastError = NO_TOOL_CALLS_ERROR;
         status = 'error';
         break;
       }
+      if (calls.length > 0) sawToolCall = true;
       if (calls.length === 0) {
         // No more tool calls → LLM has finished.
         opts.onProgress?.({ kind: 'done', iteration: iter });
@@ -455,6 +471,8 @@ export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Pl
   let totalInput = 0;
   let totalOutput = 0;
   let lastError: string | undefined;
+  let sawToolCall = false;
+  let nudged = false;
 
   try {
     for (let iter = 0; iter < maxIter; iter++) {
@@ -472,8 +490,17 @@ export async function compileL1Plan(opts: CompileL1Options): Promise<CompileL1Pl
       // Capture the LLM's narrative (assistant content) so the UI can stream
       // it as "takeaways" — the conversational layer above the actions.
       if (resp.content) takeawaysChunks.push(resp.content);
-      if (calls.length === 0 && iter === 0) { lastError = NO_TOOL_CALLS_ERROR; break; }
+      if (calls.length === 0 && !sawToolCall) {
+        if (!nudged) {
+          nudged = true;
+          messages.push({ role: 'assistant', content: resp.content ?? '' }, { role: 'user', content: TOOL_CALL_NUDGE });
+          continue;
+        }
+        lastError = NO_TOOL_CALLS_ERROR;
+        break;
+      }
       if (calls.length === 0) break;
+      sawToolCall = true;
 
       messages.push({ role: 'assistant', content: resp.content ?? '', tool_calls: calls });
       for (const call of calls) {
