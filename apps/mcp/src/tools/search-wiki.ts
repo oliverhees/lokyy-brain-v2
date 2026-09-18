@@ -34,7 +34,7 @@ export async function handle(ctx: Context, rawInput: unknown) {
     const results = await Promise.all(hits.map(async (hit) => {
       const slug = hit.path
         .replace(/^projects\/[^/]+\/(sources\/(?:contributors\/[^/]+|research)|context\.md)\/?/, '')
-        .replace(/^wiki\/notes\//, '')
+        .replace(/^wiki\/(notes|concepts)\//, '')
         .replace(/\.md$/, '');
       let meta: Partial<MetaJson> = {};
       try {
