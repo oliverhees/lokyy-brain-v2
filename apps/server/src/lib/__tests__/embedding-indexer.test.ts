@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // Embedding calls: scripted failures per slug text, then success.
-const svc = vi.hoisted(() => ({ failuresLeft: new Map<string, number>(), calls: [] as string[] }));
+const svc = vi.hoisted(() => ({ failuresLeft: new Map<string, number>(), calls: [] as string[], poison: '' }));
 vi.mock('../embedder.js', () => ({
   embed: vi.fn(async (text: string) => {
     svc.calls.push(text);
+    if (svc.poison && text.includes(svc.poison)) throw Object.assign(new Error('embedding service refused the request (HTTP 500)'), { status: 500 });
     for (const [marker, n] of svc.failuresLeft) {
       if (text.includes(marker) && n > 0) { svc.failuresLeft.set(marker, n - 1); throw new Error('embedding service unavailable (HTTP 408)'); }
     }
@@ -105,5 +106,43 @@ describe('EmbeddingIndexer sweep (LBV2-26 QA: failed pages are re-indexed)', () 
     await tick(off, 120_000);
     expect(svc.calls.length).toBe(m);
     off.stop();
+  });
+});
+
+describe('EmbeddingIndexer: a text the service fails on (HTTP 500) is not resent until it changes', () => {
+  let dir: string;
+  let store: MemoryStore;
+  let embeddings: EmbeddingStore;
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    dir = mkdtempSync(join(tmpdir(), 'mb-indexer-'));
+    store = new MemoryStore();
+    embeddings = new EmbeddingStore(dir);
+    svc.failuresLeft.clear();
+    svc.poison = 'poison-text';
+    svc.calls.length = 0;
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    svc.poison = '';
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('skips the poison page in later sweeps, and retries it once its content changed', async () => {
+    await page(store, 'bad', 'contains poison-text');
+    const ix = new EmbeddingIndexer({ store } as unknown as ServerContext, embeddings, { sweepMs: 1_000, maxSweepMs: 1_000 });
+    ix.start();
+    await vi.advanceTimersByTimeAsync(10); await ix.whenIdle();
+    const count = () => svc.calls.filter((c) => c.includes('poison-text')).length;
+    expect(count()).toBe(1);
+    for (let i = 0; i < 3; i++) { await vi.advanceTimersByTimeAsync(1_000); await ix.whenIdle(); }
+    expect(count()).toBe(1); // not resent: each resend could restart the shared service
+    await page(store, 'bad', 'fixed text now');
+    await vi.advanceTimersByTimeAsync(1_000); await ix.whenIdle();
+    expect(await embeddings.get('bad')).not.toBeNull();
+    ix.stop();
   });
 });

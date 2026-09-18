@@ -8,7 +8,8 @@
 #   3. Worst case (audit HIGH-2/MED-2): 16 × 8000 CJK chars in one request are refused by the token
 #      budget; 4 × 4 texts of 8000 CJK chars (anna) and 4 × 4 texts of 8000 random single-char tokens
 #      (ben) run concurrently at the 2048-token cap and embed stays inside its limit; a search query
-#      from firma meanwhile is answered within QUERY_MAX_S (default 15) seconds.
+#      from firma meanwhile is answered within QUERY_MAX_S (default 30; generous because host contention
+#      varies, measured 6–13 s) seconds.
 #   4. One layout for web and MCP (LBV2-26 QA): a note created via MCP (anna's vault token, the path
 #      MetaMCP uses) is found by the web app's hybrid search, and a note filed through the web app
 #      (POST /api/wiki/file) is found by MCP semantic_search — both after the indexer sweep embedded
@@ -149,8 +150,8 @@ kill "$sampler" 2>/dev/null; sampler=
 echo "     query under load: ${q#* } s; anna: $(cut -d' ' -f1 "$tmp/anna.out" | tr '\n' ' ')ben: $(cut -d' ' -f1 "$tmp/ben.out" | tr '\n' ' ')"
 expect "4 × 4 CJK texts (2048-token cap) all embedded" "$(grep -c '^200 ' "$tmp/anna.out")" "4"
 expect "4 × 4 random-token texts all embedded" "$(grep -c '^200 ' "$tmp/ben.out")" "4"
-expect "search query under bulk load answered within ${QUERY_MAX_S:-15} s (priority)" \
-  "$(awk -v t="${q#* }" -v m="${QUERY_MAX_S:-15}" -v c="${q%% *}" 'BEGIN{print (c == 200 && t < m) ? "ok" : c " " t}')" "ok"
+expect "search query under bulk load answered within ${QUERY_MAX_S:-30} s (priority)" \
+  "$(awk -v t="${q#* }" -v m="${QUERY_MAX_S:-30}" -v c="${q%% *}" 'BEGIN{print (c == 200 && t < m) ? "ok" : c " " t}')" "ok"
 worst=0
 while read -r _ usage; do m=$(to_mib "$usage"); (( m > worst )) && worst=$m; done <"$tmp/stats"
 limit_mib=$(( $(docker inspect "${STACK}-embed-1" --format '{{.HostConfig.Memory}}') / 1024 / 1024 ))

@@ -19,12 +19,13 @@ export const EMBED_MAX_TOKENS = 2048;
 /** Retry-After values above this are clamped (the service is inside the stack, not trusted to park us). */
 const MAX_RETRY_AFTER_MS = 10_000;
 /**
- * Retried (LBV2-26 QA): 408, 429 and 5xx (the service rejected the request, is restarting after an
- * inference timeout, or is busy) plus connection errors, with exponential backoff; a vault's indexer
- * sweep re-tries pages that still fail. Never retried: a timeout on our side (the service may still be
- * computing; a retry would only add the same load) and other 4xx.
+ * Retried (LBV2-26 QA): 408, 429, 502, 503, 504 (the service is busy or restarting) plus connection
+ * errors, with exponential backoff; a vault's indexer sweep re-tries pages that still fail. Never
+ * retried: 500 (the service failed on this very text — model error or an inference timeout after which
+ * it restarts; repeating it could restart the shared service again), a timeout on our side (the
+ * service may still be computing) and other 4xx.
  */
-const RETRY_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const RETRY_STATUS = new Set([408, 429, 502, 503, 504]);
 
 /** Defaults (audit MED-1): 4 texts × ~3–7 s worst case per 2048-token text + up to 30 s queue wait < 90 s. */
 export const REMOTE_EMBED_DEFAULTS = Object.freeze({ timeoutMs: 90_000, retries: 2, backoffMs: 500, maxBatch: 4 });
@@ -44,7 +45,7 @@ export interface RemoteEmbedderOptions {
   token: string;
   /** Per attempt, default 90 s (see REMOTE_EMBED_DEFAULTS). */
   timeoutMs?: number;
-  /** Additional attempts after the first on 408/429/5xx and connection errors, default 2. */
+  /** Additional attempts after the first on 408/429/502/503/504 and connection errors, default 2. */
   retries?: number;
   /** First backoff; doubles per attempt, default 500 ms. */
   backoffMs?: number;

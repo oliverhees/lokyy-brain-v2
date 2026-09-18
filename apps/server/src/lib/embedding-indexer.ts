@@ -1,6 +1,6 @@
 import type { ServerContext } from '../context';
-import type { EmbeddingStore, MetaJson } from '@mindbase/core';
-import { paths } from '@mindbase/core';
+import type { MetaJson } from '@mindbase/core';
+import { EmbeddingStore, paths } from '@mindbase/core';
 import { embed, unloadExtractor } from './embedder.js';
 
 interface IndexStatus {
@@ -20,7 +20,8 @@ interface IndexStatus {
  *   MINDBASE_EMBED_SWEEP_MS, 0 = off). Unchanged pages cost a hash check, no embedding. Pages that
  *   failed (e.g. the embedding service restarted) and pages written by another process (the MCP
  *   server) get embedded without a restart. While a run has failures the interval doubles up to
- *   `maxSweepMs` (default 30 min) and returns to `sweepMs` after a clean run.
+ *   `maxSweepMs` (default 30 min) and returns to `sweepMs` after a clean run. A page whose text the
+ *   service answered with HTTP 500 is skipped until its content changes.
  *
  * NOTE: The BGE-M3 model (~570MB) is loaded lazily on first embed call.
  * indexAll() runs in the background — it does NOT block server boot.
@@ -44,6 +45,8 @@ export class EmbeddingIndexer {
   private status: IndexStatus = { indexed: 0, total: 0 };
   private running = false;
   private loggedOnce = false;
+  /** slug → content hash of a text the embedding service failed on (HTTP 500); not resent until it changes. */
+  private readonly poisoned = new Map<string, string>();
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
   private readonly sweepMs: number;
@@ -202,7 +205,18 @@ export class EmbeddingIndexer {
       return false; // already up to date
     }
 
-    const vector = await embed(content);
+    // A text the shared service failed on (HTTP 500: model error, or an inference timeout after which
+    // the service restarts) is not resent by every sweep; it is retried once the page changes.
+    const hash = EmbeddingStore.contentHash(content);
+    if (this.poisoned.get(slug) === hash) return false;
+    let vector: number[];
+    try {
+      vector = await embed(content);
+    } catch (e) {
+      if ((e as { status?: unknown }).status === 500) this.poisoned.set(slug, hash);
+      throw e;
+    }
+    this.poisoned.delete(slug);
     await this.store.set(slug, content, vector);
     return true;
   }
