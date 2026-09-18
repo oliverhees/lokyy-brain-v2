@@ -62,16 +62,21 @@ async function listPages(ctx: Context): Promise<Page[]> {
 
 /**
  * Shared embedding service (LBV2-26, MINDBASE_EMBED_URL + MINDBASE_EMBED_TOKEN): BGE-M3 like the vault
- * server. Page vectors the server's indexer already cached in <dataDir>/embeddings are reused; only the
- * query and pages without a cached vector are sent (as "<title>\n\n<body>", the indexer's format).
+ * server. Only the query is embedded on this path (audit MED-1); page vectors come from the vault
+ * server's indexer cache (<dataDir>/embeddings) and are used only while their content hash matches the
+ * page ("<title>\n\n<body>", the indexer's format). Pages that are not (or no longer) indexed are left
+ * out until the indexer has embedded them; this includes pages whose indexed text contains OCR output.
  */
 async function scoreWithEmbedService(ctx: Context, query: string, pages: Page[]): Promise<Array<{ slug: string; title: string; score: number }>> {
   const remote = remoteEmbedderFromEnv(process.env)!;
-  const cached = new Map((await new EmbeddingStore(ctx.dataDir).list()).map((e) => [e.slug, e.vector]));
-  const missing = pages.filter((p) => !cached.has(p.slug));
-  const [queryEmb, ...fresh] = await remote.embedMany([query, ...missing.map((p) => `${p.title}\n\n${p.content}`)]);
-  missing.forEach((p, i) => cached.set(p.slug, fresh[i]!));
-  return pages.map((p) => ({ slug: p.slug, title: p.title, score: cosineSim(queryEmb!, cached.get(p.slug)!) }));
+  const cached = new Map((await new EmbeddingStore(ctx.dataDir).list()).map((e) => [e.slug, e]));
+  const indexed = pages.flatMap((p) => {
+    const entry = cached.get(p.slug);
+    return entry && entry.content_hash === EmbeddingStore.contentHash(`${p.title}\n\n${p.content}`) ? [{ page: p, vector: entry.vector }] : [];
+  });
+  if (indexed.length === 0) throw new Error('no indexed pages yet');
+  const queryEmb = await remote.embed(query);
+  return indexed.map(({ page, vector }) => ({ slug: page.slug, title: page.title, score: cosineSim(queryEmb, vector) }));
 }
 
 export async function handle(ctx: Context, rawInput: unknown) {

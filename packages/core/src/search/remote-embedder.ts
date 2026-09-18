@@ -18,7 +18,15 @@ export const EMBED_MAX_CHARS = 8000;
 export const EMBED_MAX_TOKENS = 2048;
 /** Retry-After values above this are clamped (the service is inside the stack, not trusted to park us). */
 const MAX_RETRY_AFTER_MS = 10_000;
-const RETRY_STATUS = new Set([429, 502, 503, 504]);
+/**
+ * Retried: 503 (service busy/unavailable, nothing computed) and 429 (rejected before inference), plus
+ * connection errors. Never retried: timeouts (the service may still be computing; a retry would only
+ * add the same load again) and every other status.
+ */
+const RETRY_STATUS = new Set([429, 503]);
+
+/** Defaults (audit MED-1): 4 texts × ~3–7 s worst case per 2048-token text + up to 30 s queue wait < 90 s. */
+export const REMOTE_EMBED_DEFAULTS = Object.freeze({ timeoutMs: 90_000, retries: 2, backoffMs: 500, maxBatch: 4 });
 
 export class EmbedServiceError extends Error {
   readonly status: number | undefined;
@@ -33,13 +41,13 @@ export interface RemoteEmbedderOptions {
   /** Base URL of the service, e.g. http://embed:8080 (requests go to <url>/embed). */
   url: string;
   token: string;
-  /** Per attempt, default 45 s (the service queues up to 30 s under load). */
+  /** Per attempt, default 90 s (see REMOTE_EMBED_DEFAULTS). */
   timeoutMs?: number;
-  /** Additional attempts after the first on 429/502/503/504, timeouts and network errors, default 2. */
+  /** Additional attempts after the first on 429/503 and connection errors, default 2. */
   retries?: number;
   /** First backoff; doubles per attempt, default 500 ms. */
   backoffMs?: number;
-  /** Texts per request, default 16 (stays below the service's 1 MB body limit at 8000 chars each). */
+  /** Texts per request, default 4 (bounds one request's service time and memory). */
   maxBatch?: number;
   fetchFn?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
@@ -65,10 +73,10 @@ function parseVectors(body: unknown, count: number): number[][] {
 
 export function createRemoteEmbedder(opts: RemoteEmbedderOptions): RemoteEmbedder {
   const endpoint = `${opts.url.replace(/\/+$/, '')}/embed`;
-  const timeoutMs = opts.timeoutMs ?? 45_000;
-  const retries = opts.retries ?? 2;
-  const backoffMs = opts.backoffMs ?? 500;
-  const maxBatch = Math.max(1, opts.maxBatch ?? 16);
+  const timeoutMs = opts.timeoutMs ?? REMOTE_EMBED_DEFAULTS.timeoutMs;
+  const retries = opts.retries ?? REMOTE_EMBED_DEFAULTS.retries;
+  const backoffMs = opts.backoffMs ?? REMOTE_EMBED_DEFAULTS.backoffMs;
+  const maxBatch = Math.max(1, opts.maxBatch ?? REMOTE_EMBED_DEFAULTS.maxBatch);
   const fetchFn = opts.fetchFn ?? fetch;
   const sleep = opts.sleep ?? defaultSleep;
   const attempts = retries + 1;
@@ -90,9 +98,8 @@ export function createRemoteEmbedder(opts: RemoteEmbedderOptions): RemoteEmbedde
         });
       } catch (e) {
         const timedOut = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
-        last = new EmbedServiceError(timedOut
-          ? `embedding service timed out after ${timeoutMs} ms`
-          : 'embedding service unreachable');
+        if (timedOut) throw new EmbedServiceError(`embedding service timed out after ${timeoutMs} ms`);
+        last = new EmbedServiceError('embedding service unreachable');
         if (attempt < attempts - 1) await sleep(wait);
         continue;
       }

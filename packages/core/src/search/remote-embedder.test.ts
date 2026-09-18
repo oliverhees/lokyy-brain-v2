@@ -4,6 +4,7 @@ import {
   remoteEmbedderFromEnv,
   EmbedServiceError,
   EMBED_MAX_CHARS,
+  REMOTE_EMBED_DEFAULTS,
 } from './remote-embedder';
 
 const TOKEN = 'vault-token-0123456789abcdef';
@@ -63,13 +64,20 @@ describe('createRemoteEmbedder', () => {
     expect(vecs.map((v) => v[0])).toEqual([1, 2, 3, 4, 5]);
   });
 
+  it('defaults: batches of at most 4 texts, 90 s timeout (audit MED-1)', async () => {
+    const svc = fakeService();
+    await make(svc.fetchFn).embedMany(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+    expect(svc.calls.map((c) => c.texts.length)).toEqual([4, 4, 1]);
+    expect(REMOTE_EMBED_DEFAULTS).toEqual({ timeoutMs: 90_000, retries: 2, backoffMs: 500, maxBatch: 4 });
+  });
+
   it('embedMany of nothing makes no request', async () => {
     const svc = fakeService();
     expect(await make(svc.fetchFn).embedMany([])).toEqual([]);
     expect(svc.calls).toHaveLength(0);
   });
 
-  it('retries 429/502/503/504 and network errors with growing backoff, honouring Retry-After', async () => {
+  it('retries 503, 429 (rejected before inference) and connection errors with growing backoff, honouring Retry-After', async () => {
     const sleep = vi.fn(async () => {});
     const svc = fakeService([
       () => json(503, { error: 'busy' }),
@@ -99,7 +107,7 @@ describe('createRemoteEmbedder', () => {
     expect(svc.calls).toHaveLength(3);
   });
 
-  it.each([400, 401, 403, 404, 413, 415, 500])('does not retry HTTP %i', async (status) => {
+  it.each([400, 401, 403, 404, 413, 415, 500, 502, 504])('does not retry HTTP %i', async (status) => {
     const svc = fakeService([() => json(status, { error: 'x' })]);
     const err = await make(svc.fetchFn, { retries: 3 }).embed('x').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(EmbedServiceError);
@@ -116,10 +124,11 @@ describe('createRemoteEmbedder', () => {
     const hang = vi.fn((_u: string | URL | Request, init?: RequestInit) => new Promise<Response>((_r, reject) => {
       init?.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted')));
     }));
-    const err = await make(hang as unknown as typeof fetch, { timeoutMs: 20, retries: 1 }).embed('x').catch((e: unknown) => e);
+    const err = await make(hang as unknown as typeof fetch, { timeoutMs: 20, retries: 3 }).embed('x').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(EmbedServiceError);
     expect((err as Error).message).toMatch(/timed out after 20 ms/);
-    expect(hang).toHaveBeenCalledTimes(2);
+    // Audit MED-1: the service may still be working on it; a retry would only add the same load again
+    expect(hang).toHaveBeenCalledTimes(1);
   });
 
   it.each([

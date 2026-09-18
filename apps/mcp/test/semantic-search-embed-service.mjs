@@ -1,8 +1,10 @@
 /**
  * semantic_search with the shared embedding service (LBV2-26).
  * A fake service stands in for deploy/stack/embed; no LLM is configured. Checks:
- *  - the query (and only pages without a cached vector) go to <MINDBASE_EMBED_URL>/embed with the token,
- *  - cached page vectors (<dataDir>/embeddings, written by the vault server's indexer) are reused,
+ *  - only the query goes to <MINDBASE_EMBED_URL>/embed with the token (audit MED-1: no page embedding on
+ *    the query path; pages are embedded by the vault server's indexer),
+ *  - cached page vectors (<dataDir>/embeddings) are used only when their content hash matches the page
+ *    ("<title>\n\n<body>", the indexer's format); stale or missing vectors are left out,
  *  - results are ranked by the service's vectors,
  *  - a rejected token falls back to keyword search (no LLM call, no model load),
  *  - without the variables the old behaviour stays (LLM required).
@@ -13,6 +15,7 @@ import http from 'node:http';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const TOKEN = 'mcp-embed-test-token-0123456789';
 let failures = 0;
@@ -52,11 +55,19 @@ const page = (slug, title, body) => {
   writeFileSync(join(notes, `${slug}.md`), body);
   writeFileSync(join(notes, `${slug}.meta.json`), JSON.stringify({ id: slug, title, type: 'concept', one_liner: '', edit_state: 'ai_generated', created: now, updated: now, word_count: 3 }));
 };
+const cache = (slug, content, vector) => writeFileSync(join(dataDir, 'embeddings', `${slug}.json`), JSON.stringify({
+  slug, content_hash: createHash('sha256').update(content, 'utf8').digest('hex'), vector, model: 'Xenova/bge-m3', computed_at: now,
+}));
 // "orchard" has no fruit word in its text, but its cached (server-indexed) vector is the apple axis.
 page('orchard', 'Orchard', 'Trees in rows.');
-writeFileSync(join(dataDir, 'embeddings', 'orchard.json'), JSON.stringify({ slug: 'orchard', content_hash: 'x', vector: [1, 0, 0], model: 'Xenova/bge-m3', computed_at: now }));
+cache('orchard', 'Orchard\n\nTrees in rows.', [1, 0, 0]);
 page('banana-bread', 'Banana Bread', 'A banana recipe.');
-page('weather', 'Weather', 'Rain tomorrow.');
+cache('banana-bread', 'Banana Bread\n\nA banana recipe.', [0, 1, 0]);
+// Stale: cached for an older text with the apple vector; the page changed since.
+page('apple-stale', 'Apple Stale', 'Now about pears.');
+cache('apple-stale', 'Apple Stale\n\nAn apple page.', [1, 0, 0]);
+// Never indexed: must not be embedded on the query path.
+page('weather', 'Weather', 'Rain tomorrow, apple.');
 
 function startMcp(env) {
   const proc = spawn('node', ['dist/cli.js', '--data-dir', dataDir], { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...env } });
@@ -94,9 +105,9 @@ try {
   check('scores come from the service vectors', r1[0]?.score > 0.99, JSON.stringify(r1[0]));
   const sent = requests.flatMap((r) => r.texts);
   check('request went to <url>/embed with the vault token', requests.every((r) => r.url === '/embed' && r.auth === `Bearer ${TOKEN}`), JSON.stringify(requests.map((r) => [r.url, r.auth === `Bearer ${TOKEN}`])));
-  check('query was sent', sent.includes('apple pie'), JSON.stringify(sent));
-  check('page with a cached vector was not re-embedded', !sent.some((t) => t.includes('Trees in rows')), JSON.stringify(sent));
-  check('pages without a cached vector were embedded as "<title>\\n\\n<body>"', sent.includes('Banana Bread\n\nA banana recipe.'), JSON.stringify(sent));
+  check('only the query was sent (no page embedding on the query path)', JSON.stringify(sent) === JSON.stringify(['apple pie']), JSON.stringify(sent));
+  check('stale cached vector (hash mismatch) is not used', !r1.some((x) => x.slug === 'apple-stale'), JSON.stringify(r1));
+  check('page without a cached vector is left out', !r1.some((x) => x.slug === 'weather'), JSON.stringify(r1));
 
   const r2 = JSON.parse(resultText(await remote.call('semantic_search', { query: 'banana', limit: 1 })));
   check('banana query ranks the banana page first', r2[0]?.slug === 'banana-bread', JSON.stringify(r2));
