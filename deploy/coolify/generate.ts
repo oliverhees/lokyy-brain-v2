@@ -156,7 +156,8 @@ function vault(v: string, opts: GenerateOptions): Service {
   // Readers of the company vault (group vault-firma-read) get this token via MetaMCP: read tools only
   if (v === 'firma') env.MCP_HTTP_READONLY_TOKEN = secret.mcpReadonlyFirma;
   const base: Service = {
-    build: { context: REPO, dockerfile: 'deploy/Dockerfile' },
+    // The vault UI links "connect AI clients" to the setup portal (LBV2-35)
+    build: { context: REPO, dockerfile: 'deploy/Dockerfile', args: { VITE_LOKYY_PORTAL_URL: `https://app.${DOMAIN}` } },
     restart: 'unless-stopped',
     environment: env,
     networks: { [`web-${v}`]: { ipv4_address: vaultIp(v) }, [`mcp-${v}`]: { aliases: [`upstream.vault-${v}`] }, egress: {} },
@@ -347,7 +348,8 @@ export function buildCompose(pkg: PackageName, options: GenerateOptions = {}): C
   // -------------------------------------------------------------------- Vaults
   // One-shot: fills the shared model cache (pinned revision, SHA-256 per file); vaults mount it read-only.
   services['model-prefetch'] = {
-    build: { context: REPO, dockerfile: 'deploy/Dockerfile' },
+    // Same build arguments as the vaults: one image build shared through the cache
+    build: { context: REPO, dockerfile: 'deploy/Dockerfile', args: { VITE_LOKYY_PORTAL_URL: `https://app.${DOMAIN}` } },
     restart: 'no',
     entrypoint: ['node', '/lokyy/models/prefetch.mjs'],
     volumes: ['models:/models'],
@@ -767,7 +769,7 @@ export function renderBlueprint(pkg: PackageName): string {
     '    identifiers: { username: lokyy-portal }',
     '    attrs:',
     '      username: lokyy-portal',
-    '      name: Lokyy Portal (service account)',
+    '      name: Lokyy Brain Portal (service account)',
     '      type: service_account',
     '      path: lokyy-system',
     '      roles: [!KeyOf role-portal]',
@@ -815,14 +817,28 @@ export function renderBlueprint(pkg: PackageName): string {
       ]),
     );
   };
-  slots.forEach((v, i) => app(v, `vault-${v}`, `"Vault ${v}"`, v, v, i === 0));
+  slots.forEach((v, i) => app(v, `vault-${v}`, `"Lokyy Brain · Vault ${v}"`, v, v, i === 0));
   L.push('  # Company vault web UI: only writers (readers use MCP with the read-only token)');
-  app('firma', 'vault-firma', 'Firmen-Vault', 'firma', 'firma-write');
+  app('firma', 'vault-firma', '"Lokyy Brain · Firmen-Vault"', 'firma', 'firma-write');
   L.push('  # Setup portal: every invited employee and the operators (admin functions are checked inside the portal)');
-  app('portal', 'lokyy-portal', 'Lokyy Portal', 'app', ['users', 'admins']);
+  app('portal', 'lokyy-portal', '"Lokyy Brain · Portal"', 'app', ['users', 'admins']);
   L.push('  # MetaMCP admin UI: operators only');
-  app('metamcp', 'metamcp-admin', 'MetaMCP Admin', 'mcp', 'admins');
+  app('metamcp', 'metamcp-admin', '"Lokyy Brain · MetaMCP Admin"', 'mcp', 'admins');
   L.push('  # Mandatory MFA for operators', ...ADMIN_MFA);
+  // Brand (LBV2-35): what users see on the login pages. Only these fields; the portal's blueprint sets the
+  // recovery flow and locale of the same brand.
+  L.push(
+    '  - model: authentik_brands.brand',
+    '    identifiers: { domain: authentik-default }',
+    '    state: present',
+    '    attrs:',
+    '      branding_title: Lokyy Brain',
+    '  - model: authentik_flows.flow',
+    '    identifiers: { slug: default-authentication-flow }',
+    '    state: present',
+    '    attrs:',
+    '      title: Lokyy Brain',
+  );
   L.push(
     '  - model: authentik_outposts.outpost',
     '    identifiers: { managed: goauthentik.io/outposts/embedded }',

@@ -207,6 +207,7 @@ isolation_checks() { # isolation_checks <pkg> <last-slot>
     expect "anon → $v" "$(curlk -o /dev/null -w '%{http_code} %{redirect_url}' "$(U "$v")/api/config" | sed -E 's#^(302) https://auth\..*#\1 auth#')" "302 auth"
   done
 
+  expect "login page title (brand)" "$(curlk -c "$work/brand.jar" -b "$work/brand.jar" "$(U auth)/api/v3/flows/executor/default-authentication-flow/?query=" | jq -r '.flow_info.title')" "Lokyy Brain"
   echo "== [$pkg] bootstrap admin (ADMIN_EMAIL + generated password)"
   MFA_SECRET_FILE= login "$jars/admin" "$(U mcp)/" "ops@example.com" "$admin_pass" 2>/dev/null
   expect "admin login stops at the MFA stage without a device" "${MFA_SEEN:-none}" "validate"

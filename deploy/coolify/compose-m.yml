@@ -457,6 +457,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "no"
     entrypoint:
       - "node"
@@ -465,10 +467,15 @@ services:
       - "models:/models"
     networks:
       - "model-egress"
+    depends_on:
+      lokyy-init:
+        condition: "service_completed_successfully"
   vault-v01:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -497,6 +504,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v01:/data"
       - "vault-v01-home:/home/vault"
@@ -504,6 +513,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -532,6 +543,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v02:/data"
       - "vault-v02-home:/home/vault"
@@ -539,6 +552,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -567,6 +582,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v03:/data"
       - "vault-v03-home:/home/vault"
@@ -574,6 +591,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -602,6 +621,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v04:/data"
       - "vault-v04-home:/home/vault"
@@ -609,6 +630,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -637,6 +660,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v05:/data"
       - "vault-v05-home:/home/vault"
@@ -644,6 +669,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -672,6 +699,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v06:/data"
       - "vault-v06-home:/home/vault"
@@ -679,6 +708,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -707,6 +738,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v07:/data"
       - "vault-v07-home:/home/vault"
@@ -714,6 +747,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -742,6 +777,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v08:/data"
       - "vault-v08-home:/home/vault"
@@ -749,6 +786,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -777,6 +816,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v09:/data"
       - "vault-v09-home:/home/vault"
@@ -784,6 +825,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -812,6 +855,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v10:/data"
       - "vault-v10-home:/home/vault"
@@ -819,6 +864,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -847,6 +894,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v11:/data"
       - "vault-v11-home:/home/vault"
@@ -854,6 +903,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -882,6 +933,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v12:/data"
       - "vault-v12-home:/home/vault"
@@ -889,6 +942,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -917,6 +972,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v13:/data"
       - "vault-v13-home:/home/vault"
@@ -924,6 +981,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -952,6 +1011,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v14:/data"
       - "vault-v14-home:/home/vault"
@@ -959,6 +1020,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -987,6 +1050,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v15:/data"
       - "vault-v15-home:/home/vault"
@@ -994,6 +1059,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1022,6 +1089,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v16:/data"
       - "vault-v16-home:/home/vault"
@@ -1029,6 +1098,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1057,6 +1128,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v17:/data"
       - "vault-v17-home:/home/vault"
@@ -1064,6 +1137,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1092,6 +1167,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v18:/data"
       - "vault-v18-home:/home/vault"
@@ -1099,6 +1176,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1127,6 +1206,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v19:/data"
       - "vault-v19-home:/home/vault"
@@ -1134,6 +1215,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1162,6 +1245,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v20:/data"
       - "vault-v20-home:/home/vault"
@@ -1169,6 +1254,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1197,6 +1284,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v21:/data"
       - "vault-v21-home:/home/vault"
@@ -1204,6 +1293,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1232,6 +1323,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v22:/data"
       - "vault-v22-home:/home/vault"
@@ -1239,6 +1332,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1267,6 +1362,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v23:/data"
       - "vault-v23-home:/home/vault"
@@ -1274,6 +1371,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1302,6 +1401,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v24:/data"
       - "vault-v24-home:/home/vault"
@@ -1309,6 +1410,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1337,6 +1440,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v25:/data"
       - "vault-v25-home:/home/vault"
@@ -1344,6 +1449,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1372,6 +1479,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v26:/data"
       - "vault-v26-home:/home/vault"
@@ -1379,6 +1488,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1407,6 +1518,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v27:/data"
       - "vault-v27-home:/home/vault"
@@ -1414,6 +1527,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1442,6 +1557,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v28:/data"
       - "vault-v28-home:/home/vault"
@@ -1449,6 +1566,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1477,6 +1596,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v29:/data"
       - "vault-v29-home:/home/vault"
@@ -1484,6 +1605,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1512,6 +1635,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-v30:/data"
       - "vault-v30-home:/home/vault"
@@ -1519,6 +1644,8 @@ services:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
+      args:
+        VITE_LOKYY_PORTAL_URL: "https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
     restart: "unless-stopped"
     environment:
       MCP_HTTP_PORT: "4322"
@@ -1548,6 +1675,8 @@ services:
     depends_on:
       embed:
         condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     volumes:
       - "vault-firma:/data"
       - "vault-firma-home:/home/vault"

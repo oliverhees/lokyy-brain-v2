@@ -78,7 +78,7 @@ entries:
     identifiers: { username: lokyy-portal }
     attrs:
       username: lokyy-portal
-      name: Lokyy Portal (service account)
+      name: Lokyy Brain Portal (service account)
       type: service_account
       path: lokyy-system
       roles: [!KeyOf role-portal]
@@ -114,7 +114,7 @@ entries:
   - model: authentik_core.application
     id: app-v01
     identifiers: { slug: vault-v01 }
-    attrs: { name: "Vault v01", slug: vault-v01, provider: !KeyOf provider-v01, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v01", slug: vault-v01, provider: !KeyOf provider-v01, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v01, group: !KeyOf group-v01 }
     attrs: { target: !KeyOf app-v01, group: !KeyOf group-v01, order: 0 }
@@ -128,7 +128,7 @@ entries:
   - model: authentik_core.application
     id: app-v02
     identifiers: { slug: vault-v02 }
-    attrs: { name: "Vault v02", slug: vault-v02, provider: !KeyOf provider-v02, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v02", slug: vault-v02, provider: !KeyOf provider-v02, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v02, group: !KeyOf group-v02 }
     attrs: { target: !KeyOf app-v02, group: !KeyOf group-v02, order: 0 }
@@ -142,7 +142,7 @@ entries:
   - model: authentik_core.application
     id: app-v03
     identifiers: { slug: vault-v03 }
-    attrs: { name: "Vault v03", slug: vault-v03, provider: !KeyOf provider-v03, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v03", slug: vault-v03, provider: !KeyOf provider-v03, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v03, group: !KeyOf group-v03 }
     attrs: { target: !KeyOf app-v03, group: !KeyOf group-v03, order: 0 }
@@ -156,7 +156,7 @@ entries:
   - model: authentik_core.application
     id: app-v04
     identifiers: { slug: vault-v04 }
-    attrs: { name: "Vault v04", slug: vault-v04, provider: !KeyOf provider-v04, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v04", slug: vault-v04, provider: !KeyOf provider-v04, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v04, group: !KeyOf group-v04 }
     attrs: { target: !KeyOf app-v04, group: !KeyOf group-v04, order: 0 }
@@ -170,7 +170,7 @@ entries:
   - model: authentik_core.application
     id: app-v05
     identifiers: { slug: vault-v05 }
-    attrs: { name: "Vault v05", slug: vault-v05, provider: !KeyOf provider-v05, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v05", slug: vault-v05, provider: !KeyOf provider-v05, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v05, group: !KeyOf group-v05 }
     attrs: { target: !KeyOf app-v05, group: !KeyOf group-v05, order: 0 }
@@ -184,7 +184,7 @@ entries:
   - model: authentik_core.application
     id: app-v06
     identifiers: { slug: vault-v06 }
-    attrs: { name: "Vault v06", slug: vault-v06, provider: !KeyOf provider-v06, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v06", slug: vault-v06, provider: !KeyOf provider-v06, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v06, group: !KeyOf group-v06 }
     attrs: { target: !KeyOf app-v06, group: !KeyOf group-v06, order: 0 }
@@ -198,7 +198,7 @@ entries:
   - model: authentik_core.application
     id: app-v07
     identifiers: { slug: vault-v07 }
-    attrs: { name: "Vault v07", slug: vault-v07, provider: !KeyOf provider-v07, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v07", slug: vault-v07, provider: !KeyOf provider-v07, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v07, group: !KeyOf group-v07 }
     attrs: { target: !KeyOf app-v07, group: !KeyOf group-v07, order: 0 }
@@ -212,7 +212,7 @@ entries:
   - model: authentik_core.application
     id: app-v08
     identifiers: { slug: vault-v08 }
-    attrs: { name: "Vault v08", slug: vault-v08, provider: !KeyOf provider-v08, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v08", slug: vault-v08, provider: !KeyOf provider-v08, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v08, group: !KeyOf group-v08 }
     attrs: { target: !KeyOf app-v08, group: !KeyOf group-v08, order: 0 }
@@ -226,7 +226,7 @@ entries:
   - model: authentik_core.application
     id: app-v09
     identifiers: { slug: vault-v09 }
-    attrs: { name: "Vault v09", slug: vault-v09, provider: !KeyOf provider-v09, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v09", slug: vault-v09, provider: !KeyOf provider-v09, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v09, group: !KeyOf group-v09 }
     attrs: { target: !KeyOf app-v09, group: !KeyOf group-v09, order: 0 }
@@ -240,7 +240,7 @@ entries:
   - model: authentik_core.application
     id: app-v10
     identifiers: { slug: vault-v10 }
-    attrs: { name: "Vault v10", slug: vault-v10, provider: !KeyOf provider-v10, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v10", slug: vault-v10, provider: !KeyOf provider-v10, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v10, group: !KeyOf group-v10 }
     attrs: { target: !KeyOf app-v10, group: !KeyOf group-v10, order: 0 }
@@ -254,7 +254,7 @@ entries:
   - model: authentik_core.application
     id: app-v11
     identifiers: { slug: vault-v11 }
-    attrs: { name: "Vault v11", slug: vault-v11, provider: !KeyOf provider-v11, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v11", slug: vault-v11, provider: !KeyOf provider-v11, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v11, group: !KeyOf group-v11 }
     attrs: { target: !KeyOf app-v11, group: !KeyOf group-v11, order: 0 }
@@ -268,7 +268,7 @@ entries:
   - model: authentik_core.application
     id: app-v12
     identifiers: { slug: vault-v12 }
-    attrs: { name: "Vault v12", slug: vault-v12, provider: !KeyOf provider-v12, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v12", slug: vault-v12, provider: !KeyOf provider-v12, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v12, group: !KeyOf group-v12 }
     attrs: { target: !KeyOf app-v12, group: !KeyOf group-v12, order: 0 }
@@ -282,7 +282,7 @@ entries:
   - model: authentik_core.application
     id: app-v13
     identifiers: { slug: vault-v13 }
-    attrs: { name: "Vault v13", slug: vault-v13, provider: !KeyOf provider-v13, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v13", slug: vault-v13, provider: !KeyOf provider-v13, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v13, group: !KeyOf group-v13 }
     attrs: { target: !KeyOf app-v13, group: !KeyOf group-v13, order: 0 }
@@ -296,7 +296,7 @@ entries:
   - model: authentik_core.application
     id: app-v14
     identifiers: { slug: vault-v14 }
-    attrs: { name: "Vault v14", slug: vault-v14, provider: !KeyOf provider-v14, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v14", slug: vault-v14, provider: !KeyOf provider-v14, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v14, group: !KeyOf group-v14 }
     attrs: { target: !KeyOf app-v14, group: !KeyOf group-v14, order: 0 }
@@ -310,7 +310,7 @@ entries:
   - model: authentik_core.application
     id: app-v15
     identifiers: { slug: vault-v15 }
-    attrs: { name: "Vault v15", slug: vault-v15, provider: !KeyOf provider-v15, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v15", slug: vault-v15, provider: !KeyOf provider-v15, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v15, group: !KeyOf group-v15 }
     attrs: { target: !KeyOf app-v15, group: !KeyOf group-v15, order: 0 }
@@ -324,7 +324,7 @@ entries:
   - model: authentik_core.application
     id: app-v16
     identifiers: { slug: vault-v16 }
-    attrs: { name: "Vault v16", slug: vault-v16, provider: !KeyOf provider-v16, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v16", slug: vault-v16, provider: !KeyOf provider-v16, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v16, group: !KeyOf group-v16 }
     attrs: { target: !KeyOf app-v16, group: !KeyOf group-v16, order: 0 }
@@ -338,7 +338,7 @@ entries:
   - model: authentik_core.application
     id: app-v17
     identifiers: { slug: vault-v17 }
-    attrs: { name: "Vault v17", slug: vault-v17, provider: !KeyOf provider-v17, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v17", slug: vault-v17, provider: !KeyOf provider-v17, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v17, group: !KeyOf group-v17 }
     attrs: { target: !KeyOf app-v17, group: !KeyOf group-v17, order: 0 }
@@ -352,7 +352,7 @@ entries:
   - model: authentik_core.application
     id: app-v18
     identifiers: { slug: vault-v18 }
-    attrs: { name: "Vault v18", slug: vault-v18, provider: !KeyOf provider-v18, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v18", slug: vault-v18, provider: !KeyOf provider-v18, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v18, group: !KeyOf group-v18 }
     attrs: { target: !KeyOf app-v18, group: !KeyOf group-v18, order: 0 }
@@ -366,7 +366,7 @@ entries:
   - model: authentik_core.application
     id: app-v19
     identifiers: { slug: vault-v19 }
-    attrs: { name: "Vault v19", slug: vault-v19, provider: !KeyOf provider-v19, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v19", slug: vault-v19, provider: !KeyOf provider-v19, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v19, group: !KeyOf group-v19 }
     attrs: { target: !KeyOf app-v19, group: !KeyOf group-v19, order: 0 }
@@ -380,7 +380,7 @@ entries:
   - model: authentik_core.application
     id: app-v20
     identifiers: { slug: vault-v20 }
-    attrs: { name: "Vault v20", slug: vault-v20, provider: !KeyOf provider-v20, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v20", slug: vault-v20, provider: !KeyOf provider-v20, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v20, group: !KeyOf group-v20 }
     attrs: { target: !KeyOf app-v20, group: !KeyOf group-v20, order: 0 }
@@ -394,7 +394,7 @@ entries:
   - model: authentik_core.application
     id: app-v21
     identifiers: { slug: vault-v21 }
-    attrs: { name: "Vault v21", slug: vault-v21, provider: !KeyOf provider-v21, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v21", slug: vault-v21, provider: !KeyOf provider-v21, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v21, group: !KeyOf group-v21 }
     attrs: { target: !KeyOf app-v21, group: !KeyOf group-v21, order: 0 }
@@ -408,7 +408,7 @@ entries:
   - model: authentik_core.application
     id: app-v22
     identifiers: { slug: vault-v22 }
-    attrs: { name: "Vault v22", slug: vault-v22, provider: !KeyOf provider-v22, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v22", slug: vault-v22, provider: !KeyOf provider-v22, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v22, group: !KeyOf group-v22 }
     attrs: { target: !KeyOf app-v22, group: !KeyOf group-v22, order: 0 }
@@ -422,7 +422,7 @@ entries:
   - model: authentik_core.application
     id: app-v23
     identifiers: { slug: vault-v23 }
-    attrs: { name: "Vault v23", slug: vault-v23, provider: !KeyOf provider-v23, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v23", slug: vault-v23, provider: !KeyOf provider-v23, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v23, group: !KeyOf group-v23 }
     attrs: { target: !KeyOf app-v23, group: !KeyOf group-v23, order: 0 }
@@ -436,7 +436,7 @@ entries:
   - model: authentik_core.application
     id: app-v24
     identifiers: { slug: vault-v24 }
-    attrs: { name: "Vault v24", slug: vault-v24, provider: !KeyOf provider-v24, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v24", slug: vault-v24, provider: !KeyOf provider-v24, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v24, group: !KeyOf group-v24 }
     attrs: { target: !KeyOf app-v24, group: !KeyOf group-v24, order: 0 }
@@ -450,7 +450,7 @@ entries:
   - model: authentik_core.application
     id: app-v25
     identifiers: { slug: vault-v25 }
-    attrs: { name: "Vault v25", slug: vault-v25, provider: !KeyOf provider-v25, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v25", slug: vault-v25, provider: !KeyOf provider-v25, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v25, group: !KeyOf group-v25 }
     attrs: { target: !KeyOf app-v25, group: !KeyOf group-v25, order: 0 }
@@ -464,7 +464,7 @@ entries:
   - model: authentik_core.application
     id: app-v26
     identifiers: { slug: vault-v26 }
-    attrs: { name: "Vault v26", slug: vault-v26, provider: !KeyOf provider-v26, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v26", slug: vault-v26, provider: !KeyOf provider-v26, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v26, group: !KeyOf group-v26 }
     attrs: { target: !KeyOf app-v26, group: !KeyOf group-v26, order: 0 }
@@ -478,7 +478,7 @@ entries:
   - model: authentik_core.application
     id: app-v27
     identifiers: { slug: vault-v27 }
-    attrs: { name: "Vault v27", slug: vault-v27, provider: !KeyOf provider-v27, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v27", slug: vault-v27, provider: !KeyOf provider-v27, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v27, group: !KeyOf group-v27 }
     attrs: { target: !KeyOf app-v27, group: !KeyOf group-v27, order: 0 }
@@ -492,7 +492,7 @@ entries:
   - model: authentik_core.application
     id: app-v28
     identifiers: { slug: vault-v28 }
-    attrs: { name: "Vault v28", slug: vault-v28, provider: !KeyOf provider-v28, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v28", slug: vault-v28, provider: !KeyOf provider-v28, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v28, group: !KeyOf group-v28 }
     attrs: { target: !KeyOf app-v28, group: !KeyOf group-v28, order: 0 }
@@ -506,7 +506,7 @@ entries:
   - model: authentik_core.application
     id: app-v29
     identifiers: { slug: vault-v29 }
-    attrs: { name: "Vault v29", slug: vault-v29, provider: !KeyOf provider-v29, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v29", slug: vault-v29, provider: !KeyOf provider-v29, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v29, group: !KeyOf group-v29 }
     attrs: { target: !KeyOf app-v29, group: !KeyOf group-v29, order: 0 }
@@ -520,7 +520,7 @@ entries:
   - model: authentik_core.application
     id: app-v30
     identifiers: { slug: vault-v30 }
-    attrs: { name: "Vault v30", slug: vault-v30, provider: !KeyOf provider-v30, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Vault v30", slug: vault-v30, provider: !KeyOf provider-v30, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-v30, group: !KeyOf group-v30 }
     attrs: { target: !KeyOf app-v30, group: !KeyOf group-v30, order: 0 }
@@ -535,7 +535,7 @@ entries:
   - model: authentik_core.application
     id: app-firma
     identifiers: { slug: vault-firma }
-    attrs: { name: Firmen-Vault, slug: vault-firma, provider: !KeyOf provider-firma, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Firmen-Vault", slug: vault-firma, provider: !KeyOf provider-firma, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-firma, group: !KeyOf group-firma-write }
     attrs: { target: !KeyOf app-firma, group: !KeyOf group-firma-write, order: 0 }
@@ -550,7 +550,7 @@ entries:
   - model: authentik_core.application
     id: app-portal
     identifiers: { slug: lokyy-portal }
-    attrs: { name: Lokyy Portal, slug: lokyy-portal, provider: !KeyOf provider-portal, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · Portal", slug: lokyy-portal, provider: !KeyOf provider-portal, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-portal, group: !KeyOf group-users }
     attrs: { target: !KeyOf app-portal, group: !KeyOf group-users, order: 0 }
@@ -568,7 +568,7 @@ entries:
   - model: authentik_core.application
     id: app-metamcp
     identifiers: { slug: metamcp-admin }
-    attrs: { name: MetaMCP Admin, slug: metamcp-admin, provider: !KeyOf provider-metamcp, policy_engine_mode: any }
+    attrs: { name: "Lokyy Brain · MetaMCP Admin", slug: metamcp-admin, provider: !KeyOf provider-metamcp, policy_engine_mode: any }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-metamcp, group: !KeyOf group-admins }
     attrs: { target: !KeyOf app-metamcp, group: !KeyOf group-admins, order: 0 }
@@ -604,6 +604,16 @@ entries:
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa }
     attrs: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa, order: 0 }
+  - model: authentik_brands.brand
+    identifiers: { domain: authentik-default }
+    state: present
+    attrs:
+      branding_title: Lokyy Brain
+  - model: authentik_flows.flow
+    identifiers: { slug: default-authentication-flow }
+    state: present
+    attrs:
+      title: Lokyy Brain
   - model: authentik_outposts.outpost
     identifiers: { managed: goauthentik.io/outposts/embedded }
     state: present

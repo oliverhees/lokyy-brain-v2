@@ -114,7 +114,7 @@ for (const pkg of pkgs) {
       assert.equal(env.MCP_HTTP_ALLOWED_HOSTS, `mcp.vault-${v}:4322`);
       assert.ok(s.mem_limit);
       assert.ok(!(s.volumes ?? []).some((x) => x.startsWith('models:')), 'vaults embed via the shared service');
-      assert.deepEqual(s.depends_on, { embed: { condition: 'service_healthy' } });
+      assert.deepEqual(s.depends_on, { embed: { condition: 'service_healthy' }, 'lokyy-init': { condition: 'service_completed_successfully' } }, 'BASE_DOMAIN in the build args: validated first');
       assert.equal(s.labels, undefined, 'inner services carry no Traefik labels');
     }
     assert.ok(c.services['vault-firma'].environment?.MCP_HTTP_READONLY_TOKEN);
@@ -245,7 +245,7 @@ test('embed (LBV2-26 contract, on in the packages): one token and one network pe
     assert.equal(c.networks[`embed-${v}`].internal, true);
     assert.ok(!(s.volumes ?? []).some((x) => x.startsWith('models:')), 'vaults no longer mount the model');
     assert.equal(s.mem_limit, '${VAULT_MEM_LIMIT:-1g}');
-    assert.deepEqual(s.depends_on, { embed: { condition: 'service_healthy' } });
+    assert.deepEqual(s.depends_on, { embed: { condition: 'service_healthy' }, 'lokyy-init': { condition: 'service_completed_successfully' } }, 'BASE_DOMAIN in the build args: validated first');
   }
 });
 
@@ -491,5 +491,28 @@ test('mandatory MFA for admins only (Oliver): policy-bound validation stage in t
     const expr = b.slice(b.indexOf('lokyy-admin-mfa-required'));
     for (const x of ['is_superuser', '"lokyy-admins"', '"authentik Admins"', 'pending_user']) assert.ok(expr.includes(x), x);
     assert.ok(b.includes('    identifiers: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa }'));
+  }
+});
+
+test('brand (LBV2-35): user-visible names say "Lokyy Brain"; no old product name in deploy/coolify or the runbook', () => {
+  const brand = /mind ?base|frankchu91|haobing|@mindbase\/mcp-server/gi;
+  const allow = [/X-Mindbase-User/gi, /\bMINDBASE_[A-Z0-9_]+/g, /@mindbase\/(?!mcp-server)[a-z0-9-]+/g];
+  const files = [...outputs().map((o) => o.content), readFileSync(join(coolifyDir, '../../docs/beta-runbook.md'), 'utf8'),
+    readFileSync(join(coolifyDir, 'generate.ts'), 'utf8')];
+  for (const text of files) {
+    const clean = allow.reduce((t, re) => t.replace(re, ''), text);
+    assert.deepEqual(clean.match(brand) ?? [], []);
+  }
+  for (const pkg of pkgs) {
+    const b = renderBlueprint(pkg);
+    assert.ok(b.includes('      branding_title: Lokyy Brain\n'), 'Authentik brand title');
+    assert.ok(b.includes('      title: Lokyy Brain\n'), 'login flow title');
+    for (const name of ['"Lokyy Brain · Vault v01"', '"Lokyy Brain · Firmen-Vault"', '"Lokyy Brain · Portal"', '"Lokyy Brain · MetaMCP Admin"']) {
+      assert.ok(b.includes(`attrs: { name: ${name},`), name);
+    }
+    const c = buildCompose(pkg);
+    for (const v of vaultNames(pkg)) {
+      assert.deepEqual(c.services[`vault-${v}`].build?.args, { VITE_LOKYY_PORTAL_URL: 'https://app.${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}' });
+    }
   }
 });
