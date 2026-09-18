@@ -58,6 +58,8 @@ COPY --from=prod-deps /src/node_modules /app/node_modules
 COPY --from=prod-deps /src/apps/server/node_modules /app/apps/server/node_modules
 COPY --from=embed-test /embed/package.json /app/embed/package.json
 COPY --from=embed-test /embed/src /app/embed/src
+# Offline loader for NODE_OPTIONS=--import=... (Coolify packages mount nothing from the repository)
+COPY deploy/stack/models/offline.mjs /lokyy/models/offline.mjs
 RUN useradd -r -u 10002 embed
 USER embed
 ENV NODE_ENV=production \

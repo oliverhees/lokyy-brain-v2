@@ -224,6 +224,8 @@ services:
       edge:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.10"
       authentik-internal: {}
+      authentik-api:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.140"
   authentik-worker:
     build:
       context: "../.."
@@ -272,7 +274,8 @@ services:
       LOKYY_PACKAGE: "s"
       LOKYY_SLOTS: "v01,v02,v03,v04,v05,v06,v07,v08,v09,v10,v11,v12,v13,v14,v15"
       LOKYY_STATE_DIR: "/state"
-      AUTHENTIK_URL: "http://authentik-server:9000"
+      AUTHENTIK_GATE_URL: "http://${LOKYY_NET_PREFIX:-10.231}.0.124:8080"
+      AUTHENTIK_GATE_SECRET: "${SERVICE_HEX_64_PORTALGATESECRET}"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYPORTAL}"
       VAULT_ADMIN_URL: "http://${LOKYY_NET_PREFIX:-10.231}.0.93:8090"
       METAMCP_URL: "http://metamcp:12008"
@@ -296,14 +299,40 @@ services:
       MCP_READONLY_TOKEN_FIRMA: "${SERVICE_HEX_64_MCPREADONLYFIRMA}"
     volumes:
       - "lokyy-state:/state"
+    depends_on:
+      authentik-gate:
+        condition: "service_healthy"
+      lokyy-init:
+        condition: "service_completed_successfully"
     networks:
       edge: {}
       portal:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.94"
       metamcp-internal: {}
+      portal-gate:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.125"
+  authentik-gate:
+    build:
+      context: "../../deploy/stack/authentik-gate"
+    restart: "unless-stopped"
+    mem_limit: "128m"
+    read_only: true
+    cap_drop:
+      - "ALL"
+    security_opt:
+      - "no-new-privileges:true"
     depends_on:
-      lokyy-init:
-        condition: "service_completed_successfully"
+      authentik-server:
+        condition: "service_healthy"
+    environment:
+      AUTHENTIK_URL: "http://${LOKYY_NET_PREFIX:-10.231}.0.140:9000"
+      AUTHENTIK_API_TOKEN: "${SERVICE_HEX_64_PORTALAKTOKEN}"
+      GATE_SECRET: "${SERVICE_HEX_64_PORTALGATESECRET}"
+    networks:
+      portal-gate:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.124"
+      authentik-api:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.141"
   model-prefetch:
     build:
       context: "../.."
@@ -333,6 +362,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v01:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV01}"
       VAULT_ADMIN_GROUPS: "vault-v01,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.3.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV01}"
     networks:
       web-v01:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.3.14"
@@ -340,13 +371,14 @@ services:
         aliases:
           - "upstream.vault-v01"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v01:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.3.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v01:/data"
-      - "models:/models:ro"
       - "vault-v01-home:/home/vault"
   vault-v02:
     build:
@@ -365,6 +397,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v02:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV02}"
       VAULT_ADMIN_GROUPS: "vault-v02,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.4.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV02}"
     networks:
       web-v02:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.4.14"
@@ -372,13 +406,14 @@ services:
         aliases:
           - "upstream.vault-v02"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v02:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.4.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v02:/data"
-      - "models:/models:ro"
       - "vault-v02-home:/home/vault"
   vault-v03:
     build:
@@ -397,6 +432,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v03:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV03}"
       VAULT_ADMIN_GROUPS: "vault-v03,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.5.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV03}"
     networks:
       web-v03:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.5.14"
@@ -404,13 +441,14 @@ services:
         aliases:
           - "upstream.vault-v03"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v03:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.5.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v03:/data"
-      - "models:/models:ro"
       - "vault-v03-home:/home/vault"
   vault-v04:
     build:
@@ -429,6 +467,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v04:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV04}"
       VAULT_ADMIN_GROUPS: "vault-v04,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.6.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV04}"
     networks:
       web-v04:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.6.14"
@@ -436,13 +476,14 @@ services:
         aliases:
           - "upstream.vault-v04"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v04:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.6.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v04:/data"
-      - "models:/models:ro"
       - "vault-v04-home:/home/vault"
   vault-v05:
     build:
@@ -461,6 +502,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v05:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV05}"
       VAULT_ADMIN_GROUPS: "vault-v05,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.7.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV05}"
     networks:
       web-v05:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.7.14"
@@ -468,13 +511,14 @@ services:
         aliases:
           - "upstream.vault-v05"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v05:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.7.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v05:/data"
-      - "models:/models:ro"
       - "vault-v05-home:/home/vault"
   vault-v06:
     build:
@@ -493,6 +537,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v06:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV06}"
       VAULT_ADMIN_GROUPS: "vault-v06,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.8.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV06}"
     networks:
       web-v06:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.8.14"
@@ -500,13 +546,14 @@ services:
         aliases:
           - "upstream.vault-v06"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v06:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.8.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v06:/data"
-      - "models:/models:ro"
       - "vault-v06-home:/home/vault"
   vault-v07:
     build:
@@ -525,6 +572,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v07:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV07}"
       VAULT_ADMIN_GROUPS: "vault-v07,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.9.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV07}"
     networks:
       web-v07:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.9.14"
@@ -532,13 +581,14 @@ services:
         aliases:
           - "upstream.vault-v07"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v07:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.9.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v07:/data"
-      - "models:/models:ro"
       - "vault-v07-home:/home/vault"
   vault-v08:
     build:
@@ -557,6 +607,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v08:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV08}"
       VAULT_ADMIN_GROUPS: "vault-v08,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.10.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV08}"
     networks:
       web-v08:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.10.14"
@@ -564,13 +616,14 @@ services:
         aliases:
           - "upstream.vault-v08"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v08:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.10.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v08:/data"
-      - "models:/models:ro"
       - "vault-v08-home:/home/vault"
   vault-v09:
     build:
@@ -589,6 +642,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v09:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV09}"
       VAULT_ADMIN_GROUPS: "vault-v09,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.11.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV09}"
     networks:
       web-v09:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.11.14"
@@ -596,13 +651,14 @@ services:
         aliases:
           - "upstream.vault-v09"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v09:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.11.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v09:/data"
-      - "models:/models:ro"
       - "vault-v09-home:/home/vault"
   vault-v10:
     build:
@@ -621,6 +677,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v10:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV10}"
       VAULT_ADMIN_GROUPS: "vault-v10,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.12.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV10}"
     networks:
       web-v10:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.12.14"
@@ -628,13 +686,14 @@ services:
         aliases:
           - "upstream.vault-v10"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v10:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.12.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v10:/data"
-      - "models:/models:ro"
       - "vault-v10-home:/home/vault"
   vault-v11:
     build:
@@ -653,6 +712,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v11:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV11}"
       VAULT_ADMIN_GROUPS: "vault-v11,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.13.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV11}"
     networks:
       web-v11:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.13.14"
@@ -660,13 +721,14 @@ services:
         aliases:
           - "upstream.vault-v11"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v11:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.13.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v11:/data"
-      - "models:/models:ro"
       - "vault-v11-home:/home/vault"
   vault-v12:
     build:
@@ -685,6 +747,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v12:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV12}"
       VAULT_ADMIN_GROUPS: "vault-v12,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.14.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV12}"
     networks:
       web-v12:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.14.14"
@@ -692,13 +756,14 @@ services:
         aliases:
           - "upstream.vault-v12"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v12:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.14.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v12:/data"
-      - "models:/models:ro"
       - "vault-v12-home:/home/vault"
   vault-v13:
     build:
@@ -717,6 +782,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v13:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV13}"
       VAULT_ADMIN_GROUPS: "vault-v13,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.15.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV13}"
     networks:
       web-v13:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.15.14"
@@ -724,13 +791,14 @@ services:
         aliases:
           - "upstream.vault-v13"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v13:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.15.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v13:/data"
-      - "models:/models:ro"
       - "vault-v13-home:/home/vault"
   vault-v14:
     build:
@@ -749,6 +817,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v14:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV14}"
       VAULT_ADMIN_GROUPS: "vault-v14,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.16.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV14}"
     networks:
       web-v14:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.16.14"
@@ -756,13 +826,14 @@ services:
         aliases:
           - "upstream.vault-v14"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v14:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.16.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v14:/data"
-      - "models:/models:ro"
       - "vault-v14-home:/home/vault"
   vault-v15:
     build:
@@ -781,6 +852,8 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v15:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV15}"
       VAULT_ADMIN_GROUPS: "vault-v15,lokyy-admins"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.17.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBV15}"
     networks:
       web-v15:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.17.14"
@@ -788,13 +861,14 @@ services:
         aliases:
           - "upstream.vault-v15"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-v15:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.17.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
     depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
+      embed:
+        condition: "service_healthy"
     volumes:
       - "vault-v15:/data"
-      - "models:/models:ro"
       - "vault-v15-home:/home/vault"
   vault-firma:
     build:
@@ -814,6 +888,8 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYFIRMA}"
       VAULT_ADMIN_GROUPS: "lokyy-admins"
       MCP_HTTP_READONLY_TOKEN: "${SERVICE_HEX_64_MCPREADONLYFIRMA}"
+      MINDBASE_EMBED_URL: "http://${LOKYY_NET_PREFIX:-10.231}.2.46:8080"
+      MINDBASE_EMBED_TOKEN: "${SERVICE_HEX_64_EMBFIRMA}"
     networks:
       web-firma:
         ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.2.14"
@@ -821,14 +897,105 @@ services:
         aliases:
           - "upstream.vault-firma"
       egress: {}
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+      embed-firma:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.2.45"
+    mem_limit: "${VAULT_MEM_LIMIT:-1g}"
+    depends_on:
+      embed:
+        condition: "service_healthy"
+    volumes:
+      - "vault-firma:/data"
+      - "vault-firma-home:/home/vault"
+  embed:
+    build:
+      context: "../.."
+      dockerfile: "deploy/Dockerfile"
+      target: "embed"
+    restart: "unless-stopped"
+    mem_limit: "${EMBED_MEM_LIMIT:-4g}"
+    read_only: true
+    tmpfs:
+      - "/tmp:size=16m,mode=1777"
+    cap_drop:
+      - "ALL"
+    security_opt:
+      - "no-new-privileges:true"
+    sysctls:
+      net.ipv4.ip_forward: "0"
+    pids_limit: 256
     depends_on:
       model-prefetch:
         condition: "service_completed_successfully"
+    environment:
+      EMBED_VAULTS: "v01,v02,v03,v04,v05,v06,v07,v08,v09,v10,v11,v12,v13,v14,v15,firma"
+      EMBED_TOKEN_V01: "${SERVICE_HEX_64_EMBV01}"
+      EMBED_SOURCE_V01: "${LOKYY_NET_PREFIX:-10.231}.3.32/28"
+      EMBED_TOKEN_V02: "${SERVICE_HEX_64_EMBV02}"
+      EMBED_SOURCE_V02: "${LOKYY_NET_PREFIX:-10.231}.4.32/28"
+      EMBED_TOKEN_V03: "${SERVICE_HEX_64_EMBV03}"
+      EMBED_SOURCE_V03: "${LOKYY_NET_PREFIX:-10.231}.5.32/28"
+      EMBED_TOKEN_V04: "${SERVICE_HEX_64_EMBV04}"
+      EMBED_SOURCE_V04: "${LOKYY_NET_PREFIX:-10.231}.6.32/28"
+      EMBED_TOKEN_V05: "${SERVICE_HEX_64_EMBV05}"
+      EMBED_SOURCE_V05: "${LOKYY_NET_PREFIX:-10.231}.7.32/28"
+      EMBED_TOKEN_V06: "${SERVICE_HEX_64_EMBV06}"
+      EMBED_SOURCE_V06: "${LOKYY_NET_PREFIX:-10.231}.8.32/28"
+      EMBED_TOKEN_V07: "${SERVICE_HEX_64_EMBV07}"
+      EMBED_SOURCE_V07: "${LOKYY_NET_PREFIX:-10.231}.9.32/28"
+      EMBED_TOKEN_V08: "${SERVICE_HEX_64_EMBV08}"
+      EMBED_SOURCE_V08: "${LOKYY_NET_PREFIX:-10.231}.10.32/28"
+      EMBED_TOKEN_V09: "${SERVICE_HEX_64_EMBV09}"
+      EMBED_SOURCE_V09: "${LOKYY_NET_PREFIX:-10.231}.11.32/28"
+      EMBED_TOKEN_V10: "${SERVICE_HEX_64_EMBV10}"
+      EMBED_SOURCE_V10: "${LOKYY_NET_PREFIX:-10.231}.12.32/28"
+      EMBED_TOKEN_V11: "${SERVICE_HEX_64_EMBV11}"
+      EMBED_SOURCE_V11: "${LOKYY_NET_PREFIX:-10.231}.13.32/28"
+      EMBED_TOKEN_V12: "${SERVICE_HEX_64_EMBV12}"
+      EMBED_SOURCE_V12: "${LOKYY_NET_PREFIX:-10.231}.14.32/28"
+      EMBED_TOKEN_V13: "${SERVICE_HEX_64_EMBV13}"
+      EMBED_SOURCE_V13: "${LOKYY_NET_PREFIX:-10.231}.15.32/28"
+      EMBED_TOKEN_V14: "${SERVICE_HEX_64_EMBV14}"
+      EMBED_SOURCE_V14: "${LOKYY_NET_PREFIX:-10.231}.16.32/28"
+      EMBED_TOKEN_V15: "${SERVICE_HEX_64_EMBV15}"
+      EMBED_SOURCE_V15: "${LOKYY_NET_PREFIX:-10.231}.17.32/28"
+      EMBED_TOKEN_FIRMA: "${SERVICE_HEX_64_EMBFIRMA}"
+      EMBED_SOURCE_FIRMA: "${LOKYY_NET_PREFIX:-10.231}.2.32/28"
+      NODE_OPTIONS: "--import=/lokyy/models/offline.mjs"
     volumes:
-      - "vault-firma:/data"
       - "models:/models:ro"
-      - "vault-firma-home:/home/vault"
+    networks:
+      embed-v01:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.3.46"
+      embed-v02:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.4.46"
+      embed-v03:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.5.46"
+      embed-v04:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.6.46"
+      embed-v05:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.7.46"
+      embed-v06:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.8.46"
+      embed-v07:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.9.46"
+      embed-v08:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.10.46"
+      embed-v09:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.11.46"
+      embed-v10:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.12.46"
+      embed-v11:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.13.46"
+      embed-v12:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.14.46"
+      embed-v13:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.15.46"
+      embed-v14:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.16.46"
+      embed-v15:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.17.46"
+      embed-firma:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.2.46"
   metamcp-db:
     image: "postgres:16-alpine"
     restart: "unless-stopped"
@@ -1012,6 +1179,18 @@ networks:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.0.80/28"
           ip_range: "${LOKYY_NET_PREFIX:-10.231}.0.80/29"
+  portal-gate:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.0.112/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.0.112/29"
+  authentik-api:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.0.128/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.0.128/29"
   model-egress:
     ipam:
       config:
@@ -1034,6 +1213,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.3.16/28"
+  embed-v01:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.3.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.3.32/29"
   web-v02:
     internal: true
     ipam:
@@ -1045,6 +1230,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.4.16/28"
+  embed-v02:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.4.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.4.32/29"
   web-v03:
     internal: true
     ipam:
@@ -1056,6 +1247,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.5.16/28"
+  embed-v03:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.5.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.5.32/29"
   web-v04:
     internal: true
     ipam:
@@ -1067,6 +1264,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.6.16/28"
+  embed-v04:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.6.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.6.32/29"
   web-v05:
     internal: true
     ipam:
@@ -1078,6 +1281,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.7.16/28"
+  embed-v05:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.7.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.7.32/29"
   web-v06:
     internal: true
     ipam:
@@ -1089,6 +1298,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.8.16/28"
+  embed-v06:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.8.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.8.32/29"
   web-v07:
     internal: true
     ipam:
@@ -1100,6 +1315,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.9.16/28"
+  embed-v07:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.9.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.9.32/29"
   web-v08:
     internal: true
     ipam:
@@ -1111,6 +1332,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.10.16/28"
+  embed-v08:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.10.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.10.32/29"
   web-v09:
     internal: true
     ipam:
@@ -1122,6 +1349,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.11.16/28"
+  embed-v09:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.11.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.11.32/29"
   web-v10:
     internal: true
     ipam:
@@ -1133,6 +1366,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.12.16/28"
+  embed-v10:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.12.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.12.32/29"
   web-v11:
     internal: true
     ipam:
@@ -1144,6 +1383,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.13.16/28"
+  embed-v11:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.13.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.13.32/29"
   web-v12:
     internal: true
     ipam:
@@ -1155,6 +1400,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.14.16/28"
+  embed-v12:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.14.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.14.32/29"
   web-v13:
     internal: true
     ipam:
@@ -1166,6 +1417,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.15.16/28"
+  embed-v13:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.15.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.15.32/29"
   web-v14:
     internal: true
     ipam:
@@ -1177,6 +1434,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.16.16/28"
+  embed-v14:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.16.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.16.32/29"
   web-v15:
     internal: true
     ipam:
@@ -1188,6 +1451,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.17.16/28"
+  embed-v15:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.17.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.17.32/29"
   web-firma:
     internal: true
     ipam:
@@ -1199,6 +1468,12 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.2.16/28"
+  embed-firma:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${LOKYY_NET_PREFIX:-10.231}.2.32/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.2.32/29"
 volumes:
   authentik-db: {}
   metamcp-db: {}

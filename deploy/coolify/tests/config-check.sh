@@ -41,7 +41,12 @@ for pkg in s m; do
   check "$pkg: every subnet rendered under 10.231" '[[ $(q "[.networks[] | (.ipam.config // [])[] | .subnet | select(startswith(\"10.231.\") | not)] | length") == 0 ]]'
 
   # LBV2-28 portal wiring: portal only on edge + portal; admin entrypoint bound to Traefik's portal address
-  check "$pkg: portal networks edge,metamcp-internal,portal (never a vault network)" '[[ $(q ".services.portal.networks | keys | join(\",\")") == edge,metamcp-internal,portal ]]'
+  check "$pkg: portal networks edge,metamcp-internal,portal,portal-gate (never a vault network)" '[[ $(q ".services.portal.networks | keys | join(\",\")") == edge,metamcp-internal,portal,portal-gate ]]'
+  check "$pkg: authentik-gate only on portal-gate + authentik-api" '[[ $(q ".services[\"authentik-gate\"].networks | keys | join(\",\")") == authentik-api,portal-gate ]]'
+  check "$pkg: portal-gate members authentik-gate,portal" '[[ $(q "[.services | to_entries[] | select(.value.networks | has(\"portal-gate\")) | .key] | sort | join(\",\")") == authentik-gate,portal ]]'
+  check "$pkg: authentik-api members authentik-gate,authentik-server" '[[ $(q "[.services | to_entries[] | select(.value.networks | has(\"authentik-api\")) | .key] | sort | join(\",\")") == authentik-gate,authentik-server ]]'
+  check "$pkg: service-account token only in Authentik and authentik-gate" '[[ $(q "[.services | to_entries[] | select(.value.environment | tostring | contains(\"$(grep ^SERVICE_HEX_64_PORTALAKTOKEN= "$tmp/$pkg.env" | cut -d= -f2)\")) | .key] | sort | join(\",\")") == authentik-gate,authentik-server,authentik-worker ]]'
+  check "$pkg: port gate (no hard-coded host port in deploy/)" '"$dir/../stack/tests/port-gate.sh" >/dev/null'
   check "$pkg: portal network members lokyy-traefik,portal" '[[ $(q "[.services | to_entries[] | select(.value.networks | has(\"portal\")) | .key] | sort | join(\",\")") == lokyy-traefik,portal ]]'
   check "$pkg: portal-admin entrypoint on 10.231.0.93 only" 'q ".services[\"lokyy-traefik\"].command[]" | grep -qx -- "--entrypoints.portal-admin.address=10.231.0.93:8090"'
   check "$pkg: portal has fixed address 10.231.0.94 (ipAllowList)" '[[ $(q ".services.portal.networks.portal.ipv4_address") == 10.231.0.94 && $(q ".services[\"lokyy-traefik\"].environment.PORTAL_IP") == 10.231.0.94 ]]'
@@ -50,10 +55,11 @@ for pkg in s m; do
   n=0
   for v in $vaults; do
     n=$((n + 1))
-    [[ $(q ".services[\"vault-$v\"].networks | keys | join(\",\")") == "egress,mcp-$v,web-$v" ]] || { echo "FAIL $pkg: vault-$v networks"; fail=1; }
+    [[ $(q ".services[\"vault-$v\"].networks | keys | join(\",\")") == "egress,embed-$v,mcp-$v,web-$v" ]] || { echo "FAIL $pkg: vault-$v networks"; fail=1; }
     [[ $(q "[.services | to_entries[] | select(.value.networks | has(\"web-$v\")) | .key] | sort | join(\",\")") == "lokyy-traefik,vault-$v" ]] || { echo "FAIL $pkg: web-$v members"; fail=1; }
     [[ $(q "[.services | to_entries[] | select(.value.networks | has(\"mcp-$v\")) | .key] | sort | join(\",\")") == "vault-connector,vault-$v" ]] || { echo "FAIL $pkg: mcp-$v members"; fail=1; }
-    [[ $(q ".networks[\"web-$v\"].internal and .networks[\"mcp-$v\"].internal") == true ]] || { echo "FAIL $pkg: $v networks not internal"; fail=1; }
+    [[ $(q "[.services | to_entries[] | select(.value.networks | has(\"embed-$v\")) | .key] | sort | join(\",\")") == "embed,vault-$v" ]] || { echo "FAIL $pkg: embed-$v members"; fail=1; }
+    [[ $(q ".networks[\"web-$v\"].internal and .networks[\"mcp-$v\"].internal and .networks[\"embed-$v\"].internal") == true ]] || { echo "FAIL $pkg: $v networks not internal"; fail=1; }
     host="traefik.http.routers.lokyy-local-$v.rule"
     [[ $(q ".services[\"lokyy-traefik\"].labels[\"$host\"]") == "Host(\`$v.beta.example.test\`)" ]] || { echo "FAIL $pkg: coolify-proxy router for $v"; fail=1; }
   done

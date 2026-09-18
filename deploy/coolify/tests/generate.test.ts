@@ -52,12 +52,13 @@ for (const pkg of pkgs) {
   });
 
   test(`${pkg}: every vault only on its own web/mcp network plus egress`, () => {
-    for (const v of vaultNames(pkg)) assert.deepEqual(netKeys(c, `vault-${v}`), ['egress', `mcp-${v}`, `web-${v}`]);
+    for (const v of vaultNames(pkg)) assert.deepEqual(netKeys(c, `vault-${v}`), ['egress', `embed-${v}`, `mcp-${v}`, `web-${v}`]);
     // each web-<v> / mcp-<v> network has exactly the expected members
     for (const v of vaultNames(pkg)) {
       const on = (n: string) => svcs.filter((s) => netKeys(c, s).includes(n)).sort();
       assert.deepEqual(on(`web-${v}`), ['lokyy-traefik', `vault-${v}`].sort());
       assert.deepEqual(on(`mcp-${v}`), ['vault-connector', `vault-${v}`].sort());
+      assert.deepEqual(on(`embed-${v}`), ['embed', `vault-${v}`].sort());
     }
   });
 
@@ -112,8 +113,8 @@ for (const pkg of pkgs) {
       assert.equal(env.NODE_OPTIONS, '--import=/lokyy/models/offline.mjs');
       assert.equal(env.MCP_HTTP_ALLOWED_HOSTS, `mcp.vault-${v}:4322`);
       assert.ok(s.mem_limit);
-      assert.ok((s.volumes ?? []).includes('models:/models:ro'));
-      assert.deepEqual(s.depends_on, { 'model-prefetch': { condition: 'service_completed_successfully' } });
+      assert.ok(!(s.volumes ?? []).some((x) => x.startsWith('models:')), 'vaults embed via the shared service');
+      assert.deepEqual(s.depends_on, { embed: { condition: 'service_healthy' } });
       assert.equal(s.labels, undefined, 'inner services carry no Traefik labels');
     }
     assert.ok(c.services['vault-firma'].environment?.MCP_HTTP_READONLY_TOKEN);
@@ -212,15 +213,18 @@ test('S -> M upgrade: every S volume and network exists unchanged in M', () => {
   }
 });
 
-test('embed flag (LBV2-26 contract): off by default; when on, one token and one network per vault', () => {
-  assert.equal(buildCompose('s').services.embed, undefined);
-  const c = buildCompose('s', { embed: true });
+test('embed (LBV2-26 contract, on in the packages): one token and one network per vault, fixed addresses', () => {
+  assert.ok(buildCompose('s').services.embed, 'on by default');
+  assert.equal(buildCompose('s', { embed: false }).services.embed, undefined);
+  const c = buildCompose('s');
   const e = c.services.embed;
   assert.deepEqual(e.build, { context: '../..', dockerfile: 'deploy/Dockerfile', target: 'embed' });
   assert.equal(e.read_only, true);
   assert.deepEqual(e.cap_drop, ['ALL']);
   assert.deepEqual(e.sysctls, { 'net.ipv4.ip_forward': '0' });
   assert.deepEqual(e.volumes, ['models:/models:ro']);
+  assert.equal(e.mem_limit, '${EMBED_MEM_LIMIT:-4g}');
+  assert.equal(e.environment?.NODE_OPTIONS, '--import=/lokyy/models/offline.mjs');
   assert.deepEqual(netKeys(c, 'embed'), vaultNames('s').map((v) => `embed-${v}`).sort());
   assert.equal(e.environment?.EMBED_VAULTS, vaultNames('s').join(','));
   const svcs = Object.keys(c.services);
@@ -228,7 +232,10 @@ test('embed flag (LBV2-26 contract): off by default; when on, one token and one 
     const V = v.toUpperCase();
     const s = c.services[`vault-${v}`];
     const env = s.environment ?? {};
-    assert.equal(env.MINDBASE_EMBED_URL, 'http://embed:8080');
+    const k = v === 'firma' ? 0 : Number(v.slice(1));
+    assert.equal(env.MINDBASE_EMBED_URL, `http://\${LOKYY_NET_PREFIX:-10.231}.${2 + k}.46:8080`, 'fixed address, not a name');
+    assert.equal((c.services.embed.networks as Record<string, { ipv4_address?: string }>)[`embed-${v}`].ipv4_address, `\${LOKYY_NET_PREFIX:-10.231}.${2 + k}.46`);
+    assert.equal(c.networks[`embed-${v}`].ipam?.config[0].ip_range, `\${LOKYY_NET_PREFIX:-10.231}.${2 + k}.32/29`);
     assert.equal(env.MINDBASE_EMBED_TOKEN, `\${SERVICE_HEX_64_EMB${V}}`);
     assert.equal(e.environment?.[`EMBED_TOKEN_${V}`], env.MINDBASE_EMBED_TOKEN, 'plain token = same magic var');
     assert.equal(e.environment?.[`EMBED_SOURCE_${V}`], c.networks[`embed-${v}`].ipam?.config[0].subnet);
@@ -248,7 +255,7 @@ test('portal wiring (LBV2-28 contract)', () => {
     const t = c.services['lokyy-traefik'];
     const pnets = p.networks as Record<string, { ipv4_address?: string }>;
     const tnets = t.networks as Record<string, { ipv4_address?: string }>;
-    assert.deepEqual(Object.keys(pnets).sort(), ['edge', 'metamcp-internal', 'portal']);
+    assert.deepEqual(Object.keys(pnets).sort(), ['edge', 'metamcp-internal', 'portal', 'portal-gate']);
     assert.equal(pnets.portal.ipv4_address, '${LOKYY_NET_PREFIX:-10.231}.0.94');
     assert.equal(tnets.portal.ipv4_address, '${LOKYY_NET_PREFIX:-10.231}.0.93');
     assert.deepEqual(c.networks.portal.ipam?.config[0], { subnet: '${LOKYY_NET_PREFIX:-10.231}.0.80/28', ip_range: '${LOKYY_NET_PREFIX:-10.231}.0.80/29' });
@@ -385,7 +392,7 @@ test('direct provisioning (LBV2-28 final): portal provisions MetaMCP itself; no 
     assert.equal(m.volumes, undefined);
     assert.ok(!Object.keys(m.environment ?? {}).some((k) => k.startsWith('MCP_TOKEN') || k.startsWith('MCP_READONLY')), 'metamcp needs no vault tokens');
     const p = c.services.portal;
-    assert.deepEqual(netKeys(c, 'portal'), ['edge', 'metamcp-internal', 'portal']);
+    assert.deepEqual(netKeys(c, 'portal'), ['edge', 'metamcp-internal', 'portal', 'portal-gate']);
     const env = p.environment ?? {};
     assert.equal(env.METAMCP_URL, 'http://metamcp:12008');
     assert.equal(env.METAMCP_DATABASE_URL, c.services.metamcp.environment?.DATABASE_URL);
@@ -421,5 +428,67 @@ test('MED-3: least-privilege Authentik service account for the portal; no bootst
       if (name.startsWith('authentik-')) continue;
       assert.ok(!JSON.stringify(svc).includes('SERVICE_HEX_64_PORTALAKTOKEN'), `${name} holds the service-account token`);
     }
+  }
+});
+
+test('embed image carries the offline loader (no bind mounts)', () => {
+  const df = readFileSync(join(coolifyDir, '../Dockerfile'), 'utf8');
+  const embedStage = df.slice(df.indexOf(' AS embed\n'), df.indexOf('\nFROM ', df.indexOf(' AS embed\n')));
+  assert.match(embedStage, /COPY deploy\/stack\/models\/offline\.mjs \/lokyy\/models\/offline\.mjs/);
+});
+
+test('authentik-gate (LBV2-28): only holder of the service-account token, two internal networks, fixed IPs', () => {
+  for (const pkg of pkgs) {
+    const c = buildCompose(pkg);
+    const g = c.services['authentik-gate'];
+    assert.deepEqual(g.build, { context: '../../deploy/stack/authentik-gate' });
+    assert.equal(g.read_only, true);
+    assert.deepEqual(g.cap_drop, ['ALL']);
+    assert.equal(g.mem_limit, '128m');
+    assert.equal(g.volumes, undefined);
+    assert.equal(g.labels, undefined);
+    assert.deepEqual(netKeys(c, 'authentik-gate'), ['authentik-api', 'portal-gate']);
+    const on = (n: string) => Object.keys(c.services).filter((s) => netKeys(c, s).includes(n)).sort();
+    assert.deepEqual(on('portal-gate'), ['authentik-gate', 'portal']);
+    assert.deepEqual(on('authentik-api'), ['authentik-gate', 'authentik-server']);
+    for (const n of ['portal-gate', 'authentik-api']) assert.equal(c.networks[n].internal, true, n);
+    assert.equal(addr(c, 'authentik-server', 'authentik-api'), `${P}.0.140`);
+    assert.equal(addr(c, 'authentik-gate', 'authentik-api'), `${P}.0.141`);
+    assert.equal(addr(c, 'authentik-gate', 'portal-gate'), `${P}.0.124`);
+    assert.equal(addr(c, 'portal', 'portal-gate'), `${P}.0.125`);
+    const ge = g.environment ?? {};
+    assert.equal(ge.AUTHENTIK_URL, `http://${P}.0.140:9000`);
+    assert.equal(ge.AUTHENTIK_API_TOKEN, '${SERVICE_HEX_64_PORTALAKTOKEN}');
+    assert.equal(ge.GATE_SECRET, '${SERVICE_HEX_64_PORTALGATESECRET}');
+    const pe = c.services.portal.environment ?? {};
+    assert.equal(pe.AUTHENTIK_GATE_URL, `http://${P}.0.124:8080`);
+    assert.equal(pe.AUTHENTIK_GATE_SECRET, ge.GATE_SECRET);
+    assert.equal(pe.AUTHENTIK_URL, undefined);
+    assert.equal(pe.AUTHENTIK_API_TOKEN, undefined);
+    assert.deepEqual(c.services.portal.depends_on?.['authentik-gate'], { condition: 'service_healthy' });
+    for (const [name, svc] of Object.entries(c.services)) {
+      if (['authentik-server', 'authentik-worker', 'authentik-gate'].includes(name)) continue;
+      assert.ok(!JSON.stringify(svc).includes('SERVICE_HEX_64_PORTALAKTOKEN'), `${name} holds the service-account token`);
+    }
+  }
+});
+
+test('mandatory MFA for admins only (Oliver): policy-bound validation stage in the default authentication flow', () => {
+  for (const pkg of pkgs) {
+    const b = renderBlueprint(pkg);
+    for (const dep of ['Default - Authentication flow', 'Default - TOTP MFA setup flow', 'Default - WebAuthn MFA setup flow']) {
+      assert.ok(b.includes(`attrs: { identifiers: { name: "${dep}" }, required: true }`), dep);
+    }
+    assert.ok(b.includes('model: authentik_stages_authenticator_validate.authenticatorvalidatestage'));
+    assert.ok(b.includes('      device_classes: [totp, webauthn]'));
+    assert.ok(b.includes('      not_configured_action: configure'));
+    assert.ok(b.includes('!Find [authentik_stages_authenticator_totp.authenticatortotpstage, [name, default-authenticator-totp-setup]]'));
+    assert.ok(b.includes('!Find [authentik_stages_authenticator_webauthn.authenticatorwebauthnstage, [name, default-authenticator-webauthn-setup]]'));
+    assert.ok(b.includes('    identifiers: { target: !Find [authentik_flows.flow, [slug, default-authentication-flow]], stage: !KeyOf stage-admin-mfa, order: 35 }'));
+    assert.ok(b.includes('      re_evaluate_policies: true'), 'decided when the user is known (after the password)');
+    // the policy: superusers, lokyy-admins and "authentik Admins" only
+    const expr = b.slice(b.indexOf('lokyy-admin-mfa-required'));
+    for (const x of ['is_superuser', '"lokyy-admins"', '"authentik Admins"', 'pending_user']) assert.ok(expr.includes(x), x);
+    assert.ok(b.includes('    identifiers: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa }'));
   }
 });

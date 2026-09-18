@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 export const PACKAGES = { s: { slots: 15 }, m: { slots: 30 } } as const;
 export type PackageName = keyof typeof PACKAGES;
-/** embed: shared embedding service of LBV2-26 (off until that branch is merged). */
+/** embed: shared embedding service of LBV2-26 (default on; off only for comparisons/tests). */
 export interface GenerateOptions { embed?: boolean }
 
 export interface Service {
@@ -73,6 +73,13 @@ const EMBED_PORT = 8080;
 // listens only on Traefik's address there, and only the portal's address may use it.
 const TRAEFIK_PORTAL_IP = `${NET}.0.93`;
 const PORTAL_IP = `${NET}.0.94`;
+// authentik-gate (LBV2-28): portal-gate (portal <-> gate) and authentik-api (gate <-> authentik-server)
+const GATE_PORTAL_IP = `${NET}.0.124`;
+const PORTAL_GATE_IP = `${NET}.0.125`;
+const AUTHENTIK_API_IP = `${NET}.0.140`;
+const GATE_API_IP = `${NET}.0.141`;
+/** Fixed addresses on embed-<v>: the embed service (.46) and the vault (.45), outside ip_range .32/29. */
+const embedNetIp = (v: string, host: 45 | 46) => `${NET}.${2 + (v === 'firma' ? 0 : Number(v.slice(1)))}.${host}`;
 // HIGH-1: lokyy-traefik sits on the shared "coolify" network, where any other Coolify app could register a
 // container or alias named like one of ours and win Docker's DNS answer. So every upstream of the inner
 // Traefik is a fixed address outside the dynamic ip_range (.0/29) of its network, never a name.
@@ -97,6 +104,7 @@ const secret = {
   authentikSecret: magic.hex('authentiksecret'),
   authentikDb: magic.hex('authentikdb'),
   portalAuthentikToken: magic.hex('portalaktoken'),
+  portalGateSecret: magic.hex('portalgatesecret'),
   adminPassword: magic.password('admin'),
   metamcpDb: magic.hex('metamcpdb'),
   metamcpAuth: magic.hex('metamcpauth'),
@@ -108,7 +116,7 @@ const secret = {
 function subnet(name: string): string {
   const fixed: Record<string, string> = {
     edge: '0.0/28', 'authentik-internal': '0.16/28', 'metamcp-internal': '0.32/28', 'mcp-upstream': '0.48/28',
-    'model-egress': '0.64/28', portal: '0.80/28', egress: '1.0/26',
+    'model-egress': '0.64/28', portal: '0.80/28', egress: '1.0/26', 'portal-gate': '0.112/28', 'authentik-api': '0.128/28',
   };
   if (fixed[name]) return `${NET}.${fixed[name]}`;
   const m = /^(web|mcp|embed)-(v(\d+)|firma)$/.exec(name);
@@ -155,14 +163,15 @@ function vault(v: string, opts: GenerateOptions): Service {
   if (opts.embed) {
     // LBV2-26: embeddings from the shared service over the vault's own embed-<v> network, own token;
     // the vault no longer loads or mounts the model (measured vault peak 226 MiB)
-    env.MINDBASE_EMBED_URL = `http://embed:${EMBED_PORT}`;
+    // Fixed address, like every other hop (HIGH-1)
+    env.MINDBASE_EMBED_URL = `http://${embedNetIp(v, 46)}:${EMBED_PORT}`;
     env.MINDBASE_EMBED_TOKEN = secret.embedToken(v);
     return {
       ...base,
       mem_limit: '${VAULT_MEM_LIMIT:-1g}',
       depends_on: { embed: { condition: 'service_healthy' } },
       volumes: [`vault-${v}:/data`, `vault-${v}-home:/home/vault`],
-      networks: { ...base.networks, [`embed-${v}`]: {} },
+      networks: { ...base.networks, [`embed-${v}`]: { ipv4_address: embedNetIp(v, 45) } },
     };
   }
   return {
@@ -174,7 +183,8 @@ function vault(v: string, opts: GenerateOptions): Service {
   };
 }
 
-export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Compose {
+export function buildCompose(pkg: PackageName, options: GenerateOptions = {}): Compose {
+  const opts: GenerateOptions = { embed: true, ...options };
   const vaults = vaultNames(pkg);
   const hosts = ['auth', 'mcp', 'app', ...vaults];
   const services: Record<string, Service> = {};
@@ -276,7 +286,7 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
   });
   services['authentik-server'] = {
     ...authentik('server', []),
-    networks: { edge: { ipv4_address: EDGE_IP['authentik-server'] }, 'authentik-internal': {} },
+    networks: { edge: { ipv4_address: EDGE_IP['authentik-server'] }, 'authentik-internal': {}, 'authentik-api': { ipv4_address: AUTHENTIK_API_IP } },
   };
   services['authentik-worker'] = authentik('worker', ['authentik-internal']);
   // The blueprint is baked into the image: a changed package recreates the worker, whose startup discovery
@@ -300,8 +310,9 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
       LOKYY_PACKAGE: pkg,
       LOKYY_SLOTS: slotNames(pkg).join(','),
       LOKYY_STATE_DIR: '/state',
-      // TODO(LBV2-28 authentik-gate): AUTHENTIK_URL points to the gate, which alone holds the service-account token
-      AUTHENTIK_URL: 'http://authentik-server:9000',
+      // No Authentik token: users and groups only through authentik-gate (shared secret)
+      AUTHENTIK_GATE_URL: `http://${GATE_PORTAL_IP}:8080`,
+      AUTHENTIK_GATE_SECRET: secret.portalGateSecret,
       VAULT_PROXY_SECRET: secret.portalProxy,
       VAULT_ADMIN_URL: `http://${TRAEFIK_PORTAL_IP}:8090`,
       // Direct provisioning (LBV2-28): MetaMCP API + database, vault tokens for the users' MCP servers
@@ -311,7 +322,25 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
       MCP_READONLY_TOKEN_FIRMA: secret.mcpReadonlyFirma,
     },
     volumes: ['lokyy-state:/state'],
-    networks: { edge: {}, portal: { ipv4_address: PORTAL_IP }, 'metamcp-internal': {} },
+    depends_on: { 'authentik-gate': { condition: 'service_healthy' } },
+    networks: { edge: {}, portal: { ipv4_address: PORTAL_IP }, 'metamcp-internal': {}, 'portal-gate': { ipv4_address: PORTAL_GATE_IP } },
+  };
+  // authentik-gate (LBV2-28): the only holder of the portal's least-privilege Authentik token. Reachable
+  // only from the portal (portal-gate), reaches only authentik-server (authentik-api); no egress.
+  services['authentik-gate'] = {
+    build: { context: `${REPO}/deploy/stack/authentik-gate` },
+    restart: 'unless-stopped',
+    mem_limit: '128m',
+    read_only: true,
+    cap_drop: ['ALL'],
+    security_opt: ['no-new-privileges:true'],
+    depends_on: { 'authentik-server': { condition: 'service_healthy' } },
+    environment: {
+      AUTHENTIK_URL: `http://${AUTHENTIK_API_IP}:9000`,
+      AUTHENTIK_API_TOKEN: secret.portalAuthentikToken,
+      GATE_SECRET: secret.portalGateSecret,
+    },
+    networks: { 'portal-gate': { ipv4_address: GATE_PORTAL_IP }, 'authentik-api': { ipv4_address: GATE_API_IP } },
   };
 
   // -------------------------------------------------------------------- Vaults
@@ -337,7 +366,7 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     services.embed = {
       build: { context: REPO, dockerfile: 'deploy/Dockerfile', target: 'embed' },
       restart: 'unless-stopped',
-      mem_limit: '${EMBED_MEM_LIMIT:-3584m}',
+      mem_limit: '${EMBED_MEM_LIMIT:-4g}',
       read_only: true,
       tmpfs: ['/tmp:size=16m,mode=1777'],
       cap_drop: ['ALL'],
@@ -346,9 +375,10 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
       sysctls: { 'net.ipv4.ip_forward': '0' },
       pids_limit: 256,
       depends_on: { 'model-prefetch': { condition: 'service_completed_successfully' } },
-      environment: embedEnv,
+      // Second layer on top of the service's own offline configuration (baked into the embed image)
+      environment: { ...embedEnv, NODE_OPTIONS: '--import=/lokyy/models/offline.mjs' },
       volumes: ['models:/models:ro'],
-      networks: vaults.map((v) => `embed-${v}`),
+      networks: Object.fromEntries(vaults.map((v) => [`embed-${v}`, { ipv4_address: embedNetIp(v, 46) }])),
     };
   }
 
@@ -431,13 +461,15 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     'metamcp-internal': network('metamcp-internal', { internal: true }),
     'mcp-upstream': { internal: true, ipam: { config: [{ subnet: subnet('mcp-upstream'), ip_range: `${NET}.0.48/29` }] } },
     portal: { internal: true, ipam: { config: [{ subnet: subnet('portal'), ip_range: `${NET}.0.80/29` }] } },
+    'portal-gate': { internal: true, ipam: { config: [{ subnet: subnet('portal-gate'), ip_range: `${NET}.0.112/29` }] } },
+    'authentik-api': { internal: true, ipam: { config: [{ subnet: subnet('authentik-api'), ip_range: `${NET}.0.128/29` }] } },
     'model-egress': network('model-egress'),
     egress: network('egress', { driver: 'bridge', driver_opts: { 'com.docker.network.bridge.enable_icc': 'false' } }),
   };
   for (const v of vaults) {
     networks[`web-${v}`] = splitNetwork(`web-${v}`, { internal: true });
     networks[`mcp-${v}`] = network(`mcp-${v}`, { internal: true });
-    if (opts.embed) networks[`embed-${v}`] = network(`embed-${v}`, { internal: true });
+    if (opts.embed) networks[`embed-${v}`] = splitNetwork(`embed-${v}`, { internal: true });
   }
 
   const volumes: Record<string, Record<string, never>> = { 'authentik-db': {}, 'metamcp-db': {}, models: {}, 'lokyy-state': {} };
@@ -634,6 +666,13 @@ const BLUEPRINT_DEPS = [
   "    attrs: { identifiers: { name: \"System - OAuth2 Provider - Scopes\" }, required: true }",
   "  - model: authentik_blueprints.metaapplyblueprint",
   "    attrs: { identifiers: { name: \"System - Proxy Provider - Scopes\" }, required: true }",
+  "  # Default flows the admin MFA entries below extend or reference",
+  "  - model: authentik_blueprints.metaapplyblueprint",
+  "    attrs: { identifiers: { name: \"Default - Authentication flow\" }, required: true }",
+  "  - model: authentik_blueprints.metaapplyblueprint",
+  "    attrs: { identifiers: { name: \"Default - TOTP MFA setup flow\" }, required: true }",
+  "  - model: authentik_blueprints.metaapplyblueprint",
+  "    attrs: { identifiers: { name: \"Default - WebAuthn MFA setup flow\" }, required: true }",
 ];
 // Explicit scope mappings: a provider created before the managed mappings exist would otherwise get none
 // and the outpost would send an empty X-authentik-username (401 everywhere)
@@ -648,6 +687,46 @@ const PROXY_PROPERTY_MAPPINGS = [
 
 const PORTAL_PERMISSIONS = ['view_user', 'add_user', 'change_user', 'delete_user', 'reset_user_password', 'view_group',
   'add_user_to_group', 'remove_user_from_group', 'view_authenticatedsession', 'delete_authenticatedsession'];
+
+// Mandatory MFA for operators (Oliver's decision): superusers, lokyy-admins and "authentik Admins" must pass
+// TOTP or WebAuthn after the password; without a device the stage walks them through the setup. Employees
+// (vault / lokyy-users groups) are not affected. The policy runs when the stage is reached (the user is
+// known then). Recovery links cannot skip it for admins: the portal's set-password flow refuses superusers
+// and lokyy-admins (apps/portal/authentik/lokyy-portal.yaml).
+const ADMIN_MFA = [
+  '  - model: authentik_stages_authenticator_validate.authenticatorvalidatestage',
+  '    id: stage-admin-mfa',
+  '    identifiers: { name: lokyy-admin-mfa }',
+  '    attrs:',
+  '      name: lokyy-admin-mfa',
+  '      device_classes: [totp, webauthn]',
+  '      not_configured_action: configure',
+  '      configuration_stages:',
+  '        - !Find [authentik_stages_authenticator_totp.authenticatortotpstage, [name, default-authenticator-totp-setup]]',
+  '        - !Find [authentik_stages_authenticator_webauthn.authenticatorwebauthnstage, [name, default-authenticator-webauthn-setup]]',
+  // A device validated moments ago by the default MFA stage (order 30) counts: no second prompt
+  '      last_auth_threshold: minutes=5',
+  '  - model: authentik_policies_expression.expressionpolicy',
+  '    id: policy-admin-mfa',
+  '    identifiers: { name: lokyy-admin-mfa-required }',
+  '    attrs:',
+  '      name: lokyy-admin-mfa-required',
+  '      expression: |',
+  '        user = request.context.get("pending_user") or request.user',
+  '        if user.is_superuser:',
+  '            return True',
+  '        return user.groups.filter(name__in=["lokyy-admins", "authentik Admins"]).exists()',
+  '  - model: authentik_flows.flowstagebinding',
+  '    id: binding-admin-mfa',
+  '    identifiers: { target: !Find [authentik_flows.flow, [slug, default-authentication-flow]], stage: !KeyOf stage-admin-mfa, order: 35 }',
+  '    attrs:',
+  '      evaluate_on_plan: false',
+  '      re_evaluate_policies: true',
+  '      invalid_response_action: retry',
+  '  - model: authentik_policies.policybinding',
+  '    identifiers: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa }',
+  '    attrs: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa, order: 0 }',
+];
 
 // Authentik blueprint: groups, one forward-auth proxy provider + application + group binding per vault,
 // the embedded outpost, and the bootstrap admin (akadmin) in lokyy-admins. No other users: the portal
@@ -742,6 +821,7 @@ export function renderBlueprint(pkg: PackageName): string {
   app('portal', 'lokyy-portal', 'Lokyy Portal', 'app', ['users', 'admins']);
   L.push('  # MetaMCP admin UI: operators only');
   app('metamcp', 'metamcp-admin', 'MetaMCP Admin', 'mcp', 'admins');
+  L.push('  # Mandatory MFA for operators', ...ADMIN_MFA);
   L.push(
     '  - model: authentik_outposts.outpost',
     '    identifiers: { managed: goauthentik.io/outposts/embedded }',
