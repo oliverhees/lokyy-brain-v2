@@ -1,0 +1,105 @@
+# LBV2-28 — local E2E stack for the setup portal. Project name lokyy-portal, one host port
+# (127.0.0.1:18380, Traefik), subnets 10.234.0.0/16. Mirrors the network model of deploy/stack:
+# the portal is on edge + metamcp-internal + portal-admin, never on a vault network.
+# Start with test/e2e/run.sh (generates .env with random secrets).
+name: lokyy-portal
+
+x-authentik-env: &authentik-env
+  AUTHENTIK_POSTGRESQL__HOST: authentik-db
+  AUTHENTIK_POSTGRESQL__NAME: authentik
+  AUTHENTIK_POSTGRESQL__USER: authentik
+  AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASS:?run test/e2e/run.sh}
+  AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?run test/e2e/run.sh}
+  AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_ADMIN_PASS:?run test/e2e/run.sh}
+  AUTHENTIK_BOOTSTRAP_EMAIL: admin@example.com
+  AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_API_TOKEN:?run test/e2e/run.sh}
+  AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+  AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+  AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+
+x-authentik-volumes: &authentik-volumes
+  - ./blueprints/e2e-stack.yaml:/blueprints/custom/e2e-stack.yaml:ro
+  - ../../authentik/lokyy-portal.yaml:/blueprints/custom/lokyy-portal.yaml:ro
+
+services:
+  traefik:
+    image: traefik:v3.7.13
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.constraints=Label(`com.docker.compose.project`,`lokyy-portal`)
+      - --entrypoints.web.address=:80
+      - --entrypoints.portal-admin.address=:8090
+      - --api.dashboard=false
+      - --log.level=INFO
+    ports:
+      - "127.0.0.1:18380:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [edge, portal-admin]
+
+  authentik-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASS}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
+      interval: 5s
+      retries: 20
+    networks: [authentik-internal]
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2026.8.2
+    command: server
+    depends_on:
+      authentik-db: { condition: service_healthy }
+    environment: *authentik-env
+    volumes: *authentik-volumes
+    shm_size: 512mb
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=lokyy-portal_edge
+      - traefik.http.routers.authentik.rule=Host(`auth.portal.localhost`)
+      - traefik.http.routers.authentik.entrypoints=web
+      - traefik.http.services.authentik.loadbalancer.server.port=9000
+      - traefik.http.middlewares.authentik.forwardauth.address=http://authentik-server:9000/outpost.goauthentik.io/auth/traefik
+      - traefik.http.middlewares.authentik.forwardauth.trustForwardHeader=true
+      - traefik.http.middlewares.authentik.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-uid
+    networks: [edge, authentik-internal]
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2026.8.2
+    command: worker
+    depends_on:
+      authentik-db: { condition: service_healthy }
+    environment: *authentik-env
+    volumes: *authentik-volumes
+    shm_size: 512mb
+    networks: [authentik-internal]
+
+  # Runs integration tests inside the stack network, like the portal container would.
+  tester:
+    image: node:24-alpine
+    profiles: [test]
+    working_dir: ${PORTAL_DIR:?run test/e2e/run.sh}
+    user: ${HOST_UID:-1000}:${HOST_GID:-1000}
+    volumes:
+      # rw only because vitest writes a temporary config bundle next to vitest.config.ts; runs as the host user
+      - ${REPO_DIR:?run test/e2e/run.sh}:${REPO_DIR}
+    environment:
+      AUTHENTIK_URL: http://authentik-server:9000
+      AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN}
+      E2E: "1"
+    networks: [edge]
+
+networks:
+  edge:
+    ipam: { config: [{ subnet: 10.234.0.0/24 }] }
+  authentik-internal:
+    internal: true
+    ipam: { config: [{ subnet: 10.234.1.0/24 }] }
+  portal-admin:
+    internal: true
+    ipam: { config: [{ subnet: 10.234.2.0/24 }] }

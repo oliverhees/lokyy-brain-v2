@@ -1,0 +1,60 @@
+# E2E stand-in for the stack blueprint of LBV2-27: groups of the contract, slot + portal providers.
+version: 1
+metadata:
+  name: lokyy-portal-e2e
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - { model: authentik_core.group, id: g-v01, identifiers: { name: vault-v01 }, attrs: { name: vault-v01 } }
+  - { model: authentik_core.group, id: g-v02, identifiers: { name: vault-v02 }, attrs: { name: vault-v02 } }
+  - { model: authentik_core.group, id: g-fr, identifiers: { name: vault-firma-read }, attrs: { name: vault-firma-read } }
+  - { model: authentik_core.group, id: g-fw, identifiers: { name: vault-firma-write }, attrs: { name: vault-firma-write } }
+  - { model: authentik_core.group, id: g-admins, identifiers: { name: lokyy-admins }, attrs: { name: lokyy-admins } }
+  - model: authentik_core.user
+    identifiers: { username: akadmin }
+    state: present
+    attrs:
+      # Blueprint m2m attrs REPLACE the set: keep the bootstrap superuser group, or akadmin (and the
+      # bootstrap API token the portal uses) loses all admin permissions.
+      groups: [!KeyOf g-admins, !Find [authentik_core.group, [name, "authentik Admins"]]]
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: p-portal
+    identifiers: { name: portal }
+    attrs: &provider
+      name: portal
+      mode: forward_single
+      external_host: http://app.portal.localhost:18380
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=8
+  # No policy binding: every authenticated user reaches the portal ("Mein Zugang"); the portal
+  # itself decides admin vs. self by group.
+  - model: authentik_core.application
+    id: a-portal
+    identifiers: { slug: portal }
+    attrs: { name: Lokyy Portal, slug: portal, provider: !KeyOf p-portal, policy_engine_mode: any }
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: p-v01
+    identifiers: { name: vault-v01 }
+    attrs:
+      <<: *provider
+      name: vault-v01
+      external_host: http://v01.portal.localhost:18380
+  - model: authentik_core.application
+    id: a-v01
+    identifiers: { slug: vault-v01 }
+    attrs: { name: Vault v01, slug: vault-v01, provider: !KeyOf p-v01, policy_engine_mode: any }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf a-v01, group: !KeyOf g-v01 }
+    attrs: { target: !KeyOf a-v01, group: !KeyOf g-v01, order: 0 }
+
+  - model: authentik_outposts.outpost
+    identifiers: { managed: goauthentik.io/outposts/embedded }
+    state: present
+    attrs:
+      providers: [!KeyOf p-portal, !KeyOf p-v01]
+      config:
+        authentik_host: http://auth.portal.localhost:18380
+        authentik_host_browser: http://auth.portal.localhost:18380
