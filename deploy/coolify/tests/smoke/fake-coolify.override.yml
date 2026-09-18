@@ -20,7 +20,7 @@ services:
     volumes: [/var/run/docker.sock:/var/run/docker.sock:ro]
     networks:
       coolify:
-        ipv4_address: 10.233.250.2
+        ipv4_address: 10.235.250.2
   lokyy-traefik:
     labels:
       - traefik.docker.network=lokyy-pkg-coolify
@@ -30,4 +30,4 @@ networks:
     name: lokyy-pkg-coolify
     ipam:
       config:
-        - subnet: 10.233.250.0/28
+        - subnet: 10.235.250.0/28

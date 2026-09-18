@@ -126,14 +126,26 @@ mcp_init() { # mcp_init <key> <user-endpoint> → HTTP status of an MCP initiali
     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
     "$(U mcp)/metamcp/$2/mcp"
 }
-provision() { # stands in for the portal: users.json into lokyy-state, provisioning inside metamcp
-  local pkg=$1
-  jq -n '{companyVault:"firma",users:[
-      {username:"alice",role:"reader",vault:"v01",allowVaultNameMismatch:true},
-      {username:"bob",role:"writer",vault:"v02",allowVaultNameMismatch:true}]}' >"$work/users.json"
-  docker run --rm -i -v "${PROJECT}_lokyy-state:/state" alpine:3.22 sh -c 'cat >/state/users.json' <"$work/users.json"
-  dc "$pkg" exec -T -w /app/apps/backend -e LOKYY_USERS="$(jq -c . "$work/users.json")" -e 'LOKYY_ROTATE=[]' \
-    -e LOKYY_PUBLIC_BASE="$(U mcp)" metamcp node --input-type=module - <"$stack/metamcp/provision.mjs" >"$work/clients.json" 2>"$work/provision.log"
+# users_json <generation> <jq users array>: writes users.json like the portal (uid 1000, tmp + rename)
+users_json() {
+  jq -n --argjson g "$1" --argjson u "$2" '{companyVault:"firma",generation:$g,users:$u}' >"$work/users.json"
+  docker run --rm -i --user 1000:1000 -v "${PROJECT}_lokyy-state:/state" alpine:3.22 \
+    sh -c 'cat >/state/.users.json.tmp && mv /state/.users.json.tmp /state/users.json' <"$work/users.json"
+}
+# clients_for <generation>: waits for the watcher's metamcp-clients.json of that generation (read as the portal would)
+read_clients() { docker run --rm --user 1000:1000 -v "${PROJECT}_lokyy-provision:/p:ro" alpine:3.22 cat /p/metamcp-clients.json 2>/dev/null; }
+clients_for() {
+  local deadline=$(( $(date +%s) + 300 ))
+  until [[ $(read_clients | jq -r '.sourceGeneration' 2>/dev/null) == "$1" ]]; do
+    (( $(date +%s) > deadline )) && return 1
+    sleep 3
+  done
+  read_clients >"$work/clients.json"
+}
+provision() { # stands in for the portal: users.json into lokyy-state; the watcher in metamcp provisions
+  users_json 1 '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true,"keyRotation":"a1"},
+                 {"username":"bob","role":"writer","vault":"v02","allowVaultNameMismatch":true}]'
+  clients_for 1 && [[ $(jq -r '.status' "$work/clients.json") == ok ]]
 }
 key() { jq -r --arg u "$1" '.users[] | select(.username == $u) | .apiKey' "$work/clients.json"; }
 
@@ -224,10 +236,41 @@ create_user alice "$(cat "$work/pass-alice")" vault-v01 && create_user bob "$(ca
   && create_user walt "$(cat "$work/pass-walt")" vault-firma-write && create_user rita "$(cat "$work/pass-rita")" vault-firma-read \
   && create_user ulla "$(cat "$work/pass-ulla")" vault-v03 lokyy-users \
   && ok "users created via Authentik API (bootstrap token)" || bad "user creation via Authentik API"
-provision s && ok "MCP provisioning inside metamcp (tokens from its env)" || { cat "$work/provision.log"; bad "provisioning"; }
+provision s && ok "provisioning watcher: users.json generation 1 provisioned, clients file readable by the portal uid" || { dc s logs metamcp | grep lokyy-supervisor | tail -20; bad "provisioning watcher"; }
 dc s up -d --force-recreate --no-deps mcp-gate >/dev/null 2>&1
 wait_for "S: mcp-gate healthy after users.json" 60 healthy s
 isolation_checks s v15
+
+echo "== [s] provisioning watcher: rotation, removal, a failing entry does not block others"
+old_alice=$(key alice) old_bob=$(key bob)
+restarts_before=$(dc s logs metamcp 2>/dev/null | grep -c 'restarting MetaMCP')
+users_json 2 '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true,"keyRotation":"a2"},
+               {"username":"zed","role":"writer","vault":"v01","allowVaultNameMismatch":true},
+               {"username":"carl","role":"writer","vault":"v04","allowVaultNameMismatch":true}]'
+clients_for 2 && ok "generation 2 processed" || bad "generation 2 not processed"
+expect "run status with one invalid entry" "$(jq -r .status "$work/clients.json")" "failed"
+expect "per-user status" "$(jq -r '[.users[] | "\(.username)=\(.status)"] | join(",")' "$work/clients.json")" "alice=ok,carl=ok,zed=failed"
+expect "no key for the failed entry" "$(jq -r '.users[] | select(.username=="zed") | .apiKey // "none"' "$work/clients.json")" "none"
+expect "bob removed" "$(jq -r '.removed | join(",")' "$work/clients.json")" "bob"
+expect "alice key rotated (keyRotation a1 -> a2)" "$([[ $(key alice) != "$old_alice" && -n $(key alice) ]] && echo new || echo same)" "new"
+expect "keyRotation recorded" "$(jq -r '.users[] | select(.username=="alice") | .keyRotation' "$work/clients.json")" "a2"
+wait_for "MetaMCP healthy after the watcher's restart" 180 healthy s
+expect "MetaMCP restarted by the watcher" "$(( $(dc s logs metamcp 2>/dev/null | grep -c 'restarting MetaMCP') - restarts_before ))" "1"
+expect "old alice key" "$(mcp_init "$old_alice" alice)" "401"
+expect "removed bob's key" "$(mcp_init "$old_bob" bob)" "401"
+expect "new alice key" "$(mcp_init "$(key alice)" alice)" "200"
+expect "carl key" "$(mcp_init "$(key carl)" carl)" "200"
+expect "file mode 0640, group 1000" "$(docker run --rm -v "${PROJECT}_lokyy-provision:/p:ro" alpine:3.22 stat -c '%a %g' /p/metamcp-clients.json)" "640 1000"
+expect "no API key in MetaMCP logs" "$(dc s logs metamcp 2>/dev/null | grep -c 'sk_mt_')" "0"
+users_json 3 '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true,"keyRotation":"a2"},
+               {"username":"bob","role":"writer","vault":"v02","allowVaultNameMismatch":true}]'
+clients_for 3 && [[ $(jq -r .status "$work/clients.json") == ok ]] && ok "generation 3 (bob back, carl removed) ok" || bad "generation 3"
+expect "alice key unchanged when keyRotation unchanged" "$(mcp_init "$(key alice)" alice)" "200"
+wait_for "MetaMCP healthy" 180 healthy s
+
+echo "== [s] Authentik providers carry the proxy scope mappings (non-empty identity on a fresh stack)"
+expect "proxy providers with 5 property mappings / all" \
+  "$(api GET '/providers/proxy/?page_size=200' | jq -r 'if (.results | length) > 0 and all(.results[]; (.property_mappings | length) == 5) then "all" else "\([.results[] | select((.property_mappings | length) != 5) | .name] | join(","))" end')" "all"
 
 # data that must survive the upgrade
 dc s exec -T vault-v01 sh -c 'echo lbv2-27 > /data/upgrade-marker' && ok "marker written to vault-v01 volume" || bad "marker write"
@@ -241,6 +284,9 @@ wait_for "M: blueprint lokyy-slots re-applied" 300 blueprint m
 wait_for "M: routes for new slots (worker re-applies the blueprint)" 900 routes v01 v16 v30 firma
 expect "vault-v01 data survived S → M" "$(dc m exec -T vault-v01 cat /data/upgrade-marker)" "lbv2-27"
 expect "M: 31 vault services running" "$(dc m ps --format '{{.Service}}' | grep -cE '^vault-(v[0-9]+|firma)$')" "31"
+expect "M: proxy providers with 5 property mappings" \
+  "$(api GET '/providers/proxy/?page_size=200' | jq -r 'if (.results | length) > 0 and all(.results[]; (.property_mappings | length) == 5) then "all" else "\([.results[] | select((.property_mappings | length) != 5) | .name] | join(","))" end')" "all"
+sleep 15; read_clients >"$work/clients.json"
 expect "alice's MCP key unchanged after upgrade" "$(key alice)" "$alice_key"
 isolation_checks m v30
 
