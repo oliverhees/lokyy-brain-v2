@@ -345,3 +345,20 @@ test('a query arriving while bulk texts run synchronously (ONNX blocks the event
     assert.ok(order.indexOf('q') < 8, `query only after the whole bulk request: ${order.join(',')}`);
   } finally { await s.close(); }
 });
+
+test('a vault that keeps the priority lane full cannot starve bulk indexing: every Nth text goes to bulk (audit)', async () => {
+  const m = heldModel();
+  const s = await start({ embedOne: m.embedOne, priorityMaxChars: 5, bulkEvery: 3, maxPendingPerVault: 20, maxQueue: 40 });
+  try {
+    const long = (p: string) => `${p}-${'x'.repeat(20)}`;
+    const bulk = post(s.base, { texts: [long('b1'), long('b2')] }, auth(TOKEN_BEN));
+    await new Promise((r) => setTimeout(r, 30));
+    const flood = Array.from({ length: 12 }, (_, i) => post(s.base, { texts: [`q${i}`] }, auth(TOKEN_ANNA)));
+    await new Promise((r) => setTimeout(r, 50));
+    m.release();
+    await Promise.all([bulk, ...flood]);
+    // b1 was already running; b2 must come within the next 3 slots, not after all 12 queries
+    assert.ok(m.order.indexOf(long('b2')) <= 4, `bulk starved by the priority lane: ${m.order.join(',')}`);
+    assert.ok(m.order.indexOf('q0') <= 2, `queries lost their priority: ${m.order.join(',')}`);
+  } finally { await s.close(); }
+});

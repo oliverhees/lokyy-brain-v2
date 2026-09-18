@@ -5,7 +5,8 @@
 // while streaming) → body shape and limits (400) → the vault's pending-request cap (429) → global
 // queue cap (503) → the vault's text rate (429 + Retry-After) → the request's token budget (413).
 // Texts are embedded one at a time. Short requests (search queries, ≤ priorityMaxChars in total) go
-// first, even between the texts of a running bulk request; within each class vaults take turns
+// first, even between the texts of a running bulk request, but every bulkEvery-th text goes to bulk
+// when bulk is waiting (one vault cannot starve indexing by flooding short requests); within each class vaults take turns
 // (round-robin), so one vault cannot starve the others. An inference that does not finish within
 // inferenceTimeoutMs fails its request and calls onStuck (main.ts exits; the container restarts). Error bodies are static; logs
 // carry the vault name, counts, status and duration, never text content or token material.
@@ -34,6 +35,8 @@ export interface EmbedServiceOptions {
   maxRequestTokens?: number;
   /** Requests with at most this many characters in total are served before bulk requests, default 512. */
   priorityMaxChars?: number;
+  /** After this many priority texts in a row, the next text goes to a waiting bulk job (default 4). */
+  bulkEvery?: number;
   /** Per text; default none (tests). */
   inferenceTimeoutMs?: number;
   onStuck?: () => void;
@@ -158,13 +161,23 @@ export function createEmbedService(o: EmbedServiceOptions): http.Server {
     }
   };
 
-  /** Next job: the first vault in turn with a priority job, else the first vault in turn. */
+  let priorityStreak = 0;
+  /** Next job: the first vault in turn with a priority job, else the first vault in turn; after
+   *  bulkEvery priority texts in a row a waiting bulk job goes first. */
   function nextJob(): Job | undefined {
-    for (const priorityPass of [true, false]) {
+    const bulkWaiting = rotation.some((v) => (queues.get(v) ?? []).some((j) => !j.priority && !j.cancelled));
+    const bulkTurn = bulkWaiting && priorityStreak >= (o.bulkEvery ?? 4);
+    const passes = bulkTurn ? [false] : [true, false];
+    for (const priorityPass of passes) {
       for (let i = 0; i < rotation.length; i++) {
         const q = queues.get(rotation[i]!) ?? [];
-        const job = priorityPass ? q.find((j) => j.priority && !j.cancelled) : q[0];
-        if (job) { rotation.splice(i, 1); return job; }
+        const job = priorityPass ? q.find((j) => j.priority && !j.cancelled)
+          : bulkTurn ? q.find((j) => !j.priority && !j.cancelled) : q[0];
+        if (job) {
+          rotation.splice(i, 1);
+          priorityStreak = job.priority ? priorityStreak + 1 : 0;
+          return job;
+        }
       }
     }
     return undefined;

@@ -77,6 +77,7 @@ const server = createEmbedService({
   countTokens: (text) => countTokens!(text),
   maxRequestTokens,
   priorityMaxChars: int('EMBED_PRIORITY_MAX_CHARS', 512),
+  bulkEvery: int('EMBED_BULK_EVERY', 4),
   inferenceTimeoutMs: int('EMBED_INFERENCE_TIMEOUT_MS', 60_000),
   // A stuck ONNX run cannot be aborted: exit so the container restarts (restart: unless-stopped);
   // vaults fall back to keyword search meanwhile.
