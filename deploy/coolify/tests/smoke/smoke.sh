@@ -57,11 +57,17 @@ wait_for() { # wait_for <what> <timeout-s> <command...>
   ok "ready: $what"
 }
 healthy() { dc "$1" ps --format json | jq -se '[.[] | select(.Service != "coolify-proxy" and .Service != "lokyy-traefik")] | length > 10 and all(.[]; .Health == "healthy")'; }
+# blueprint <pkg>: lokyy-slots applied successfully from the file currently in the image (hash matches)
 blueprint() {
   dc "$1" exec -T authentik-worker ak shell -c "
+import sys
+from hashlib import sha512
 from authentik.blueprints.models import BlueprintInstance
-import sys; sys.exit(0 if BlueprintInstance.objects.filter(name='lokyy-slots', status='successful').exists() else 1)"
+h = sha512(open('/blueprints/custom/lokyy-slots.yaml', 'rb').read()).hexdigest()
+sys.exit(0 if BlueprintInstance.objects.filter(name='lokyy-slots', status='successful', last_applied_hash=h).exists() else 1)"
 }
+# metamcp_ready <pkg>: MetaMCP's backend answers (it restarts after access changes)
+metamcp_ready() { dc "$1" exec -T metamcp wget -q -O /dev/null http://127.0.0.1:12008/api/auth/get-session; }
 routes() { local v; for v in "$@"; do [[ $(code "$(U "$v")/") == 302 ]] || return 1; done; }
 init_done() { [[ $(docker inspect -f '{{.State.ExitCode}} {{.State.Status}}' "$(dc "$1" ps -aq "$2")") == "0 exited" ]]; }
 
@@ -146,9 +152,14 @@ provision_run() {
   done
   export LOKYY_USERS; LOKYY_USERS=$(jq -cn --argjson u "$users" '{companyVault:"firma",users:$u}')
   export LOKYY_ROTATE=$rotate LOKYY_PUBLIC_BASE; LOKYY_PUBLIC_BASE=$(U mcp)
+  wait_for "MetaMCP ready before provisioning" 300 metamcp_ready "$PKG" >/dev/null
   dc "$PKG" exec -T -w /app/apps/backend -e LOKYY_USERS -e LOKYY_ROTATE -e LOKYY_PUBLIC_BASE "${args[@]}" metamcp \
     node --input-type=module - <"$stack/metamcp/provision.mjs" >"$work/clients.json" 2>"$work/provision.log"
-  if [[ $(jq -r .restartMetamcp "$work/clients.json") == true ]]; then dc "$PKG" restart metamcp >/dev/null; fi
+  if [[ $(jq -r .restartMetamcp "$work/clients.json") == true ]]; then
+    dc "$PKG" restart metamcp >/dev/null
+    sleep 5
+    wait_for "MetaMCP ready after restart" 300 metamcp_ready "$PKG" >/dev/null
+  fi
 }
 provision() {
   PKG=$1 provision_run '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true},
@@ -245,8 +256,6 @@ create_user alice "$(cat "$work/pass-alice")" vault-v01 && create_user bob "$(ca
   && create_user ulla "$(cat "$work/pass-ulla")" vault-v03 lokyy-users \
   && ok "users created via Authentik API (bootstrap token)" || bad "user creation via Authentik API"
 provision s && ok "MCP provisioning (provision.mjs, as the portal does)" || { cat "$work/provision.log"; bad "provisioning"; }
-dc s up -d --force-recreate --no-deps mcp-gate >/dev/null 2>&1
-wait_for "S: mcp-gate healthy after users.json" 60 healthy s
 isolation_checks s v15
 
 echo "== [s] provisioning: rotation, removal, a failing entry does not block others"
@@ -286,7 +295,7 @@ if has_portal; then dc s stop portal >/dev/null 2>&1 && dc s rm -f portal >/dev/
 echo "== upgrade the same project to package M"
 dc m up -d --build $(services m | grep -vx portal) >"$work/up-m.log" 2>&1 || { tail -20 "$work/up-m.log"; bad "compose up M"; }
 wait_for "M: all services healthy" 600 healthy m
-wait_for "M: blueprint lokyy-slots re-applied" 300 blueprint m
+wait_for "M: blueprint lokyy-slots re-applied (hash of the M file)" 1200 blueprint m
 wait_for "M: routes for new slots (worker re-applies the blueprint)" 900 routes v01 v16 v30 firma
 expect "vault-v01 data survived S → M" "$(dc m exec -T vault-v01 cat /data/upgrade-marker)" "lbv2-27"
 expect "M: 31 vault services running" "$(dc m ps --format '{{.Service}}' | grep -cE '^vault-(v[0-9]+|firma)$')" "31"
