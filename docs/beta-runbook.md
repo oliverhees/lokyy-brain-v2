@@ -2,10 +2,10 @@
 
 One company server, one Coolify application. You enter two values (`BASE_DOMAIN`, `ADMIN_EMAIL`); Coolify generates every secret, the first start sets everything up, and the setup portal at `https://app.<BASE_DOMAIN>` does the rest (users, slots, MCP keys).
 
-| Package | Compose file | Personal vaults | RAM (vaults idle / worst case) |
+| Package | Compose file | Personal vaults | RAM (all vaults + shared embedding service, limits) |
 |---|---|---|---|
-| S | `deploy/coolify/compose-s.yml` | 15 slots (`v01`–`v15`) + company vault `firma` | ~5 GB / 32 GB+ |
-| M | `deploy/coolify/compose-m.yml` | 30 slots (`v01`–`v30`) + `firma` | ~8 GB / 64 GB+ |
+| S | `deploy/coolify/compose-s.yml` | 15 slots (`v01`–`v15`) + company vault `firma` | 16 × 1 GB + 4 GB → 24 GB recommended |
+| M | `deploy/coolify/compose-m.yml` | 30 slots (`v01`–`v30`) + `firma` | 31 × 1 GB + 4 GB → 48 GB recommended |
 
 Server: Coolify v4 with its proxy (Traefik) running, ≥ 40 GB free disk, outbound HTTPS to `huggingface.co` (model download on first start) and `api.eurouter.ai`. The address range `10.231.0.0/16` must be unused by other Docker networks on the server (see "Settings you normally leave alone").
 
@@ -17,7 +17,7 @@ Server: Coolify v4 with its proxy (Traefik) running, ≥ 40 GB free disk, outbou
 4. **Raw mode ON** ("Deploy the compose file as is") and **"Connect to predefined network" OFF.** Both are required: otherwise Coolify joins every service to one shared network and the per-vault isolation is gone. Do not set domains on the services; routing is done by the compose file.
 5. **Environment variables:** set `BASE_DOMAIN` (e.g. `lokyy.example.de`, lower-case, no `https://`) and `ADMIN_EMAIL`. Leave every `SERVICE_*` variable as Coolify generated it.
 6. **Deploy.** The first deploy builds the images and downloads the embedding model (several minutes). Everything else is automatic: Authentik admin, blueprint (groups, vault apps, forward-auth), MetaMCP admin with self-registration closed, model verification (SHA-256), MCP gate.
-7. **Log in:** open `https://app.<BASE_DOMAIN>` and sign in with `ADMIN_EMAIL` and the password from Coolify → your application → *Environment Variables* → `SERVICE_PASSWORD_ADMIN`. Set up MFA for this account right away (`https://auth.<BASE_DOMAIN>/if/user/`). The portal guides you through adding people and assigning slots.
+7. **Log in:** open `https://app.<BASE_DOMAIN>` and sign in with `ADMIN_EMAIL` and the password from Coolify → your application → *Environment Variables* → `SERVICE_PASSWORD_ADMIN`. MFA is mandatory for administrators: on this first login Authentik walks you through setting up an authenticator app (TOTP) or a security key (WebAuthn); every later admin login asks for it. Employees log in with their password only. The portal guides you through adding people and assigning slots.
 
 Hosts: `app.` (setup portal), `auth.` (Authentik), `mcp.` (MetaMCP admin + MCP endpoints `/metamcp/<user>/mcp`), `firma.` (company vault), `v01.`…`v15`/`v30.` (personal vaults, one person per slot).
 
@@ -86,7 +86,7 @@ Coolify-specific design:
 - `lokyy-traefik` routes from a baked-in file (Go template: `BASE_DOMAIN` and proxy secrets from its environment). It has no Docker socket and reads no labels, so coolify-proxy and the inner Traefik can never pick up each other's routes. It deletes aliasing headers (`X_authentik_username`) and refuses to start with an invalid `BASE_DOMAIN`.
 - Repository assets are baked into images (blueprint into the Authentik image, routes into the Traefik image, model manifest/prefetch/offline loader into the vault image, `init.sh` into the MetaMCP init image): no bind mounts into a checkout.
 - Networks are project-scoped with fixed /28 subnets from `LOKYY_NET_PREFIX`: infrastructure `<prefix>.0.x`, `egress` `<prefix>.1.0/26`, `firma` `<prefix>.2.x`, slot `vNN` `<prefix>.(2+NN).0/28` (web) and `.16/28` (mcp). S and M share the same names and subnets, so an upgrade only adds.
-- The portal provisions MetaMCP directly (MetaMCP API + database, vault tokens as env; `deploy/stack/metamcp/provision.mjs` behaviour: removals first, every user on its own, no key for a failed user; a disabled or removed person's key is revoked in MetaMCP's database at once). It talks to Authentik only with a least-privilege service account (`lokyy-portal`: 10 user/group/session permissions, no superuser); no bootstrap API token exists. `mcp-gate`'s session cap comes from the package size (slots × 20 × 1.25).
+- The portal provisions MetaMCP directly (MetaMCP API + database, vault tokens as env; `deploy/stack/metamcp/provision.mjs` behaviour: removals first, every user on its own, no key for a failed user; a disabled or removed person's key is revoked in MetaMCP's database at once). It holds no Authentik token: user and group changes go through `authentik-gate` (shared secret), the only holder of the least-privilege service-account token (`lokyy-portal`: 10 user/group/session permissions, no superuser), on two internal networks (portal ↔ gate, gate ↔ authentik-server). No bootstrap API token exists. `mcp-gate`'s session cap comes from the package size (slots × 20 × 1.25).
 
 Tests: `deploy/coolify/tests/config-check.sh` (static: generator tests, `docker compose config` with Coolify-like env, network/label/secret invariants for both packages) and `deploy/coolify/tests/smoke/smoke.sh` (live on a dev machine: package S behind a coolify-proxy stand-in, admin login, slot isolation, MCP keys, then upgrade to M with data kept).
 
@@ -96,5 +96,6 @@ Tests: `deploy/coolify/tests/config-check.sh` (static: generator tests, `docker 
 - The embedding model stays loaded after the first search (~2.6 GiB per vault until restart).
 - `GET /api/config` shows the vault's EUrouter key to everyone with web access to that vault.
 - EUrouter: the model is chosen as a route (routing rule, `ruleId`) in the portal or the vault settings; PDF chat sends locally extracted text only (no figures/layout), limited by `maxContextChars`.
-- The shared embedding service (LBV2-26) is not part of the packages yet (generator option `embed`, off).
+- Embeddings come from one shared `embed` service (LBV2-26): each vault reaches it only over its own `embed-<slot>` network with its own token; the model loads once (4 GB limit) instead of in every vault.
+- Admin MFA is enforced in Authentik's default authentication flow for superusers and members of `lokyy-admins` / `authentik Admins` (TOTP or WebAuthn). Invitation / recovery links cannot be used for admin accounts (the portal's set-password flow refuses them).
 - Not yet verified on a real Coolify server: Raw-mode deploy end to end, certificates for all hosts, cookie SameSite with the Google callback, egress rules surviving restarts.
