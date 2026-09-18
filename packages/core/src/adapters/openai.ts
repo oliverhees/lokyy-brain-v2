@@ -2,6 +2,7 @@ import type { ChatChunk, ChatMessage, ChatRequest, ContentBlock, ToolCall, ToolD
 import type { AdapterConfig, LLMAdapter } from './types';
 import { RequestDeadline, readLlmTimeoutMs } from './timeout';
 import { guardLlmFetch } from '../net/llm-host-policy';
+import { EUROUTER_RULE_NOT_FOUND, isEurouterBaseUrl, isEurouterRuleId, listEurouterRules } from './eurouter';
 
 interface OpenAIToolCallDelta {
   index: number;
@@ -110,12 +111,24 @@ export class OpenAIAdapter implements LLMAdapter {
   private fetchImpl: typeof fetch;
   private timeoutMs: number;
   private baseUrl: string;
+  /** EUrouter routing rule sent as `rule_id`; only ever sent to EUrouter (LBV2-30). */
+  private ruleId: string | undefined;
 
   constructor(private config: AdapterConfig) {
+    if (config.ruleId !== undefined && config.ruleId !== '' && !isEurouterRuleId(config.ruleId)) {
+      throw new Error('Invalid EUrouter rule id');
+    }
     // Every request goes to the configured endpoint and carries the key (LBV2-19).
     this.fetchImpl = guardLlmFetch(config.fetchImpl ?? fetch.bind(globalThis));
     this.timeoutMs = config.timeoutMs ?? readLlmTimeoutMs(process.env);
     this.baseUrl = (config.baseUrl ?? 'https://api.openai.com').replace(/\/+$/, '');
+    this.ruleId = config.ruleId && isEurouterBaseUrl(this.baseUrl) ? config.ruleId : undefined;
+  }
+
+  /** `model` + `rule_id` for chat bodies. With a rule the model is optional (the rule may pick it). */
+  private routing(model: string): Record<string, string> {
+    if (!this.ruleId) return { model };
+    return model ? { model, rule_id: this.ruleId } : { rule_id: this.ruleId };
   }
 
   /** Build the chat completions URL, handling various baseUrl formats:
@@ -204,7 +217,7 @@ export class OpenAIAdapter implements LLMAdapter {
           authorization: `Bearer ${this.config.apiKey}`,
         },
         body: JSON.stringify({
-          model: request.model,
+          ...this.routing(request.model),
           messages,
           tools: toOpenAITools(request.tools),
           stream: true,
@@ -428,6 +441,19 @@ export class OpenAIAdapter implements LLMAdapter {
   }
 
   async testConnection(): Promise<{ ok: boolean; error?: string }> {
+    // EUrouter's /models is public, so it proves nothing about the key; the
+    // routing-rules list needs the key and also shows whether the rule exists.
+    if (isEurouterBaseUrl(this.baseUrl)) {
+      try {
+        const rules = await listEurouterRules({ apiKey: this.config.apiKey, baseUrl: this.baseUrl, fetchImpl: this.fetchImpl });
+        const wanted = this.ruleId?.toLowerCase();
+        if (wanted && !rules.some((r) => r.id.toLowerCase() === wanted)) return { ok: false, error: EUROUTER_RULE_NOT_FOUND };
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    }
+
     // Try /models first; if proxy doesn't support it, try a minimal chat request
     try {
       const r = await this.fetchImpl(this.modelsUrl(), {
@@ -446,7 +472,7 @@ export class OpenAIAdapter implements LLMAdapter {
           authorization: `Bearer ${this.config.apiKey}`,
         },
         body: JSON.stringify({
-          model: this.config.model,
+          ...this.routing(this.config.model),
           messages: [{ role: 'user', content: 'hi' }],
           max_completion_tokens: 1,
         }),

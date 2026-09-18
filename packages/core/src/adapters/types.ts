@@ -17,4 +17,6 @@ export interface AdapterConfig {
   fetchImpl?: typeof fetch; // for tests
   /** Provider inactivity timeout; defaults to MINDBASE_LLM_TIMEOUT_MS (120000). */
   timeoutMs?: number;
+  /** EUrouter routing rule id (UUID), sent as `rule_id` to api.eurouter.ai only (LBV2-30). */
+  ruleId?: string;
 }

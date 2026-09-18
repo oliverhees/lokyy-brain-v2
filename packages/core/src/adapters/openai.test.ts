@@ -224,3 +224,71 @@ describe('OpenAIAdapter', () => {
     expect(chunks.some((c) => (c as { kind: string; text?: string }).kind === 'delta' && (c as { text: string }).text === 'hi')).toBe(true);
   });
 });
+
+describe('OpenAIAdapter — EUrouter routing rules (LBV2-30)', () => {
+  const EU = 'https://api.eurouter.ai/api/v1';
+  const RULE = '3f1c2b9a-8d4e-4f6a-9b2c-1d2e3f4a5b6c';
+  const done = () => sseResponse(['data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n', 'data: [DONE]\n\n']);
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+
+  async function sentBody(cfg: { baseUrl?: string; ruleId?: string; model?: string }, requestModel = 'qwen3.6-27b') {
+    const fetchImpl = vi.fn().mockResolvedValue(done());
+    const adapter = new OpenAIAdapter({ apiKey: 'eur_k', model: cfg.model ?? 'qwen3.6-27b', baseUrl: cfg.baseUrl, ruleId: cfg.ruleId, fetchImpl: fetchImpl as unknown as typeof fetch });
+    for await (const _c of adapter.chat({ model: requestModel, messages: [{ role: 'user', content: 'hi' }] })) { /* drain */ }
+    return JSON.parse((fetchImpl.mock.calls[0]![1] as RequestInit).body as string) as Record<string, unknown>;
+  }
+
+  it('sends rule_id next to model when a rule is configured', async () => {
+    const body = await sentBody({ baseUrl: EU, ruleId: RULE });
+    expect(body['rule_id']).toBe(RULE);
+    expect(body['model']).toBe('qwen3.6-27b');
+  });
+
+  it('omits model when it is empty and a rule selects it', async () => {
+    const body = await sentBody({ baseUrl: EU, ruleId: RULE, model: '' }, '');
+    expect(body['rule_id']).toBe(RULE);
+    expect('model' in body).toBe(false);
+  });
+
+  it('sends no rule_id without a configured rule', async () => {
+    expect('rule_id' in (await sentBody({ baseUrl: EU }))).toBe(false);
+  });
+
+  it('never sends rule_id to a non-EUrouter host', async () => {
+    expect('rule_id' in (await sentBody({ baseUrl: 'https://api.openai.com', ruleId: RULE }))).toBe(false);
+  });
+
+  it('rejects a rule id that is not a UUID', () => {
+    expect(() => new OpenAIAdapter({ apiKey: 'k', model: 'm', baseUrl: EU, ruleId: 'my-rule' })).toThrow('Invalid EUrouter rule id');
+  });
+
+  it('testConnection on EUrouter validates the key via /routing-rules, not the public /models', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(json({ data: [] }));
+    const adapter = new OpenAIAdapter({ apiKey: 'eur_k', model: 'm', baseUrl: EU, fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(await adapter.testConnection()).toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]![0]).toBe(`${EU}/routing-rules`);
+  });
+
+  it('testConnection on EUrouter fails for a wrong key', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async (url: string) =>
+      (url.endsWith('/models') ? json({ data: [{ id: 'm' }] }) : json({ error: 'unauthorized' }, 401)));
+    const adapter = new OpenAIAdapter({ apiKey: 'wrong', model: 'm', baseUrl: EU, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const r = await adapter.testConnection();
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('EUrouter routing rules request failed (HTTP 401)');
+    expect(r.error).not.toContain('wrong');
+  });
+
+  it('testConnection on EUrouter fails when the configured rule is not in the list', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(json({ data: [{ id: '11111111-2222-4333-8444-555555555555', name: 'Other' }] }));
+    const adapter = new OpenAIAdapter({ apiKey: 'k', model: 'm', baseUrl: EU, ruleId: RULE, fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(await adapter.testConnection()).toEqual({ ok: false, error: 'EUrouter routing rule not found or disabled' });
+  });
+
+  it('testConnection on EUrouter passes when the configured rule exists (case-insensitive id)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(json({ data: [{ id: RULE.toUpperCase(), name: 'EU only' }] }));
+    const adapter = new OpenAIAdapter({ apiKey: 'k', model: 'm', baseUrl: EU, ruleId: RULE, fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(await adapter.testConnection()).toEqual({ ok: true });
+  });
+});
