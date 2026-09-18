@@ -120,6 +120,7 @@ from() { dc "$1" exec -T "$2" node -e "fetch('$3',{signal:AbortSignal.timeout(30
 pfetch() {
   dc "$1" exec -T "$2" node -e "fetch('$4',{method:'$3',signal:AbortSignal.timeout(3000)}).then(r=>console.log(r.status),()=>console.log('blocked'))" 2>/dev/null
 }
+mcp_ok() { [[ $(mcp_init "$1" "$2") == 200 ]]; }
 mcp_init() { # mcp_init <key> <user-endpoint> → HTTP status of an MCP initialize through mcp-gate
   curlk -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $1" -H 'content-type: application/json' \
     -H 'accept: application/json, text/event-stream' \
@@ -201,7 +202,7 @@ isolation_checks() { # isolation_checks <pkg> <last-slot>
   expect "published host ports (only the stand-in proxy)" \
     "$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Ports}}' | grep -c -- '->' )" "1"
 
-  if has_portal; then
+  if has_portal && [[ -n $(dc "$pkg" ps -q portal 2>/dev/null) ]]; then
     echo "== [$pkg] portal (app.) and its vault config entrypoint"
     expect "admin → portal /api/session" "$(access "$jars/admin" "$(U app)/api/session")" "DATA"
     expect "ulla (lokyy-users) → portal /api/session" "$(access "$jars/ulla" "$(U app)/api/session")" "DATA"
@@ -254,7 +255,8 @@ expect "no key for the failed entry" "$(jq -r '.users[] | select(.username=="zed
 expect "bob removed" "$(jq -r '.removed | join(",")' "$work/clients.json")" "bob"
 expect "alice key rotated (keyRotation a1 -> a2)" "$([[ $(key alice) != "$old_alice" && -n $(key alice) ]] && echo new || echo same)" "new"
 expect "keyRotation recorded" "$(jq -r '.users[] | select(.username=="alice") | .keyRotation' "$work/clients.json")" "a2"
-wait_for "MetaMCP healthy after the watcher's restart" 180 healthy s
+# MetaMCP was restarted by the watcher (migrations + start take a while): wait until the new key works
+wait_for "MCP endpoint answers after the watcher's restart" 240 mcp_ok "$(key alice)" alice
 expect "MetaMCP restarted by the watcher" "$(( $(dc s logs metamcp 2>/dev/null | grep -c 'restarting MetaMCP') - restarts_before ))" "1"
 expect "old alice key" "$(mcp_init "$old_alice" alice)" "401"
 expect "removed bob's key" "$(mcp_init "$old_bob" bob)" "401"
@@ -265,8 +267,8 @@ expect "no API key in MetaMCP logs" "$(dc s logs metamcp 2>/dev/null | grep -c '
 users_json 3 '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true,"keyRotation":"a2"},
                {"username":"bob","role":"writer","vault":"v02","allowVaultNameMismatch":true}]'
 clients_for 3 && [[ $(jq -r .status "$work/clients.json") == ok ]] && ok "generation 3 (bob back, carl removed) ok" || bad "generation 3"
+wait_for "MCP endpoint answers after generation 3" 240 mcp_ok "$(key bob)" bob
 expect "alice key unchanged when keyRotation unchanged" "$(mcp_init "$(key alice)" alice)" "200"
-wait_for "MetaMCP healthy" 180 healthy s
 
 echo "== [s] Authentik providers carry the proxy scope mappings (non-empty identity on a fresh stack)"
 expect "proxy providers with 5 property mappings / all" \
@@ -276,9 +278,13 @@ expect "proxy providers with 5 property mappings / all" \
 dc s exec -T vault-v01 sh -c 'echo lbv2-27 > /data/upgrade-marker' && ok "marker written to vault-v01 volume" || bad "marker write"
 alice_key=$(key alice)
 
+# The portal rewrites users.json from its own state when it starts; this smoke writes users.json itself, so
+# the portal is stopped before the upgrade (its wiring was checked above; M only adds slots).
+if has_portal; then dc s stop portal >/dev/null 2>&1 && dc s rm -f portal >/dev/null 2>&1; fi
+
 # ------------------------------------------------------------------- upgrade to M
 echo "== upgrade the same project to package M"
-dc m up -d --build $(services m) >"$work/up-m.log" 2>&1 || { tail -20 "$work/up-m.log"; bad "compose up M"; }
+dc m up -d --build $(services m | grep -vx portal) >"$work/up-m.log" 2>&1 || { tail -20 "$work/up-m.log"; bad "compose up M"; }
 wait_for "M: all services healthy" 600 healthy m
 wait_for "M: blueprint lokyy-slots re-applied" 300 blueprint m
 wait_for "M: routes for new slots (worker re-applies the blueprint)" 900 routes v01 v16 v30 firma
