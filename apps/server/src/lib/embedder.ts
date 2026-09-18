@@ -9,7 +9,7 @@
  */
 
 import type { FeatureExtractionPipeline } from '@xenova/transformers';
-import { EMBED_MAX_CHARS, remoteEmbedderFromEnv, type RemoteEmbedder } from '@mindbase/core';
+import { EMBED_MAX_CHARS, EMBED_MAX_TOKENS, remoteEmbedderFromEnv, type RemoteEmbedder } from '@mindbase/core';
 import { applyModelPolicy } from './transformers-offline';
 
 let extractor: FeatureExtractionPipeline | null = null;
@@ -27,6 +27,8 @@ async function getExtractor(): Promise<FeatureExtractionPipeline> {
   const { pipeline, env } = await import('@xenova/transformers');
   applyModelPolicy(env);
   extractor = (await pipeline('feature-extraction', 'Xenova/bge-m3')) as FeatureExtractionPipeline;
+  // Same token cap as the shared embedding service (vectors stay interchangeable, bounded memory)
+  (extractor as unknown as { tokenizer: { model_max_length: number } }).tokenizer.model_max_length = EMBED_MAX_TOKENS;
   return extractor;
 }
 

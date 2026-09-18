@@ -9,6 +9,13 @@
 
 /** Characters per text, same cut as the in-process embedder (`text.slice(0, 8000)`). */
 export const EMBED_MAX_CHARS = 8000;
+/**
+ * Tokens per text (audit LBV2-26 HIGH-2): attention memory grows with tokens², and 8000 characters
+ * of CJK or symbols are up to ~8000 tokens. The shared service and the in-process embedders truncate
+ * at this many tokens (tokenizer model_max_length), so their vectors stay identical. 8000 characters
+ * of German or English prose are about 1800–2300 tokens; longer texts lose their tail.
+ */
+export const EMBED_MAX_TOKENS = 2048;
 /** Retry-After values above this are clamped (the service is inside the stack, not trusted to park us). */
 const MAX_RETRY_AFTER_MS = 10_000;
 const RETRY_STATUS = new Set([429, 502, 503, 504]);

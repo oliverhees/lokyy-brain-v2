@@ -15,6 +15,7 @@ export const EMBED_OPTIONS = { pooling: 'mean', normalize: true } as const;
 
 interface FeatureExtractor {
   (text: string, options: typeof EMBED_OPTIONS): Promise<{ data: Float32Array }>;
+  tokenizer: { model_max_length: number; encode: (text: string) => number[] };
 }
 interface TransformersModule {
   env: TransformersEnv;
@@ -42,11 +43,18 @@ try {
 // /proc/1/environ cannot be changed; prefer EMBED_TOKEN_SHA256_<VAULT> where the platform allows).
 for (const name of plainTokenVars([...tokens!.keys()])) delete process.env[name];
 
-const maxTexts = int('EMBED_MAX_TEXTS', 32);
+const maxTexts = int('EMBED_MAX_TEXTS', 16);
+// Audit HIGH-2: attention memory grows with tokens², and 8000 characters can be ~8000 tokens (CJK,
+// symbols). Every text is truncated to this many tokens by the tokenizer (same cap as the vault's
+// in-process embedder, packages/core EMBED_MAX_TOKENS), and a request may carry at most
+// EMBED_MAX_REQUEST_TOKENS tokens after truncation.
+const maxTokens = int('EMBED_MAX_TOKENS', 2048);
+const maxRequestTokens = int('EMBED_MAX_REQUEST_TOKENS', 8192);
 const burst = int('EMBED_BURST', 200);
 if (burst < maxTexts) fatal('EMBED_BURST must be at least EMBED_MAX_TEXTS');
 
 let embedOne: ((text: string) => Promise<Float32Array>) | null = null;
+let countTokens: ((text: string) => number) | null = null;
 let dim = 1024;
 const server = createEmbedService({
   tokens: tokens!,
@@ -63,6 +71,13 @@ const server = createEmbedService({
   queueTimeoutMs: int('EMBED_QUEUE_TIMEOUT_MS', 30_000),
   isReady: () => embedOne !== null,
   log,
+  countTokens: (text) => countTokens!(text),
+  maxRequestTokens,
+  priorityMaxChars: int('EMBED_PRIORITY_MAX_CHARS', 512),
+  inferenceTimeoutMs: int('EMBED_INFERENCE_TIMEOUT_MS', 60_000),
+  // A stuck ONNX run cannot be aborted: exit so the container restarts (restart: unless-stopped);
+  // vaults fall back to keyword search meanwhile.
+  onStuck: () => fatal('inference did not finish in time; restarting'),
 });
 const port = int('EMBED_PORT', 8080);
 server.listen(port, '0.0.0.0', () => log(`embed listening on :${port} for ${[...tokens!.keys()].join(',')}`));
@@ -72,10 +87,12 @@ try {
   const t = (await import(pathToFileURL(require.resolve('@xenova/transformers')).href)) as TransformersModule;
   configureTransformersEnv(t.env, process.env.EMBED_MODELS_DIR ?? '/models');
   const extractor = await t.pipeline('feature-extraction', MODEL_ID);
+  extractor.tokenizer.model_max_length = maxTokens;
+  countTokens = (text) => Math.min(extractor.tokenizer.encode(text).length, maxTokens);
   const run = async (text: string) => (await extractor(text, EMBED_OPTIONS)).data;
   dim = (await run('warm-up')).length;
   embedOne = run;
-  log(`model ${MODEL_ID} loaded offline, dim=${dim}`);
+  log(`model ${MODEL_ID} loaded offline, dim=${dim}, max ${maxTokens} tokens per text`);
 } catch {
   // Generic on purpose: the model path and file names stay out of the log.
   fatal(`model ${MODEL_ID} could not be loaded from the local models directory`);

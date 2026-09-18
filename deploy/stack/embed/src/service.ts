@@ -3,8 +3,11 @@
 // Order of checks, all before any inference: path (404) → method (405) → bearer token of a
 // configured vault, from that vault's network if bound (401) → model loaded (503) → JSON content type (415) → body size (413, also
 // while streaming) → body shape and limits (400) → the vault's pending-request cap (429) → global
-// queue cap (503) → the vault's text rate (429 + Retry-After). Texts are embedded one at a time,
-// round-robin across vaults, so one vault cannot starve the others. Error bodies are static; logs
+// queue cap (503) → the vault's text rate (429 + Retry-After) → the request's token budget (413).
+// Texts are embedded one at a time. Short requests (search queries, ≤ priorityMaxChars in total) go
+// first, even between the texts of a running bulk request; within each class vaults take turns
+// (round-robin), so one vault cannot starve the others. An inference that does not finish within
+// inferenceTimeoutMs fails its request and calls onStuck (main.ts exits; the container restarts). Error bodies are static; logs
 // carry the vault name, counts, status and duration, never text content or token material.
 // The service makes no outbound connections and forwards nothing.
 import http from 'node:http';
@@ -26,6 +29,14 @@ export interface EmbedServiceOptions {
   queueTimeoutMs: number;    // a request not started within this time gets 503
   isReady: () => boolean;
   log: (line: string) => void;
+  /** Tokens of a text after the model's truncation; with maxRequestTokens it bounds a request's cost. */
+  countTokens?: (text: string) => number;
+  maxRequestTokens?: number;
+  /** Requests with at most this many characters in total are served before bulk requests, default 512. */
+  priorityMaxChars?: number;
+  /** Per text; default none (tests). */
+  inferenceTimeoutMs?: number;
+  onStuck?: () => void;
   maxConnections?: number;   // default 256
   requestTimeoutMs?: number; // receiving the whole request, default 30 s
   headersTimeoutMs?: number; // default 10 s
@@ -123,6 +134,7 @@ interface Job {
   vectors: number[][];
   started: boolean;
   cancelled: boolean;
+  priority: boolean;
   timer: NodeJS.Timeout;
   settle: (err: HttpError | null) => void;
 }
@@ -145,18 +157,41 @@ export function createEmbedService(o: EmbedServiceOptions): http.Server {
     }
   };
 
+  /** Next job: the first vault in turn with a priority job, else the first vault in turn. */
+  function nextJob(): Job | undefined {
+    for (const priorityPass of [true, false]) {
+      for (let i = 0; i < rotation.length; i++) {
+        const q = queues.get(rotation[i]!) ?? [];
+        const job = priorityPass ? q.find((j) => j.priority && !j.cancelled) : q[0];
+        if (job) { rotation.splice(i, 1); return job; }
+      }
+    }
+    return undefined;
+  }
+
+  const infer = (text: string): Promise<ArrayLike<number>> => {
+    if (!o.inferenceTimeoutMs) return o.embedOne(text);
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        o.log(`${new Date().toISOString()} inference timeout after ${o.inferenceTimeoutMs} ms`);
+        o.onStuck?.();
+        reject(new Error('inference timeout'));
+      }, o.inferenceTimeoutMs);
+    });
+    return Promise.race([o.embedOne(text), timeout]).finally(() => clearTimeout(timer));
+  };
+
   async function pump(): Promise<void> {
     if (current !== null) return;
-    while (rotation.length > 0) {
-      const vault = rotation.shift()!;
-      const job = queues.get(vault)?.[0];
-      if (!job) continue;
+    for (let job = nextJob(); job; job = nextJob()) {
+      const vault = job.vault;
       current = vault;
       if (!job.cancelled) {
         job.started = true;
         clearTimeout(job.timer);
         try {
-          const v = Array.from(await o.embedOne(job.texts[job.vectors.length]!));
+          const v = Array.from(await infer(job.texts[job.vectors.length]!));
           if (v.length !== o.dim || !v.every(Number.isFinite)) throw new Error('dimension');
           job.vectors.push(v);
         } catch {
@@ -177,6 +212,7 @@ export function createEmbedService(o: EmbedServiceOptions): http.Server {
     return new Promise((resolve, reject) => {
       const job: Job = {
         vault, texts, vectors: [], started: false, cancelled: false,
+        priority: texts.reduce((n, t) => n + t.length, 0) <= (o.priorityMaxChars ?? 512),
         timer: setTimeout(() => {
           if (job.started) return;
           job.cancelled = true;
@@ -221,6 +257,11 @@ export function createEmbedService(o: EmbedServiceOptions): http.Server {
     if (total >= o.maxQueue) throw new HttpError(503, 'busy');
     let bucket = buckets.get(vault);
     if (!bucket) { bucket = new Bucket(o.ratePerSec, o.burst); buckets.set(vault, bucket); }
+    if (o.countTokens && o.maxRequestTokens) {
+      let tokens = 0;
+      for (const t of texts) tokens += o.countTokens(t);
+      if (tokens > o.maxRequestTokens) throw new HttpError(413, 'too_large');
+    }
     const wait = bucket.take(texts.length);
     if (wait > 0) throw new HttpError(429, 'rate_limited', wait);
     const vectors = await enqueue(vault, texts, res);

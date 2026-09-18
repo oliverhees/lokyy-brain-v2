@@ -13,7 +13,7 @@
 
 // Import type only — the actual runtime import is dynamic so bundlers don't pull it into web chunks
 import type { FeatureExtractionPipeline } from '@xenova/transformers';
-import { EMBED_MAX_CHARS, remoteEmbedderFromEnv } from './remote-embedder';
+import { EMBED_MAX_CHARS, EMBED_MAX_TOKENS, remoteEmbedderFromEnv } from './remote-embedder';
 
 let extractor: FeatureExtractionPipeline | null = null;
 
@@ -26,6 +26,8 @@ async function getExtractor(): Promise<FeatureExtractionPipeline> {
     'feature-extraction',
     'Xenova/bge-m3',
   )) as FeatureExtractionPipeline;
+  // Same token cap as the shared embedding service (vectors stay interchangeable)
+  (extractor as unknown as { tokenizer: { model_max_length: number } }).tokenizer.model_max_length = EMBED_MAX_TOKENS;
   return extractor;
 }
 

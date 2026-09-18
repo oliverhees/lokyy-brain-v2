@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Records whether the in-process model was ever requested; returns a fake extractor.
-const loads = vi.hoisted(() => ({ count: 0 }));
+const loads = vi.hoisted(() => ({ count: 0, tokenizer: { model_max_length: 8192 } }));
 vi.mock('@xenova/transformers', () => ({
   env: { allowRemoteModels: true, cacheDir: null },
   pipeline: vi.fn(async () => {
     loads.count += 1;
-    return async (text: string) => ({ data: new Float32Array([text.length, 0, 0]) });
+    return Object.assign(async (text: string) => ({ data: new Float32Array([text.length, 0, 0]) }), { tokenizer: loads.tokenizer });
   }),
 }));
 
@@ -69,6 +69,8 @@ describe('server embedder (LBV2-26)', () => {
     const { embed } = await import('../embedder');
     expect(await embed('abcd')).toEqual([4, 0, 0]);
     expect(loads.count).toBe(1);
+    // Same token cap as the shared service (audit HIGH-2), so vectors stay interchangeable
+    expect(loads.tokenizer.model_max_length).toBe(2048);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

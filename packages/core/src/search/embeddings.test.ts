@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EMBED_MAX_TOKENS } from './remote-embedder';
 
-const loads = vi.hoisted(() => ({ count: 0 }));
+const loads = vi.hoisted(() => ({ count: 0, tokenizer: { model_max_length: 8192 } }));
 vi.mock('@xenova/transformers', () => ({
   pipeline: vi.fn(async () => {
     loads.count += 1;
-    return async (text: string) => ({ data: new Float32Array([text.length, 1]) });
+    return Object.assign(async (text: string) => ({ data: new Float32Array([text.length, 1]) }), { tokenizer: loads.tokenizer });
   }),
 }));
 
@@ -28,5 +29,7 @@ describe('core embed() (LBV2-26)', () => {
     const { embed } = await import('./embeddings');
     expect(await embed('abc')).toEqual([3, 1]);
     expect(loads.count).toBe(1);
+    expect(loads.tokenizer.model_max_length).toBe(EMBED_MAX_TOKENS);
+    expect(EMBED_MAX_TOKENS).toBe(2048);
   });
 });

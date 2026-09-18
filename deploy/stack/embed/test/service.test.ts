@@ -283,3 +283,47 @@ test('source binding: a vault token is only accepted from that vault network', a
     assert.equal((await post(ok.base, { texts: ['x'] }, auth(TOKEN_ANNA))).status, 200);
   } finally { await ok.close(); }
 });
+
+test('per-request token budget (audit HIGH-2): over the budget is 413 before any inference', async () => {
+  const s = await start({ countTokens: (t) => t.length, maxRequestTokens: 10 });
+  try {
+    const r = await post(s.base, { texts: ['aaaaaa', 'bbbbbb'] }, auth(TOKEN_ANNA));
+    assert.equal(r.status, 413);
+    assert.equal(r.text, '{"error":"too_large"}');
+    assert.equal(s.calls.length, 0);
+    assert.equal((await post(s.base, { texts: ['aaaaa', 'bbbbb'] }, auth(TOKEN_ANNA))).status, 200);
+  } finally { await s.close(); }
+});
+
+test('short requests (search queries) go before bulk indexing, also between texts of a running bulk job (audit MED-2)', async () => {
+  const m = heldModel();
+  const s = await start({ embedOne: m.embedOne, priorityMaxChars: 5, maxChars: 50 });
+  try {
+    const long = (p: string) => `${p}-${'x'.repeat(20)}`;
+    const a = post(s.base, { texts: [long('a1'), long('a2'), long('a3')] }, auth(TOKEN_ANNA));
+    await new Promise((r) => setTimeout(r, 30));
+    const b = post(s.base, { texts: [long('b1'), long('b2')] }, auth(TOKEN_BEN));
+    await new Promise((r) => setTimeout(r, 30));
+    const q = post(s.base, { texts: ['q'] }, auth(TOKEN_ANNA));
+    await new Promise((r) => setTimeout(r, 30));
+    m.release();
+    await Promise.all([a, b, q]);
+    assert.equal(m.order.indexOf('q'), 1, `query waited behind bulk texts: ${m.order.join(',')}`);
+  } finally { await s.close(); }
+});
+
+test('a stuck inference fails its request and reports it, it does not hang forever (audit LOW)', async () => {
+  let stuck = 0;
+  const s = await start({
+    embedOne: (t) => (t === 'hang' ? new Promise<number[]>(() => {}) : Promise.resolve([1, 0, 0, 0])),
+    inferenceTimeoutMs: 100,
+    onStuck: () => { stuck += 1; },
+  });
+  try {
+    const r = await post(s.base, { texts: ['hang'] }, auth(TOKEN_ANNA));
+    assert.equal(r.status, 500);
+    assert.equal(r.text, '{"error":"internal"}');
+    assert.equal(stuck, 1);
+    assert.ok(s.logs.some((l) => /inference timeout/.test(l)));
+  } finally { await s.close(); }
+});
