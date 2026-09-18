@@ -9,6 +9,10 @@
 #      budget; 4 × 4 texts of 8000 CJK chars (anna) and 4 × 4 texts of 8000 random single-char tokens
 #      (ben) run concurrently at the 2048-token cap and embed stays inside its limit; a search query
 #      from firma meanwhile is answered within QUERY_MAX_S (default 15) seconds.
+#   4. One layout for web and MCP (LBV2-26 QA): a note created via MCP (anna's vault token, the path
+#      MetaMCP uses) is found by the web app's hybrid search, and a note filed through the web app
+#      (POST /api/wiki/file) is found by MCP semantic_search — both after the indexer sweep embedded
+#      them through the service (MINDBASE_EMBED_SWEEP_MS, default 60 s).
 # Run from deploy/stack/ with the stack up: tests/embed.sh   (writes 200 test pages into vault-anna)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -157,6 +161,42 @@ cg_peak=$(( $(docker compose exec -T embed cat /sys/fs/cgroup/memory.peak | tr -
 echo "     embed cgroup memory.peak since container start=${cg_peak} MiB of ${limit_mib} MiB"
 expect "embed cgroup peak (all sections, incl. spikes) below its mem_limit" "$(( cg_peak > 0 && cg_peak < limit_mib ? 1 : 0 ))" "1"
 expect "embed still not OOM-killed / restarted" "$(docker inspect "${STACK}-embed-1" --format '{{.State.OOMKilled}} {{.RestartCount}}')" "false 0"
+
+echo "== 4. Web app and MCP share one store; both find each other's notes semantically"
+# mcp_call <tool> <json-args> → tool result text, through vault-anna's MCP port with anna's token (as MetaMCP does)
+mcp_call() {
+  printf 'authorization: Bearer %s\n' "$MCP_TOKEN_ANNA" | docker compose exec -T metamcp sh -c "h=\$(mktemp); cat >\"\$h\"
+    init='{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"0\"}}}'
+    sid=\$(curl -s -D - -o /dev/null --max-time 20 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H @\"\$h\" -d \"\$init\" http://mcp.vault-anna:4322/mcp | tr -d '\\r' | sed -n 's/^mcp-session-id: //Ip')
+    curl -s -o /dev/null --max-time 20 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H @\"\$h\" -H \"mcp-session-id: \$sid\" -d '{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}' http://mcp.vault-anna:4322/mcp
+    curl -s --max-time 120 -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H @\"\$h\" -H \"mcp-session-id: \$sid\" -d '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}' http://mcp.vault-anna:4322/mcp
+    rm -f \"\$h\"" | sed -n 's/^data: //p' | tail -1 | jq -r '.result.content[0].text // .error.message // empty'
+}
+mark=$RANDOM$RANDOM
+mcp_title="Okapi Waldgiraffe $mark"
+web_title="Zebrafisch Aquarium $mark"
+created=$(mcp_call create_note "{\"title\":\"$mcp_title\",\"content\":\"Das Okapi lebt im Regenwald des Kongo und ist mit der Giraffe verwandt.\"}")
+expect "MCP create_note in vault-anna" "$(jq -r '.created // empty' <<<"$created" 2>/dev/null)" "true"
+mcp_slug=$(jq -r '.slug // empty' <<<"$created" 2>/dev/null)
+expect "MCP note lands in the web app's project (projects/default/wiki/notes)" \
+  "$(docker compose exec -T vault-anna sh -c "test -f /data/projects/default/wiki/notes/$mcp_slug.md && echo project || echo missing" | tr -d '\r')" "project"
+expect "web app files a note (POST /api/wiki/file)" \
+  "$(curl -s -b "$jar" -H 'content-type: application/json' -d "{\"title\":\"$web_title\",\"content\":\"Zebrafische sind kleine gestreifte Fische, beliebt im Aquarium und in der Forschung.\"}" "http://anna.vault.localhost:$P/api/wiki/file" | jq -r '.ok')" "true"
+web_slug=$(docker compose exec -T vault-anna sh -c "ls /data/projects/default/wiki/notes | grep -i 'zebrafisch-aquarium-$mark' | sed 's/\\.md\$//;s/\\.meta\\.json\$//' | head -1" | tr -d '\r')
+# Wait until the indexer sweep has embedded both (one cache file per page)
+for _ in $(seq 1 90); do
+  n=$(docker compose exec -T vault-anna sh -c "ls /data/embeddings 2>/dev/null | grep -c -e '^$mcp_slug\.json' -e '^$web_slug\.json'" | tr -d '\r')
+  [[ ${n:-0} -ge 2 ]] && break
+  sleep 2
+done
+expect "both notes embedded by the indexer sweep (no vault restart)" "${n:-0}" "2"
+hy=$(curl -s -b "$jar" -H 'content-type: application/json' -d '{"q":"Tier aus dem Kongo verwandt mit der Giraffe","limit":5}' "http://anna.vault.localhost:$P/api/search/hybrid")
+expect "web hybrid search finds the MCP-created note semantically" "$(jq -r --arg s "$mcp_slug" '[.results[] | select(.slug == $s)] | length' <<<"$hy")" "[1-9]"
+sem=$(mcp_call semantic_search '{"query":"gestreifte kleine Aquarienfische","limit":5}')
+expect "MCP semantic_search finds the web note semantically (top 5)" "$(jq -r --arg s "$web_slug" '[.[] | select(.slug == $s)] | length' <<<"$sem" 2>/dev/null)" "[1-9]"
+expect "MCP semantic_search used vectors (scores are cosine, not keyword fallback)" \
+  "$(jq -r --arg s "$web_slug" '.[] | select(.slug == $s) | (.score < 1.0001 and .score > 0)' <<<"$sem" 2>/dev/null | head -1)" "true"
+docker compose exec -T vault-anna sh -c "rm -f /data/projects/default/wiki/notes/$mcp_slug.* /data/projects/default/wiki/notes/$web_slug.* /data/embeddings/$mcp_slug.json /data/embeddings/$web_slug.json"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

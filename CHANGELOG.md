@@ -17,6 +17,8 @@
 - `MINDBASE_DISABLE_CAPTURE=1`: `/api/capture` and `/api/devices` return 404, the capture worker and mDNS do not start, `/api/health` reports `features.capture`, and the Devices page shows a disabled notice.
 
 ### Changed — may affect existing (stdio / single-user) setups
+- **MCP server uses the web server's project layout** (LBV2-26): reads and writes go to `projects/<currentProjectId>/` like the web app; before, the MCP server used `<dataDir>/wiki/notes`, so MCP-created notes never showed up in the web app. Pages already written there are reported at MCP startup and have to be moved manually. Legacy data dirs without `projects/` are unchanged.
+- **Embedding indexer sweep** (`MINDBASE_EMBED_SWEEP_MS`, default 60 s): pages that failed to embed or were written by another process are embedded without a restart.
 - **Embeddings are truncated at 2048 tokens** (LBV2-26, also in-process): texts longer than that (rare for 8000 characters of prose, common for CJK) get a vector of their first 2048 tokens; such pages get a different vector after re-indexing.
 - **Local stack (LBV2-26)**: vaults no longer mount `/models`; they embed through the new `embed` service on per-vault `embed-<vault>` networks and have a memory limit (`VAULT_MEM_LIMIT`, default `1g`; the service `EMBED_MEM_LIMIT`, default `4g`; measurements in `deploy/stack/README.md`). `.env` needs `EMBED_TOKEN_<VAULT>` plus `./embed-tokens.sh`; `rotate-secrets.sh` rotates them. `STACK_HTTP_PORT`, `STACK_NET` and `IMAGE_TAG` allow a second stack next to a running one.
 - **Local stack**: MetaMCP is only reachable for AI clients at `/metamcp/<endpoint>/mcp` (no endpoint catalogue, SSE or OpenAPI routes); Traefik strips client `X-Mindbase-User` on vault routes.
