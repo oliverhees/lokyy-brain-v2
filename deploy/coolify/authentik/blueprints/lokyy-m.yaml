@@ -44,7 +44,7 @@ entries:
     identifiers: { username: akadmin }
     state: present
     attrs:
-      groups: [!KeyOf group-admins]
+      groups: [!Find [authentik_core.group, [name, "authentik Admins"]], !KeyOf group-admins]
   - model: authentik_providers_proxy.proxyprovider
     id: provider-v01
     identifiers: { name: vault-v01 }

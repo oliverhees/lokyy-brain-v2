@@ -228,6 +228,16 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
   });
   services['authentik-server'] = authentik('server', ['edge', 'authentik-internal']);
   services['authentik-worker'] = authentik('worker', ['authentik-internal']);
+  // One-shot on every deploy: the worker re-discovers a changed blueprint file only on its schedule, so an
+  // S -> M upgrade would leave the new slots without provider (404) for a long time. Queues the worker's
+  // discovery task (applies files whose hash changed); applying from this container instead deadlocks
+  // with the worker's own tasks.
+  services['authentik-blueprint'] = {
+    ...authentik('shell', ['authentik-internal']),
+    command: ['shell', '-c', 'from authentik.blueprints.v1.tasks import blueprints_discovery; blueprints_discovery.send()'],
+    restart: 'no',
+    depends_on: { 'authentik-server': { condition: 'service_healthy' } },
+  };
 
   // -------------------------------------------------------------------- Portal
   // Setup portal (LBV2-28, apps/portal). Writes users.json into lokyy-state (the only writer).
@@ -526,7 +536,7 @@ export function renderBlueprint(pkg: PackageName): string {
     '    identifiers: { username: akadmin }',
     '    state: present',
     '    attrs:',
-    '      groups: [!KeyOf group-admins]',
+    '      groups: [!Find [authentik_core.group, [name, "authentik Admins"]], !KeyOf group-admins]',
   );
   const app = (key: string, name: string, title: string, host: string, groupKey: string, first = false) => {
     L.push(

@@ -243,6 +243,37 @@ services:
     shm_size: "512mb"
     networks:
       - "authentik-internal"
+  authentik-blueprint:
+    build:
+      context: "../.."
+      dockerfile: "deploy/coolify/authentik/Dockerfile"
+      args:
+        LOKYY_PACKAGE: "s"
+    restart: "no"
+    command:
+      - "shell"
+      - "-c"
+      - "from authentik.blueprints.v1.tasks import blueprints_discovery; blueprints_discovery.send()"
+    mem_limit: "1g"
+    depends_on:
+      authentik-server:
+        condition: "service_healthy"
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: "authentik-db"
+      AUTHENTIK_POSTGRESQL__NAME: "authentik"
+      AUTHENTIK_POSTGRESQL__USER: "authentik"
+      AUTHENTIK_POSTGRESQL__PASSWORD: "${SERVICE_HEX_64_AUTHENTIKDB}"
+      AUTHENTIK_SECRET_KEY: "${SERVICE_HEX_64_AUTHENTIKSECRET}"
+      AUTHENTIK_BOOTSTRAP_EMAIL: "${ADMIN_EMAIL:?set ADMIN_EMAIL in Coolify}"
+      AUTHENTIK_BOOTSTRAP_PASSWORD: "${SERVICE_PASSWORD_ADMIN}"
+      AUTHENTIK_BOOTSTRAP_TOKEN: "${SERVICE_HEX_64_AUTHENTIKAPITOKEN}"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+      BASE_DOMAIN: "${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
+    shm_size: "512mb"
+    networks:
+      - "authentik-internal"
   portal:
     build:
       context: "../.."

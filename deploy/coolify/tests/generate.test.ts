@@ -175,6 +175,17 @@ for (const pkg of pkgs) {
     for (const m of d.matchAll(/env `([A-Z0-9_]+)`/g)) assert.ok(m[1] in env, `lokyy-traefik env ${m[1]}`);
   });
 
+  test(`${pkg}: blueprint is re-applied on every deploy (S -> M upgrade adds slots immediately)`, () => {
+    const b = c.services['authentik-blueprint'];
+    // Queued for the worker (an apply in a second process deadlocks with the worker's own tasks)
+    assert.equal(b.command?.[0], 'shell');
+    assert.match(String(b.command?.[2]), /blueprints_discovery\.send\(\)/);
+    assert.equal(b.restart, 'no');
+    assert.deepEqual(b.depends_on, { 'authentik-server': { condition: 'service_healthy' } });
+    assert.deepEqual(b.networks, ['authentik-internal']);
+    assert.deepEqual(b.build, c.services['authentik-worker'].build);
+  });
+
   test(`${pkg}: blueprint has one group, provider, app and binding per slot`, () => {
     const b = renderBlueprint(pkg);
     for (const v of slotNames(pkg)) {
@@ -183,7 +194,8 @@ for (const pkg of pkgs) {
       assert.ok(b.includes(`group: !KeyOf group-${v}`));
     }
     for (const g of ['vault-firma-read', 'vault-firma-write', 'lokyy-admins']) assert.ok(b.includes(`name: ${g} }`), g);
-    assert.ok(b.includes('groups: [!KeyOf group-admins]'), 'bootstrap admin in lokyy-admins');
+    // Adds lokyy-admins without dropping "authentik Admins" (the superuser group of akadmin)
+    assert.ok(b.includes('groups: [!Find [authentik_core.group, [name, "authentik Admins"]], !KeyOf group-admins]'), 'bootstrap admin keeps superuser');
   });
 }
 
