@@ -14,7 +14,7 @@ const inFlight = new Map<string, Promise<PreviewData>>();
 /**
  * Wikilink targets come to us in a few historical shapes:
  *  - v1 legacy path: `wiki/notes/<slug>.md` or `wiki/concepts/<slug>.md`
- *  - v2 category+path: `research/rag.md`, `contributors/haobing/2026-06-08.md`
+ *  - v2 category+path: `research/rag.md`, `contributors/anna/2026-06-08.md`
  *  - bare slug (no category, no extension) — default to research per Phase E convention.
  * Map each to a `{category, relPath}` we can hit at `/api/tree/:category/*path`.
  */

@@ -511,7 +511,7 @@ function UsernameField() {
           type="text"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="haobing"
+          placeholder="anna"
           style={{ padding: '6px 10px', width: 240, background: 'var(--bg-input, #111)', color: 'var(--text-high)', border: '1px solid var(--border-default)', borderRadius: 4, fontSize: 12 }}
         />
         <button

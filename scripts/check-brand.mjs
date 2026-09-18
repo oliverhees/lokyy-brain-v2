@@ -24,7 +24,8 @@ const EXTENSIONS = /\.(ts|tsx|js|mjs|html|md|json|css)$/;
 // Tests may keep legacy fixtures (e.g. vault files written before the rebrand).
 const SKIP = [/\.test\.tsx?$/, /\.spec\.tsx?$/, new RegExp(`\\${sep}__tests__\\${sep}`)];
 
-const BRAND = /Mind ?[Bb]ase/g;
+// Old product name, and pointers to the upstream project/author (repo, npm package, contact).
+const BRAND = /Mind ?[Bb]ase|frankchu91|haobing|@mindbase\/mcp-server/g;
 
 // Wire-protocol names that are identifiers, not branding.
 const ALLOWLIST = [
@@ -68,10 +69,10 @@ export function findViolations(root = ROOT, surfaces = SURFACES) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const violations = findViolations();
   if (violations.length > 0) {
-    console.error(`Brand guard: found ${violations.length} occurrence(s) of the old product name in user-visible surfaces.`);
+    console.error(`Brand guard: found ${violations.length} occurrence(s) of the old product name or an upstream pointer in user-visible surfaces.`);
     console.error('Use "Lokyy Brain" instead (see docs/adr/0001-rebrand-lokyy-brain.md).\n');
     for (const v of violations) console.error(`  ${v}`);
     process.exit(1);
   }
-  console.log('Brand guard: OK — no old product name in user-visible surfaces.');
+  console.log('Brand guard: OK — no old product name or upstream pointer in user-visible surfaces.');
 }

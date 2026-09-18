@@ -19,6 +19,8 @@ Everything a user, admin or LLM reads names the product **Lokyy Brain**:
 - Core (`packages/core`) and vault schema (`schema/`): LLM prompts, headings of newly written `INDEX.md`, log and schema files, graph export page.
 - Docs in prose: `README.md`, `docs/guide.md`, `docs/remote-access.md`, `docs/testing-walkthrough.md` (web parts), `apps/mcp/README.md`.
 
+No user-facing surface points to the upstream product: the web UI's "Connect to AI clients" explains the MetaMCP connection (`https://mcp.<domain>/metamcp/<username>/mcp`, server key `lokyy-brain`, API key from the setup portal's "Mein Zugang"; optional direct link via the build argument `VITE_LOKYY_PORTAL_URL`), and product feedback goes to info@lokyy.de.
+
 ## What stays internal, and why
 
 | Kept | Why |
@@ -37,7 +39,7 @@ Vault files written before this change keep their old headings (`# MindBase Wiki
 
 ## Enforcement
 
-`scripts/check-brand.mjs` (`pnpm check:brand`, CI step "Brand guard") fails when the old product name appears in `apps/web/src`, `apps/web/index.html`, `apps/portal/src`, `apps/mcp/src`, `apps/server/src`, `packages/core/src` or `schema/`. Test files are skipped (they may hold pre-rebrand fixtures). Wire identifiers go into the script's allowlist.
+`scripts/check-brand.mjs` (`pnpm check:brand`, CI step "Brand guard") fails when the old product name or an upstream pointer (upstream repository owner, upstream author, upstream npm package) appears in `apps/web/src`, `apps/web/index.html`, `apps/portal/src`, `apps/mcp/src`, `apps/server/src`, `packages/core/src` or `schema/`. Test files are skipped (they may hold pre-rebrand fixtures). Wire identifiers go into the script's allowlist.
 
 ## Consequences
 

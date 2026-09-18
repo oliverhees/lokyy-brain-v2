@@ -223,7 +223,7 @@ Monorepo: `packages/core` (TS strict library) · `apps/mcp` (49-tool MCP server)
 
 ## Feedback
 
-Beta through 2026-Q4. If you tried MindBase and gave up — please tell me why: [issues](https://github.com/frankchu91/mindbase-llm-wiki/issues) or [haobing0304@gmail.com](mailto:haobing0304@gmail.com). The blockers you hit are gold.
+Beta through 2026-Q4. If you tried Lokyy Brain and gave up — please tell us why: [info@lokyy.de](mailto:info@lokyy.de). The blockers you hit are gold.
 
 ## License
 
