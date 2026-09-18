@@ -107,7 +107,13 @@ describe('createRemoteEmbedder', () => {
     expect(svc.calls).toHaveLength(3);
   });
 
-  it.each([400, 401, 403, 404, 413, 415, 500, 502, 504])('does not retry HTTP %i', async (status) => {
+  it.each([408, 500, 502, 504])('retries HTTP %i (QA: e.g. 408 while the service restarts)', async (status) => {
+    const svc = fakeService([() => json(status, { error: 'x' })]);
+    expect(await make(svc.fetchFn, { retries: 1 }).embed('ok')).toEqual([2, 0, 1]);
+    expect(svc.calls).toHaveLength(2);
+  });
+
+  it.each([400, 401, 403, 404, 413, 415])('does not retry HTTP %i', async (status) => {
     const svc = fakeService([() => json(status, { error: 'x' })]);
     const err = await make(svc.fetchFn, { retries: 3 }).embed('x').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(EmbedServiceError);

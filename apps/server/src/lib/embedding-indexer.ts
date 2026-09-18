@@ -16,26 +16,87 @@ interface IndexStatus {
  * - On indexOne(slug): re-embeds a single page (call after save/compile).
  * - getStatus(): returns live progress for /api/search/index-status.
  *
+ * - Sweep (LBV2-26 QA): after the first run, indexAll() repeats every `sweepMs` (default 60 s,
+ *   MINDBASE_EMBED_SWEEP_MS, 0 = off). Unchanged pages cost a hash check, no embedding. Pages that
+ *   failed (e.g. the embedding service restarted) and pages written by another process (the MCP
+ *   server) get embedded without a restart. While a run has failures the interval doubles up to
+ *   `maxSweepMs` (default 30 min) and returns to `sweepMs` after a clean run.
+ *
  * NOTE: The BGE-M3 model (~570MB) is loaded lazily on first embed call.
  * indexAll() runs in the background — it does NOT block server boot.
  * After batch indexing, the extractor is unloaded to free ~600MB RAM.
  */
+export interface EmbeddingIndexerOptions {
+  sweepMs?: number;
+  maxSweepMs?: number;
+}
+
+/** MINDBASE_EMBED_SWEEP_MS: sweep interval in ms (0 = off), default 60000. */
+export function sweepMsFromEnv(env: Record<string, string | undefined> = process.env): number {
+  const raw = env['MINDBASE_EMBED_SWEEP_MS'];
+  if (raw === undefined || raw === '') return 60_000;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) throw new Error('MINDBASE_EMBED_SWEEP_MS must be a non-negative integer');
+  return n;
+}
+
 export class EmbeddingIndexer {
   private status: IndexStatus = { indexed: 0, total: 0 };
+  private running = false;
+  private loggedOnce = false;
+  private timer: NodeJS.Timeout | null = null;
+  private stopped = false;
+  private readonly sweepMs: number;
+  private interval = 0;
+  private pending: Promise<void> = Promise.resolve();
+  private readonly maxSweepMs: number;
 
   constructor(
     private ctx: ServerContext,
     private store: EmbeddingStore,
-  ) {}
+    opts: EmbeddingIndexerOptions = {},
+  ) {
+    this.sweepMs = opts.sweepMs ?? sweepMsFromEnv();
+    this.maxSweepMs = Math.max(this.sweepMs, opts.maxSweepMs ?? 30 * 60_000);
+  }
 
   /**
-   * Start background indexing. Returns immediately; indexAll runs in background.
+   * Start background indexing. Returns immediately; indexAll runs in background, then sweeps.
    */
   start(): void {
-    // Fire and forget — no await
-    void this.indexAll().catch((e) => {
-      console.error('[embedding-indexer] indexAll failed:', e);
-    });
+    this.stopped = false;
+    this.interval = this.sweepMs;
+    this.pending = this.run();
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  /** Resolves when the current run (first run or sweep) has finished. For tests and shutdown. */
+  whenIdle(): Promise<void> {
+    return this.pending;
+  }
+
+  private async run(): Promise<void> {
+    let failed = 1;
+    try {
+      failed = (await this.indexAll()).failed;
+    } catch (e) {
+      console.error('[embedding-indexer] indexAll failed:', (e as Error).message);
+    }
+    if (this.stopped || this.sweepMs <= 0) return;
+    let wait = this.sweepMs;
+    if (failed > 0) {
+      wait = this.interval;
+      this.interval = Math.min(this.interval * 2, this.maxSweepMs);
+    } else {
+      this.interval = this.sweepMs;
+    }
+    this.timer = setTimeout(() => { this.pending = this.run(); }, wait);
+    this.timer.unref?.();
   }
 
   /**
@@ -43,6 +104,16 @@ export class EmbeddingIndexer {
    * Runs batches of 5 pages in parallel.
    */
   async indexAll(): Promise<{ indexed: number; skipped: number; failed: number }> {
+    if (this.running) return { indexed: 0, skipped: 0, failed: 0 };
+    this.running = true;
+    try {
+      return await this.indexAllOnce();
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private async indexAllOnce(): Promise<{ indexed: number; skipped: number; failed: number }> {
     let indexed = 0;
     let skipped = 0;
     let failed = 0;
@@ -84,7 +155,11 @@ export class EmbeddingIndexer {
       } catch { /* ok */ }
     }
 
-    console.log(`[embedding-indexer] done: indexed=${indexed} skipped=${skipped} failed=${failed}`);
+    // Sweeps that change nothing stay quiet
+    if (indexed > 0 || failed > 0 || !this.loggedOnce) {
+      console.log(`[embedding-indexer] done: indexed=${indexed} skipped=${skipped} failed=${failed}`);
+      this.loggedOnce = true;
+    }
     return { indexed, skipped, failed };
   }
 
