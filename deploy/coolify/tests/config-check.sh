@@ -35,6 +35,14 @@ for v in u1 u2 u3 firma; do
   check "vault-$v MINDBASE_MODELS_OFFLINE=1" '[[ $(q ".services[\"vault-$v\"].environment.MINDBASE_MODELS_OFFLINE") == 1 ]]'
   check "vault-$v mounts offline.mjs read-only" '[[ $(q "[.services[\"vault-$v\"].volumes[] | select(.target == \"/lokyy/offline.mjs\" and .read_only == true and (.source | endswith(\"/deploy/stack/models/offline.mjs\")))] | length") == 1 ]]'
 done
+# LBV2-29: the akadmin entry must ADD lokyy-admins; a plain list replaces the groups and drops the superuser
+# group "authentik Admins" (bootstrap token then gets 403 on the whole API). Both blueprints.
+for bp in "$dir/authentik/blueprints/lokyy-beta.yaml" "$dir/../stack/authentik/blueprints/lokyy-vaults.yaml"; do
+  check "akadmin keeps authentik Admins in $(basename "$bp")" 'grep -qF "groups: [!Find [authentik_core.group, [name, \"authentik Admins\"]], !KeyOf group-admins]" "$bp"'
+  check "blueprint-check passes $(basename "$bp")" '"$dir/../stack/tests/blueprint-check.sh" "$bp" >/dev/null'
+done
+check "blueprint-check rejects akadmin groups without authentik Admins" '! "$dir/../stack/tests/blueprint-check.sh" "$dir/../stack/tests/fixtures/blueprint-akadmin-bad.yaml" >/dev/null'
+check "blueprint-check accepts the fixed pattern" '"$dir/../stack/tests/blueprint-check.sh" "$dir/../stack/tests/fixtures/blueprint-akadmin-good.yaml" >/dev/null'
 check "mcp-gate GATE_USERS_FILE set" '[[ $(q ".services[\"mcp-gate\"].environment.GATE_USERS_FILE") == "/etc/lokyy/users.json" ]]'
 check "mcp-gate mounts users.beta.json read-only" '[[ $(q "[.services[\"mcp-gate\"].volumes[] | select(.target == \"/etc/lokyy/users.json\" and .read_only == true and (.source | endswith(\"/deploy/stack/users.beta.json\")))] | length") == 1 ]]'
 

@@ -26,7 +26,8 @@ entries:
     identifiers: { username: akadmin }
     state: present
     attrs:
-      groups: [!KeyOf group-admins]
+      # Adds lokyy-admins; "authentik Admins" must stay listed or akadmin loses superuser (LBV2-29)
+      groups: [!Find [authentik_core.group, [name, "authentik Admins"]], !KeyOf group-admins]
 
   # ------------------------------------------------- providers + applications
   - model: authentik_providers_proxy.proxyprovider
