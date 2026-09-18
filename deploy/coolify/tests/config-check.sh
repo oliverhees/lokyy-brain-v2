@@ -38,6 +38,12 @@ for pkg in s m; do
   check "$pkg: no empty secret after interpolation" '[[ $(q "[.services[] | (.environment // {}) | to_entries[] | select((.key | test(\"PASS|SECRET|TOKEN\")) and ((.value // \"\") | length) < 32)] | length") == 0 ]]'
   check "$pkg: every subnet rendered under 10.231" '[[ $(q "[.networks[] | (.ipam.config // [])[] | .subnet | select(startswith(\"10.231.\") | not)] | length") == 0 ]]'
 
+  # LBV2-28 portal wiring: portal only on edge + portal; admin entrypoint bound to Traefik's portal address
+  check "$pkg: portal networks edge,portal" '[[ $(q ".services.portal.networks | keys | join(\",\")") == edge,portal ]]'
+  check "$pkg: portal network members lokyy-traefik,portal" '[[ $(q "[.services | to_entries[] | select(.value.networks | has(\"portal\")) | .key] | sort | join(\",\")") == lokyy-traefik,portal ]]'
+  check "$pkg: portal-admin entrypoint on 10.231.0.93 only" 'q ".services[\"lokyy-traefik\"].command[]" | grep -qx -- "--entrypoints.portal-admin.address=10.231.0.93:8090"'
+  check "$pkg: portal has fixed address 10.231.0.94 (ipAllowList)" '[[ $(q ".services.portal.networks.portal.ipv4_address") == 10.231.0.94 && $(q ".services[\"lokyy-traefik\"].environment.PORTAL_IP") == 10.231.0.94 ]]'
+  check "$pkg: portal-admin routes only via portal-only allowlist" '[[ $(grep -c "entryPoints: \[\"portal-admin\"\]" "$dir/traefik/dynamic-$pkg.yml") == $(grep -c "middlewares: \[\"portal-only\"" "$dir/traefik/dynamic-$pkg.yml") ]]'
   vaults=$(q '.services | keys[] | select(startswith("vault-") and . != "vault-connector") | ltrimstr("vault-")')
   n=0
   for v in $vaults; do
@@ -55,4 +61,12 @@ for pkg in s m; do
   check "$pkg: metamcp not on any vault network" '! q ".services.metamcp.networks | keys[]" | grep -qE "^(web|mcp)-(v[0-9]+|firma)$"'
   check "$pkg: vault tokens distinct" '[[ $(q "[.services | to_entries[] | select(.key | test(\"^vault-(v[0-9]+|firma)$\")) | .value.environment.MCP_HTTP_TOKEN] | unique | length") == "$expected" ]]'
 done
+# Embed variant (LBV2-26, generator option; not committed as a file until LBV2-26 is merged)
+node --input-type=module -e "import { renderCompose } from '$dir/generate.ts'; process.stdout.write(renderCompose('m', { embed: true }))" >"$dir/.compose-embed-check.yml" 2>/dev/null
+magic_env "$dir/.compose-embed-check.yml" >"$tmp/embed.env"
+check "m+embed: docker compose config -q" 'docker compose --env-file "$tmp/embed.env" -f "$dir/.compose-embed-check.yml" config -q'
+docker compose --env-file "$tmp/embed.env" -f "$dir/.compose-embed-check.yml" config --format json >"$tmp/embed.json"
+rm -f "$dir/.compose-embed-check.yml"
+check "m+embed: embed only on the 31 embed-* networks" '[[ $(jq -r ".services.embed.networks | keys | map(select(startswith(\"embed-\"))) | length" "$tmp/embed.json") == 31 && $(jq -r ".services.embed.networks | length" "$tmp/embed.json") == 31 ]]'
+check "m+embed: every embed token distinct" '[[ $(jq -r "[.services.embed.environment | to_entries[] | select(.key | startswith(\"EMBED_TOKEN_\")) | .value] | unique | length" "$tmp/embed.json") == 31 ]]'
 exit $fail

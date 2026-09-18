@@ -20,11 +20,13 @@ services:
       - "--entrypoints.web.address=:80"
       - "--entrypoints.web.forwardedHeaders.trustedIPs=${LOKYY_TRUSTED_PROXY_CIDRS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
       - "--entrypoints.web.http.aliasheadersstrategy=delete"
+      - "--entrypoints.portal-admin.address=${LOKYY_NET_PREFIX:-10.231}.0.93:8090"
       - "--api.dashboard=false"
       - "--log.level=INFO"
     environment:
       BASE_DOMAIN: "${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
       PROXY_SECRET_PORTAL: "${SERVICE_HEX_64_PROXYPORTAL}"
+      PORTAL_IP: "${LOKYY_NET_PREFIX:-10.231}.0.94"
       PROXY_SECRET_V01: "${SERVICE_HEX_64_PROXYV01}"
       PROXY_SECRET_V02: "${SERVICE_HEX_64_PROXYV02}"
       PROXY_SECRET_V03: "${SERVICE_HEX_64_PROXYV03}"
@@ -147,25 +149,26 @@ services:
       - "traefik.http.middlewares.lokyy-to-https.redirectscheme.permanent=true"
       - "traefik.http.services.lokyy-inner.loadbalancer.server.port=80"
     networks:
-      - "coolify"
-      - "edge"
-      - "portal"
-      - "web-v01"
-      - "web-v02"
-      - "web-v03"
-      - "web-v04"
-      - "web-v05"
-      - "web-v06"
-      - "web-v07"
-      - "web-v08"
-      - "web-v09"
-      - "web-v10"
-      - "web-v11"
-      - "web-v12"
-      - "web-v13"
-      - "web-v14"
-      - "web-v15"
-      - "web-firma"
+      coolify: {}
+      edge: {}
+      portal:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.93"
+      web-v01: {}
+      web-v02: {}
+      web-v03: {}
+      web-v04: {}
+      web-v05: {}
+      web-v06: {}
+      web-v07: {}
+      web-v08: {}
+      web-v09: {}
+      web-v10: {}
+      web-v11: {}
+      web-v12: {}
+      web-v13: {}
+      web-v14: {}
+      web-v15: {}
+      web-firma: {}
   authentik-db:
     image: "postgres:16-alpine"
     restart: "unless-stopped"
@@ -248,22 +251,28 @@ services:
       context: "../.."
       dockerfile: "apps/portal/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "512m"
+    mem_limit: "256m"
+    read_only: true
+    cap_drop:
+      - "ALL"
+    security_opt:
+      - "no-new-privileges:true"
     environment:
       PORT: "3000"
-      BASE_DOMAIN: "${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
-      ADMIN_EMAIL: "${ADMIN_EMAIL:?set ADMIN_EMAIL in Coolify}"
+      LOKYY_DOMAIN: "${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}"
       LOKYY_PACKAGE: "s"
       LOKYY_SLOTS: "v01,v02,v03,v04,v05,v06,v07,v08,v09,v10,v11,v12,v13,v14,v15"
       LOKYY_STATE_DIR: "/state"
       AUTHENTIK_URL: "http://authentik-server:9000"
       AUTHENTIK_API_TOKEN: "${SERVICE_HEX_64_AUTHENTIKAPITOKEN}"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYPORTAL}"
+      VAULT_ADMIN_URL: "http://${LOKYY_NET_PREFIX:-10.231}.0.93:8090"
     volumes:
       - "lokyy-state:/state"
     networks:
-      - "portal"
-      - "edge"
+      edge: {}
+      portal:
+        ipv4_address: "${LOKYY_NET_PREFIX:-10.231}.0.94"
   model-prefetch:
     build:
       context: "../.."
@@ -281,10 +290,6 @@ services:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -297,25 +302,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v01:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV01}"
       VAULT_ADMIN_GROUPS: "vault-v01,lokyy-admins"
-    volumes:
-      - "vault-v01:/data"
-      - "models:/models:ro"
-      - "vault-v01-home:/home/vault"
     networks:
       web-v01: {}
       mcp-v01:
         aliases:
           - "upstream.vault-v01"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v01:/data"
+      - "models:/models:ro"
+      - "vault-v01-home:/home/vault"
   vault-v02:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -328,25 +333,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v02:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV02}"
       VAULT_ADMIN_GROUPS: "vault-v02,lokyy-admins"
-    volumes:
-      - "vault-v02:/data"
-      - "models:/models:ro"
-      - "vault-v02-home:/home/vault"
     networks:
       web-v02: {}
       mcp-v02:
         aliases:
           - "upstream.vault-v02"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v02:/data"
+      - "models:/models:ro"
+      - "vault-v02-home:/home/vault"
   vault-v03:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -359,25 +364,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v03:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV03}"
       VAULT_ADMIN_GROUPS: "vault-v03,lokyy-admins"
-    volumes:
-      - "vault-v03:/data"
-      - "models:/models:ro"
-      - "vault-v03-home:/home/vault"
     networks:
       web-v03: {}
       mcp-v03:
         aliases:
           - "upstream.vault-v03"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v03:/data"
+      - "models:/models:ro"
+      - "vault-v03-home:/home/vault"
   vault-v04:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -390,25 +395,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v04:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV04}"
       VAULT_ADMIN_GROUPS: "vault-v04,lokyy-admins"
-    volumes:
-      - "vault-v04:/data"
-      - "models:/models:ro"
-      - "vault-v04-home:/home/vault"
     networks:
       web-v04: {}
       mcp-v04:
         aliases:
           - "upstream.vault-v04"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v04:/data"
+      - "models:/models:ro"
+      - "vault-v04-home:/home/vault"
   vault-v05:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -421,25 +426,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v05:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV05}"
       VAULT_ADMIN_GROUPS: "vault-v05,lokyy-admins"
-    volumes:
-      - "vault-v05:/data"
-      - "models:/models:ro"
-      - "vault-v05-home:/home/vault"
     networks:
       web-v05: {}
       mcp-v05:
         aliases:
           - "upstream.vault-v05"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v05:/data"
+      - "models:/models:ro"
+      - "vault-v05-home:/home/vault"
   vault-v06:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -452,25 +457,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v06:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV06}"
       VAULT_ADMIN_GROUPS: "vault-v06,lokyy-admins"
-    volumes:
-      - "vault-v06:/data"
-      - "models:/models:ro"
-      - "vault-v06-home:/home/vault"
     networks:
       web-v06: {}
       mcp-v06:
         aliases:
           - "upstream.vault-v06"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v06:/data"
+      - "models:/models:ro"
+      - "vault-v06-home:/home/vault"
   vault-v07:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -483,25 +488,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v07:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV07}"
       VAULT_ADMIN_GROUPS: "vault-v07,lokyy-admins"
-    volumes:
-      - "vault-v07:/data"
-      - "models:/models:ro"
-      - "vault-v07-home:/home/vault"
     networks:
       web-v07: {}
       mcp-v07:
         aliases:
           - "upstream.vault-v07"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v07:/data"
+      - "models:/models:ro"
+      - "vault-v07-home:/home/vault"
   vault-v08:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -514,25 +519,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v08:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV08}"
       VAULT_ADMIN_GROUPS: "vault-v08,lokyy-admins"
-    volumes:
-      - "vault-v08:/data"
-      - "models:/models:ro"
-      - "vault-v08-home:/home/vault"
     networks:
       web-v08: {}
       mcp-v08:
         aliases:
           - "upstream.vault-v08"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v08:/data"
+      - "models:/models:ro"
+      - "vault-v08-home:/home/vault"
   vault-v09:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -545,25 +550,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v09:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV09}"
       VAULT_ADMIN_GROUPS: "vault-v09,lokyy-admins"
-    volumes:
-      - "vault-v09:/data"
-      - "models:/models:ro"
-      - "vault-v09-home:/home/vault"
     networks:
       web-v09: {}
       mcp-v09:
         aliases:
           - "upstream.vault-v09"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v09:/data"
+      - "models:/models:ro"
+      - "vault-v09-home:/home/vault"
   vault-v10:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -576,25 +581,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v10:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV10}"
       VAULT_ADMIN_GROUPS: "vault-v10,lokyy-admins"
-    volumes:
-      - "vault-v10:/data"
-      - "models:/models:ro"
-      - "vault-v10-home:/home/vault"
     networks:
       web-v10: {}
       mcp-v10:
         aliases:
           - "upstream.vault-v10"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v10:/data"
+      - "models:/models:ro"
+      - "vault-v10-home:/home/vault"
   vault-v11:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -607,25 +612,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v11:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV11}"
       VAULT_ADMIN_GROUPS: "vault-v11,lokyy-admins"
-    volumes:
-      - "vault-v11:/data"
-      - "models:/models:ro"
-      - "vault-v11-home:/home/vault"
     networks:
       web-v11: {}
       mcp-v11:
         aliases:
           - "upstream.vault-v11"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v11:/data"
+      - "models:/models:ro"
+      - "vault-v11-home:/home/vault"
   vault-v12:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -638,25 +643,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v12:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV12}"
       VAULT_ADMIN_GROUPS: "vault-v12,lokyy-admins"
-    volumes:
-      - "vault-v12:/data"
-      - "models:/models:ro"
-      - "vault-v12-home:/home/vault"
     networks:
       web-v12: {}
       mcp-v12:
         aliases:
           - "upstream.vault-v12"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v12:/data"
+      - "models:/models:ro"
+      - "vault-v12-home:/home/vault"
   vault-v13:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -669,25 +674,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v13:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV13}"
       VAULT_ADMIN_GROUPS: "vault-v13,lokyy-admins"
-    volumes:
-      - "vault-v13:/data"
-      - "models:/models:ro"
-      - "vault-v13-home:/home/vault"
     networks:
       web-v13: {}
       mcp-v13:
         aliases:
           - "upstream.vault-v13"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v13:/data"
+      - "models:/models:ro"
+      - "vault-v13-home:/home/vault"
   vault-v14:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -700,25 +705,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v14:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV14}"
       VAULT_ADMIN_GROUPS: "vault-v14,lokyy-admins"
-    volumes:
-      - "vault-v14:/data"
-      - "models:/models:ro"
-      - "vault-v14-home:/home/vault"
     networks:
       web-v14: {}
       mcp-v14:
         aliases:
           - "upstream.vault-v14"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v14:/data"
+      - "models:/models:ro"
+      - "vault-v14-home:/home/vault"
   vault-v15:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -731,25 +736,25 @@ services:
       MCP_HTTP_ALLOWED_HOSTS: "mcp.vault-v15:4322"
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYV15}"
       VAULT_ADMIN_GROUPS: "vault-v15,lokyy-admins"
-    volumes:
-      - "vault-v15:/data"
-      - "models:/models:ro"
-      - "vault-v15-home:/home/vault"
     networks:
       web-v15: {}
       mcp-v15:
         aliases:
           - "upstream.vault-v15"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-v15:/data"
+      - "models:/models:ro"
+      - "vault-v15-home:/home/vault"
   vault-firma:
     build:
       context: "../.."
       dockerfile: "deploy/Dockerfile"
     restart: "unless-stopped"
-    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
-    depends_on:
-      model-prefetch:
-        condition: "service_completed_successfully"
     environment:
       MCP_HTTP_PORT: "4322"
       MINDBASE_MDNS: "off"
@@ -763,16 +768,20 @@ services:
       VAULT_PROXY_SECRET: "${SERVICE_HEX_64_PROXYFIRMA}"
       VAULT_ADMIN_GROUPS: "lokyy-admins"
       MCP_HTTP_READONLY_TOKEN: "${SERVICE_HEX_64_MCPREADONLYFIRMA}"
-    volumes:
-      - "vault-firma:/data"
-      - "models:/models:ro"
-      - "vault-firma-home:/home/vault"
     networks:
       web-firma: {}
       mcp-firma:
         aliases:
           - "upstream.vault-firma"
       egress: {}
+    mem_limit: "${VAULT_MEM_LIMIT:-3500m}"
+    depends_on:
+      model-prefetch:
+        condition: "service_completed_successfully"
+    volumes:
+      - "vault-firma:/data"
+      - "models:/models:ro"
+      - "vault-firma-home:/home/vault"
   metamcp-db:
     image: "postgres:16-alpine"
     restart: "unless-stopped"
@@ -946,6 +955,7 @@ networks:
     ipam:
       config:
         - subnet: "${LOKYY_NET_PREFIX:-10.231}.0.80/28"
+          ip_range: "${LOKYY_NET_PREFIX:-10.231}.0.80/29"
   model-egress:
     ipam:
       config:

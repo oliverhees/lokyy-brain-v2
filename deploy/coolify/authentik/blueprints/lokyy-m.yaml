@@ -40,6 +40,8 @@ entries:
   - { model: authentik_core.group, id: group-firma-write, identifiers: { name: vault-firma-write }, attrs: { name: vault-firma-write } }
   - { model: authentik_core.group, id: group-firma-read, identifiers: { name: vault-firma-read }, attrs: { name: vault-firma-read } }
   - { model: authentik_core.group, id: group-admins, identifiers: { name: lokyy-admins }, attrs: { name: lokyy-admins } }
+  # Every employee the portal invites (portal access, "Mein Zugang")
+  - { model: authentik_core.group, id: group-users, identifiers: { name: lokyy-users }, attrs: { name: lokyy-users } }
   - model: authentik_core.user
     identifiers: { username: akadmin }
     state: present
@@ -483,7 +485,7 @@ entries:
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-firma, group: !KeyOf group-firma-write }
     attrs: { target: !KeyOf app-firma, group: !KeyOf group-firma-write, order: 0 }
-  # Setup portal and MetaMCP admin UI: operators only
+  # Setup portal: every invited employee and the operators (admin functions are checked inside the portal)
   - model: authentik_providers_proxy.proxyprovider
     id: provider-portal
     identifiers: { name: lokyy-portal }
@@ -494,10 +496,14 @@ entries:
   - model: authentik_core.application
     id: app-portal
     identifiers: { slug: lokyy-portal }
-    attrs: { name: Lokyy Setup, slug: lokyy-portal, provider: !KeyOf provider-portal, policy_engine_mode: any }
+    attrs: { name: Lokyy Portal, slug: lokyy-portal, provider: !KeyOf provider-portal, policy_engine_mode: any }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-portal, group: !KeyOf group-users }
+    attrs: { target: !KeyOf app-portal, group: !KeyOf group-users, order: 0 }
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf app-portal, group: !KeyOf group-admins }
-    attrs: { target: !KeyOf app-portal, group: !KeyOf group-admins, order: 0 }
+    attrs: { target: !KeyOf app-portal, group: !KeyOf group-admins, order: 1 }
+  # MetaMCP admin UI: operators only
   - model: authentik_providers_proxy.proxyprovider
     id: provider-metamcp
     identifiers: { name: metamcp-admin }

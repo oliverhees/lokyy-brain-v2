@@ -21,11 +21,12 @@ import { fileURLToPath } from 'node:url';
 
 export const PACKAGES = { s: { slots: 15 }, m: { slots: 30 } } as const;
 export type PackageName = keyof typeof PACKAGES;
+/** embed: shared embedding service of LBV2-26 (off until that branch is merged). */
 export interface GenerateOptions { embed?: boolean }
 
 export interface Service {
   image?: string;
-  build?: { context: string; dockerfile?: string; args?: Record<string, string> };
+  build?: { context: string; dockerfile?: string; target?: string; args?: Record<string, string> };
   command?: string[];
   entrypoint?: string[];
   restart?: string;
@@ -34,6 +35,9 @@ export interface Service {
   cap_drop?: string[];
   security_opt?: string[];
   shm_size?: string;
+  tmpfs?: string[];
+  sysctls?: Record<string, string>;
+  pids_limit?: number;
   depends_on?: Record<string, { condition: string }>;
   environment?: Record<string, string>;
   volumes?: string[];
@@ -61,7 +65,11 @@ const DOMAIN = '${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}';
 const EMAIL = '${ADMIN_EMAIL:?set ADMIN_EMAIL in Coolify}';
 // Outside the dynamic ip_range of mcp-upstream: a recreated metamcp can never take the connector's address
 const CONNECTOR_IP = `${NET}.0.62`;
-const EMBED_PORT = 8090;
+const EMBED_PORT = 8080;
+// Fixed addresses on the portal network (outside its dynamic ip_range .80/29): the portal-admin entrypoint
+// listens only on Traefik's address there, and only the portal's address may use it.
+const TRAEFIK_PORTAL_IP = `${NET}.0.93`;
+const PORTAL_IP = `${NET}.0.94`;
 
 export const slotNames = (pkg: PackageName): string[] =>
   Array.from({ length: PACKAGES[pkg].slots }, (_, i) => `v${String(i + 1).padStart(2, '0')}`);
@@ -85,20 +93,20 @@ const secret = {
   metamcpDb: magic.hex('metamcpdb'),
   metamcpAuth: magic.hex('metamcpauth'),
   metamcpAdmin: magic.password('metamcpadmin'),
-  embedToken: magic.hex('embedtoken'),
+  embedToken: (v: string) => magic.hex(`emb${v}`),
 };
 
 /** /28 per network; slot k (1-based, firma = 0) gets <prefix>.<2+k>.0/28 (web) and .16/28 (mcp). */
 function subnet(name: string): string {
   const fixed: Record<string, string> = {
     edge: '0.0/28', 'authentik-internal': '0.16/28', 'metamcp-internal': '0.32/28', 'mcp-upstream': '0.48/28',
-    'model-egress': '0.64/28', portal: '0.80/28', egress: '1.0/26', 'embed-internal': '0.96/28',
+    'model-egress': '0.64/28', portal: '0.80/28', egress: '1.0/26',
   };
   if (fixed[name]) return `${NET}.${fixed[name]}`;
-  const m = /^(web|mcp)-(v(\d+)|firma)$/.exec(name);
+  const m = /^(web|mcp|embed)-(v(\d+)|firma)$/.exec(name);
   if (!m) throw new Error(`no subnet for ${name}`);
   const k = m[2] === 'firma' ? 0 : Number(m[3]);
-  return `${NET}.${2 + k}.${m[1] === 'web' ? 0 : 16}/28`;
+  return `${NET}.${2 + k}.${{ web: 0, mcp: 16, embed: 32 }[m[1] as 'web' | 'mcp' | 'embed']}/28`;
 }
 const network = (name: string, extra: Network = {}): Network => ({ ...extra, ipam: { config: [{ subnet: subnet(name) }] } });
 
@@ -123,19 +131,31 @@ function vault(v: string, opts: GenerateOptions): Service {
   };
   // Readers of the company vault (group vault-firma-read) get this token via MetaMCP: read tools only
   if (v === 'firma') env.MCP_HTTP_READONLY_TOKEN = secret.mcpReadonlyFirma;
-  if (opts.embed) {
-    env.MINDBASE_EMBED_URL = `http://embed:${EMBED_PORT}/embed`;
-    env.MINDBASE_EMBED_TOKEN = secret.embedToken;
-  }
-  return {
+  const base: Service = {
     build: { context: REPO, dockerfile: 'deploy/Dockerfile' },
     restart: 'unless-stopped',
+    environment: env,
+    networks: { [`web-${v}`]: {}, [`mcp-${v}`]: { aliases: [`upstream.vault-${v}`] }, egress: {} },
+  };
+  if (opts.embed) {
+    // LBV2-26: embeddings from the shared service over the vault's own embed-<v> network, own token;
+    // the vault no longer loads or mounts the model (measured vault peak 226 MiB)
+    env.MINDBASE_EMBED_URL = `http://embed:${EMBED_PORT}`;
+    env.MINDBASE_EMBED_TOKEN = secret.embedToken(v);
+    return {
+      ...base,
+      mem_limit: '${VAULT_MEM_LIMIT:-1g}',
+      depends_on: { embed: { condition: 'service_healthy' } },
+      volumes: [`vault-${v}:/data`, `vault-${v}-home:/home/vault`],
+      networks: { ...base.networks, [`embed-${v}`]: {} },
+    };
+  }
+  return {
+    ...base,
     // LBV2-20: idle ~200 MiB, peak 2.62 GiB with bge-m3 loaded
     mem_limit: '${VAULT_MEM_LIMIT:-3500m}',
     depends_on: { 'model-prefetch': { condition: 'service_completed_successfully' } },
-    environment: env,
     volumes: [`vault-${v}:/data`, 'models:/models:ro', `vault-${v}-home:/home/vault`],
-    networks: { [`web-${v}`]: {}, [`mcp-${v}`]: { aliases: [`upstream.vault-${v}`] }, egress: {} },
   };
 }
 
@@ -166,7 +186,7 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     'traefik.http.middlewares.lokyy-to-https.redirectscheme.permanent=true',
     'traefik.http.services.lokyy-inner.loadbalancer.server.port=80',
   );
-  const traefikEnv: Record<string, string> = { BASE_DOMAIN: DOMAIN, PROXY_SECRET_PORTAL: secret.portalProxy };
+  const traefikEnv: Record<string, string> = { BASE_DOMAIN: DOMAIN, PROXY_SECRET_PORTAL: secret.portalProxy, PORTAL_IP };
   for (const v of vaults) traefikEnv[`PROXY_SECRET_${v.toUpperCase()}`] = secret.proxy(v);
   services['lokyy-traefik'] = {
     build: { context: REPO, dockerfile: 'deploy/coolify/traefik/Dockerfile', args: { LOKYY_PACKAGE: pkg } },
@@ -183,12 +203,18 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
       '--entrypoints.web.forwardedHeaders.trustedIPs=${LOKYY_TRUSTED_PROXY_CIDRS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}',
       // X_authentik_username / X.Authentik.Username must not alias a managed header in WSGI-style backends
       '--entrypoints.web.http.aliasheadersstrategy=delete',
+      // Vault config API for the portal (LBV2-28): only on Traefik's address in the portal network, so no
+      // other container (Authentik, MetaMCP, gate, vaults) can reach it
+      `--entrypoints.portal-admin.address=${TRAEFIK_PORTAL_IP}:8090`,
       '--api.dashboard=false',
       '--log.level=INFO',
     ],
     environment: traefikEnv,
     labels,
-    networks: ['coolify', 'edge', 'portal', ...vaults.map((v) => `web-${v}`)],
+    networks: {
+      coolify: {}, edge: {}, portal: { ipv4_address: TRAEFIK_PORTAL_IP },
+      ...Object.fromEntries(vaults.map((v) => [`web-${v}`, {}])),
+    },
   };
 
   // ---------------------------------------------------------------- Authentik
@@ -234,24 +260,29 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
   // `ak apply_blueprint` in another container): concurrent applies deadlock in Postgres.
 
   // -------------------------------------------------------------------- Portal
-  // Setup portal (LBV2-28, apps/portal). Writes users.json into lokyy-state (the only writer).
+  // Setup portal (LBV2-28, apps/portal). Writes users.json into lokyy-state (the only writer). Reaches
+  // Authentik's API and the internet (EUrouter model list) over edge, vault config only via lokyy-traefik's
+  // portal-admin entrypoint; never on a vault network.
   services.portal = {
     build: { context: REPO, dockerfile: 'apps/portal/Dockerfile' },
     restart: 'unless-stopped',
-    mem_limit: '512m',
+    mem_limit: '256m',
+    read_only: true,
+    cap_drop: ['ALL'],
+    security_opt: ['no-new-privileges:true'],
     environment: {
       PORT: '3000',
-      BASE_DOMAIN: DOMAIN,
-      ADMIN_EMAIL: EMAIL,
+      LOKYY_DOMAIN: DOMAIN,
       LOKYY_PACKAGE: pkg,
       LOKYY_SLOTS: slotNames(pkg).join(','),
       LOKYY_STATE_DIR: '/state',
       AUTHENTIK_URL: 'http://authentik-server:9000',
       AUTHENTIK_API_TOKEN: secret.authentikApiToken,
       VAULT_PROXY_SECRET: secret.portalProxy,
+      VAULT_ADMIN_URL: `http://${TRAEFIK_PORTAL_IP}:8090`,
     },
     volumes: ['lokyy-state:/state'],
-    networks: ['portal', 'edge'],
+    networks: { edge: {}, portal: { ipv4_address: PORTAL_IP } },
   };
 
   // -------------------------------------------------------------------- Vaults
@@ -266,15 +297,29 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
   for (const v of vaults) services[`vault-${v}`] = vault(v, opts);
 
   if (opts.embed) {
-    // LBV2-26: shared embedding service. Not yet part of the default package.
+    // LBV2-26: one BGE-M3 for all vaults, only on the embed-<v> networks (one per vault, no egress). A
+    // vault's token is accepted only from its own network (EMBED_SOURCE_<V>). Plain tokens (magic
+    // variables) are hashed by the service at startup.
+    const embedEnv: Record<string, string> = { EMBED_VAULTS: vaults.join(',') };
+    for (const v of vaults) {
+      embedEnv[`EMBED_TOKEN_${v.toUpperCase()}`] = secret.embedToken(v);
+      embedEnv[`EMBED_SOURCE_${v.toUpperCase()}`] = subnet(`embed-${v}`);
+    }
     services.embed = {
-      build: { context: REPO, dockerfile: 'deploy/Dockerfile' },
+      build: { context: REPO, dockerfile: 'deploy/Dockerfile', target: 'embed' },
       restart: 'unless-stopped',
-      mem_limit: '3500m',
+      mem_limit: '${EMBED_MEM_LIMIT:-3584m}',
+      read_only: true,
+      tmpfs: ['/tmp:size=16m,mode=1777'],
+      cap_drop: ['ALL'],
+      security_opt: ['no-new-privileges:true'],
+      // Joined to every embed-<v> network: never route between them
+      sysctls: { 'net.ipv4.ip_forward': '0' },
+      pids_limit: 256,
       depends_on: { 'model-prefetch': { condition: 'service_completed_successfully' } },
-      environment: { EMBED_PORT: String(EMBED_PORT), EMBED_TOKEN: secret.embedToken, MINDBASE_MODELS_OFFLINE: '1', NODE_OPTIONS: '--import=/lokyy/models/offline.mjs' },
+      environment: embedEnv,
       volumes: ['models:/models:ro'],
-      networks: ['embed-internal'],
+      networks: vaults.map((v) => `embed-${v}`),
     };
   }
 
@@ -357,14 +402,14 @@ export function buildCompose(pkg: PackageName, opts: GenerateOptions = {}): Comp
     'authentik-internal': network('authentik-internal', { internal: true }),
     'metamcp-internal': network('metamcp-internal', { internal: true }),
     'mcp-upstream': { internal: true, ipam: { config: [{ subnet: subnet('mcp-upstream'), ip_range: `${NET}.0.48/29` }] } },
-    portal: network('portal', { internal: true }),
+    portal: { internal: true, ipam: { config: [{ subnet: subnet('portal'), ip_range: `${NET}.0.80/29` }] } },
     'model-egress': network('model-egress'),
     egress: network('egress', { driver: 'bridge', driver_opts: { 'com.docker.network.bridge.enable_icc': 'false' } }),
   };
-  if (opts.embed) networks['embed-internal'] = network('embed-internal', { internal: true });
   for (const v of vaults) {
     networks[`web-${v}`] = network(`web-${v}`, { internal: true });
     networks[`mcp-${v}`] = network(`mcp-${v}`, { internal: true });
+    if (opts.embed) networks[`embed-${v}`] = network(`embed-${v}`, { internal: true });
   }
 
   const volumes: Record<string, Record<string, never>> = { 'authentik-db': {}, 'metamcp-db': {}, models: {}, 'lokyy-state': {} };
@@ -432,6 +477,17 @@ export function renderTraefikDynamic(pkg: PackageName): string {
     L.push(...r);
   }
   L.push(...guarded('portal', 'app', 'portal', ['"vault-identity"', '"portal-secret"']));
+  // Portal-admin entrypoint (LBV2-28): the portal changes a vault's LLM configuration. Only the config API,
+  // only from the portal's address, with a fixed operator identity and that vault's proxy secret.
+  for (const v of vaults) {
+    L.push(
+      `    vault-${v}-admin:`,
+      `      rule: "(Path(\`/${v}/api/config\`) && (Method(\`GET\`) || Method(\`PUT\`))) || (Path(\`/${v}/api/config/test\`) && Method(\`POST\`))"`,
+      '      entryPoints: ["portal-admin"]',
+      `      middlewares: ["portal-only", "vault-${v}-admin-strip", "vault-${v}-admin-hdr"]`,
+      `      service: "vault-${v}"`,
+    );
+  }
   // MetaMCP admin UI behind Authentik (lokyy-admins); /metamcp/* is never served by the admin router
   L.push(
     '    metamcp:',
@@ -472,6 +528,20 @@ export function renderTraefikDynamic(pkg: PackageName): string {
     // Overwrites any client-supplied value; only this router carries this vault's secret
     L.push(`    vault-${v}-secret:`, '      headers:', '        customRequestHeaders:',
       `          X-Vault-Proxy-Secret: "{{ env \`PROXY_SECRET_${v.toUpperCase()}\` }}"`);
+  }
+  L.push('    portal-only:', '      ipAllowList:', '        sourceRange: ["{{ env `PORTAL_IP` }}/32"]');
+  for (const v of vaults) {
+    L.push(
+      `    vault-${v}-admin-strip:`, '      stripPrefix:', `        prefixes: ["/${v}"]`,
+      `    vault-${v}-admin-hdr:`, '      headers:', '        customRequestHeaders:',
+      `          X-Vault-Proxy-Secret: "{{ env \`PROXY_SECRET_${v.toUpperCase()}\` }}"`,
+      // Overwrites whatever the caller sent: the portal acts as operator "lokyy-portal"
+      '          X-authentik-username: "lokyy-portal"',
+      '          X-authentik-groups: "lokyy-admins"',
+      '          X-authentik-email: ""',
+      '          X-authentik-uid: ""',
+      '          X-Mindbase-User: ""',
+    );
   }
   L.push(...pin('portal', 'app'));
   L.push('    portal-secret:', '      headers:', '        customRequestHeaders:',
@@ -525,6 +595,7 @@ export function renderBlueprint(pkg: PackageName): string {
     `  - { model: authentik_core.group, id: group-${key}, identifiers: { name: ${name} }, attrs: { name: ${name} } }`;
   for (const v of slots) L.push(group(v, `vault-${v}`));
   L.push(group('firma-write', 'vault-firma-write'), group('firma-read', 'vault-firma-read'), group('admins', 'lokyy-admins'));
+  L.push('  # Every employee the portal invites (portal access, "Mein Zugang")', group('users', 'lokyy-users'));
   L.push(
     '  - model: authentik_core.user',
     '    identifiers: { username: akadmin }',
@@ -532,7 +603,7 @@ export function renderBlueprint(pkg: PackageName): string {
     '    attrs:',
     '      groups: [!Find [authentik_core.group, [name, "authentik Admins"]], !KeyOf group-admins]',
   );
-  const app = (key: string, name: string, title: string, host: string, groupKey: string, first = false) => {
+  const app = (key: string, name: string, title: string, host: string, groupKey: string | string[], first = false) => {
     L.push(
       '  - model: authentik_providers_proxy.proxyprovider',
       `    id: provider-${key}`,
@@ -552,16 +623,19 @@ export function renderBlueprint(pkg: PackageName): string {
       `    id: app-${key}`,
       `    identifiers: { slug: ${name} }`,
       `    attrs: { name: ${title}, slug: ${name}, provider: !KeyOf provider-${key}, policy_engine_mode: any }`,
-      '  - model: authentik_policies.policybinding',
-      `    identifiers: { target: !KeyOf app-${key}, group: !KeyOf group-${groupKey} }`,
-      `    attrs: { target: !KeyOf app-${key}, group: !KeyOf group-${groupKey}, order: 0 }`,
+      ...[groupKey].flat().flatMap((g, order) => [
+        '  - model: authentik_policies.policybinding',
+        `    identifiers: { target: !KeyOf app-${key}, group: !KeyOf group-${g} }`,
+        `    attrs: { target: !KeyOf app-${key}, group: !KeyOf group-${g}, order: ${order} }`,
+      ]),
     );
   };
   slots.forEach((v, i) => app(v, `vault-${v}`, `"Vault ${v}"`, v, v, i === 0));
   L.push('  # Company vault web UI: only writers (readers use MCP with the read-only token)');
   app('firma', 'vault-firma', 'Firmen-Vault', 'firma', 'firma-write');
-  L.push('  # Setup portal and MetaMCP admin UI: operators only');
-  app('portal', 'lokyy-portal', 'Lokyy Setup', 'app', 'admins');
+  L.push('  # Setup portal: every invited employee and the operators (admin functions are checked inside the portal)');
+  app('portal', 'lokyy-portal', 'Lokyy Portal', 'app', ['users', 'admins']);
+  L.push('  # MetaMCP admin UI: operators only');
   app('metamcp', 'metamcp-admin', 'MetaMCP Admin', 'mcp', 'admins');
   L.push(
     '  - model: authentik_outposts.outpost',

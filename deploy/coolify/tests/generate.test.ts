@@ -15,7 +15,7 @@ const coolifyDir = join(here, '..');
 const pkgs = Object.keys(PACKAGES) as PackageName[];
 
 // Variables a Coolify operator may set; everything secret must be a Coolify magic variable (SERVICE_*).
-const OPERATOR_VARS = new Set(['BASE_DOMAIN', 'ADMIN_EMAIL', 'LOKYY_NET_PREFIX', 'LOKYY_TRUSTED_PROXY_CIDRS', 'VAULT_MEM_LIMIT']);
+const OPERATOR_VARS = new Set(['BASE_DOMAIN', 'ADMIN_EMAIL', 'LOKYY_NET_PREFIX', 'LOKYY_TRUSTED_PROXY_CIDRS', 'VAULT_MEM_LIMIT', 'EMBED_MEM_LIMIT']);
 const SECRETISH = /(PASS|SECRET|TOKEN|KEY)/i;
 
 const varsIn = (s: string): string[] => [...s.matchAll(/\$\{([A-Z0-9_]+)/g)].map((m) => m[1]);
@@ -214,13 +214,93 @@ test('S -> M upgrade: every S volume and network exists unchanged in M', () => {
   }
 });
 
-test('embed flag: off by default, when on every vault gets the embed URL and token', () => {
+test('embed flag (LBV2-26 contract): off by default; when on, one token and one network per vault', () => {
   assert.equal(buildCompose('s').services.embed, undefined);
   const c = buildCompose('s', { embed: true });
-  assert.ok(c.services.embed);
+  const e = c.services.embed;
+  assert.deepEqual(e.build, { context: '../..', dockerfile: 'deploy/Dockerfile', target: 'embed' });
+  assert.equal(e.read_only, true);
+  assert.deepEqual(e.cap_drop, ['ALL']);
+  assert.deepEqual(e.sysctls, { 'net.ipv4.ip_forward': '0' });
+  assert.deepEqual(e.volumes, ['models:/models:ro']);
+  assert.deepEqual(netKeys(c, 'embed'), vaultNames('s').map((v) => `embed-${v}`).sort());
+  assert.equal(e.environment?.EMBED_VAULTS, vaultNames('s').join(','));
+  const svcs = Object.keys(c.services);
   for (const v of vaultNames('s')) {
-    const env = c.services[`vault-${v}`].environment ?? {};
-    assert.match(String(env.MINDBASE_EMBED_URL), /^http:\/\/embed:\d+\/embed$/);
-    assert.match(String(env.MINDBASE_EMBED_TOKEN), /^\$\{SERVICE_HEX_64_[A-Z0-9]+\}$/);
+    const V = v.toUpperCase();
+    const s = c.services[`vault-${v}`];
+    const env = s.environment ?? {};
+    assert.equal(env.MINDBASE_EMBED_URL, 'http://embed:8080');
+    assert.equal(env.MINDBASE_EMBED_TOKEN, `\${SERVICE_HEX_64_EMB${V}}`);
+    assert.equal(e.environment?.[`EMBED_TOKEN_${V}`], env.MINDBASE_EMBED_TOKEN, 'plain token = same magic var');
+    assert.equal(e.environment?.[`EMBED_SOURCE_${V}`], c.networks[`embed-${v}`].ipam?.config[0].subnet);
+    assert.deepEqual(netKeys(c, `vault-${v}`), ['egress', `embed-${v}`, `mcp-${v}`, `web-${v}`]);
+    assert.deepEqual(svcs.filter((x) => netKeys(c, x).includes(`embed-${v}`)).sort(), ['embed', `vault-${v}`]);
+    assert.equal(c.networks[`embed-${v}`].internal, true);
+    assert.ok(!(s.volumes ?? []).some((x) => x.startsWith('models:')), 'vaults no longer mount the model');
+    assert.equal(s.mem_limit, '${VAULT_MEM_LIMIT:-1g}');
+    assert.deepEqual(s.depends_on, { embed: { condition: 'service_healthy' } });
   }
+});
+
+test('portal wiring (LBV2-28 contract)', () => {
+  for (const pkg of pkgs) {
+    const c = buildCompose(pkg);
+    const p = c.services.portal;
+    const t = c.services['lokyy-traefik'];
+    const pnets = p.networks as Record<string, { ipv4_address?: string }>;
+    const tnets = t.networks as Record<string, { ipv4_address?: string }>;
+    assert.deepEqual(Object.keys(pnets).sort(), ['edge', 'portal']);
+    assert.equal(pnets.portal.ipv4_address, '${LOKYY_NET_PREFIX:-10.231}.0.94');
+    assert.equal(tnets.portal.ipv4_address, '${LOKYY_NET_PREFIX:-10.231}.0.93');
+    assert.deepEqual(c.networks.portal.ipam?.config[0], { subnet: '${LOKYY_NET_PREFIX:-10.231}.0.80/28', ip_range: '${LOKYY_NET_PREFIX:-10.231}.0.80/29' });
+    assert.deepEqual(Object.keys(c.services).filter((s) => netKeys(c, s).includes('portal')).sort(), ['lokyy-traefik', 'portal']);
+    // admin entrypoint listens only on Traefik's portal-network address
+    assert.ok(t.command?.includes('--entrypoints.portal-admin.address=${LOKYY_NET_PREFIX:-10.231}.0.93:8090'));
+    assert.equal(t.environment?.PORTAL_IP, '${LOKYY_NET_PREFIX:-10.231}.0.94');
+    assert.equal(p.read_only, true);
+    assert.deepEqual(p.cap_drop, ['ALL']);
+    const env = p.environment ?? {};
+    assert.equal(env.LOKYY_DOMAIN, '${BASE_DOMAIN:?set BASE_DOMAIN in Coolify}');
+    assert.equal(env.LOKYY_SLOTS, slotNames(pkg).join(','));
+    assert.equal(env.VAULT_ADMIN_URL, 'http://${LOKYY_NET_PREFIX:-10.231}.0.93:8090');
+    assert.equal(env.AUTHENTIK_API_TOKEN, c.services['authentik-server'].environment?.AUTHENTIK_BOOTSTRAP_TOKEN);
+    assert.equal(env.VAULT_PROXY_SECRET, t.environment?.PROXY_SECRET_PORTAL);
+  }
+});
+
+test('portal-admin routes: only config API per vault, portal IP only, fixed identity', () => {
+  for (const pkg of pkgs) {
+    const d = renderTraefikDynamic(pkg);
+    for (const v of vaultNames(pkg)) {
+      const block = d.slice(d.indexOf(`    vault-${v}-admin:\n`)).split('\n').slice(0, 5).join('\n');
+      assert.equal(block, [
+        `    vault-${v}-admin:`,
+        `      rule: "(Path(\`/${v}/api/config\`) && (Method(\`GET\`) || Method(\`PUT\`))) || (Path(\`/${v}/api/config/test\`) && Method(\`POST\`))"`,
+        '      entryPoints: ["portal-admin"]',
+        `      middlewares: ["portal-only", "vault-${v}-admin-strip", "vault-${v}-admin-hdr"]`,
+        `      service: "vault-${v}"`,
+      ].join('\n'));
+      const hdr = d.slice(d.indexOf(`    vault-${v}-admin-hdr:\n`)).split('\n').slice(0, 10).join('\n');
+      for (const line of [
+        `X-Vault-Proxy-Secret: "{{ env \`PROXY_SECRET_${v.toUpperCase()}\` }}"`, 'X-authentik-username: "lokyy-portal"',
+        'X-authentik-groups: "lokyy-admins"', 'X-authentik-email: ""', 'X-authentik-uid: ""', 'X-Mindbase-User: ""',
+      ]) assert.ok(hdr.includes(line), `${v}: ${line}`);
+    }
+    assert.ok(d.includes('    portal-only:\n      ipAllowList:\n        sourceRange: ["{{ env `PORTAL_IP` }}/32"]\n'));
+    // no router on the public entrypoint reaches the admin identity
+    assert.equal((d.match(/entryPoints: \["portal-admin"\]/g) ?? []).length, vaultNames(pkg).length);
+  }
+});
+
+test('blueprint: every invited user (lokyy-users) and operators reach the portal', () => {
+  const b = renderBlueprint('s');
+  assert.ok(b.includes('identifiers: { name: lokyy-users }, attrs: { name: lokyy-users } }'));
+  assert.ok(b.includes('identifiers: { target: !KeyOf app-portal, group: !KeyOf group-users }'));
+  assert.ok(b.includes('identifiers: { target: !KeyOf app-portal, group: !KeyOf group-admins }'));
+});
+
+test('authentik image bakes the portal blueprint (invitation / set-password flow)', () => {
+  const df = readFileSync(join(coolifyDir, 'authentik/Dockerfile'), 'utf8');
+  assert.match(df, /COPY [^\n]*apps\/portal\/authentik\/lokyy-portal\.yam\S* \/blueprints\/custom\//);
 });

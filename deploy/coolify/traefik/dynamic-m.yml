@@ -326,6 +326,161 @@ http:
       entryPoints: ["web"]
       middlewares: ["portal-fwd"]
       service: "authentik"
+    vault-v01-admin:
+      rule: "(Path(`/v01/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v01/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v01-admin-strip", "vault-v01-admin-hdr"]
+      service: "vault-v01"
+    vault-v02-admin:
+      rule: "(Path(`/v02/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v02/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v02-admin-strip", "vault-v02-admin-hdr"]
+      service: "vault-v02"
+    vault-v03-admin:
+      rule: "(Path(`/v03/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v03/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v03-admin-strip", "vault-v03-admin-hdr"]
+      service: "vault-v03"
+    vault-v04-admin:
+      rule: "(Path(`/v04/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v04/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v04-admin-strip", "vault-v04-admin-hdr"]
+      service: "vault-v04"
+    vault-v05-admin:
+      rule: "(Path(`/v05/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v05/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v05-admin-strip", "vault-v05-admin-hdr"]
+      service: "vault-v05"
+    vault-v06-admin:
+      rule: "(Path(`/v06/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v06/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v06-admin-strip", "vault-v06-admin-hdr"]
+      service: "vault-v06"
+    vault-v07-admin:
+      rule: "(Path(`/v07/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v07/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v07-admin-strip", "vault-v07-admin-hdr"]
+      service: "vault-v07"
+    vault-v08-admin:
+      rule: "(Path(`/v08/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v08/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v08-admin-strip", "vault-v08-admin-hdr"]
+      service: "vault-v08"
+    vault-v09-admin:
+      rule: "(Path(`/v09/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v09/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v09-admin-strip", "vault-v09-admin-hdr"]
+      service: "vault-v09"
+    vault-v10-admin:
+      rule: "(Path(`/v10/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v10/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v10-admin-strip", "vault-v10-admin-hdr"]
+      service: "vault-v10"
+    vault-v11-admin:
+      rule: "(Path(`/v11/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v11/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v11-admin-strip", "vault-v11-admin-hdr"]
+      service: "vault-v11"
+    vault-v12-admin:
+      rule: "(Path(`/v12/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v12/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v12-admin-strip", "vault-v12-admin-hdr"]
+      service: "vault-v12"
+    vault-v13-admin:
+      rule: "(Path(`/v13/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v13/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v13-admin-strip", "vault-v13-admin-hdr"]
+      service: "vault-v13"
+    vault-v14-admin:
+      rule: "(Path(`/v14/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v14/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v14-admin-strip", "vault-v14-admin-hdr"]
+      service: "vault-v14"
+    vault-v15-admin:
+      rule: "(Path(`/v15/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v15/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v15-admin-strip", "vault-v15-admin-hdr"]
+      service: "vault-v15"
+    vault-v16-admin:
+      rule: "(Path(`/v16/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v16/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v16-admin-strip", "vault-v16-admin-hdr"]
+      service: "vault-v16"
+    vault-v17-admin:
+      rule: "(Path(`/v17/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v17/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v17-admin-strip", "vault-v17-admin-hdr"]
+      service: "vault-v17"
+    vault-v18-admin:
+      rule: "(Path(`/v18/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v18/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v18-admin-strip", "vault-v18-admin-hdr"]
+      service: "vault-v18"
+    vault-v19-admin:
+      rule: "(Path(`/v19/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v19/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v19-admin-strip", "vault-v19-admin-hdr"]
+      service: "vault-v19"
+    vault-v20-admin:
+      rule: "(Path(`/v20/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v20/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v20-admin-strip", "vault-v20-admin-hdr"]
+      service: "vault-v20"
+    vault-v21-admin:
+      rule: "(Path(`/v21/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v21/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v21-admin-strip", "vault-v21-admin-hdr"]
+      service: "vault-v21"
+    vault-v22-admin:
+      rule: "(Path(`/v22/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v22/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v22-admin-strip", "vault-v22-admin-hdr"]
+      service: "vault-v22"
+    vault-v23-admin:
+      rule: "(Path(`/v23/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v23/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v23-admin-strip", "vault-v23-admin-hdr"]
+      service: "vault-v23"
+    vault-v24-admin:
+      rule: "(Path(`/v24/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v24/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v24-admin-strip", "vault-v24-admin-hdr"]
+      service: "vault-v24"
+    vault-v25-admin:
+      rule: "(Path(`/v25/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v25/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v25-admin-strip", "vault-v25-admin-hdr"]
+      service: "vault-v25"
+    vault-v26-admin:
+      rule: "(Path(`/v26/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v26/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v26-admin-strip", "vault-v26-admin-hdr"]
+      service: "vault-v26"
+    vault-v27-admin:
+      rule: "(Path(`/v27/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v27/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v27-admin-strip", "vault-v27-admin-hdr"]
+      service: "vault-v27"
+    vault-v28-admin:
+      rule: "(Path(`/v28/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v28/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v28-admin-strip", "vault-v28-admin-hdr"]
+      service: "vault-v28"
+    vault-v29-admin:
+      rule: "(Path(`/v29/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v29/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v29-admin-strip", "vault-v29-admin-hdr"]
+      service: "vault-v29"
+    vault-v30-admin:
+      rule: "(Path(`/v30/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/v30/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-v30-admin-strip", "vault-v30-admin-hdr"]
+      service: "vault-v30"
+    vault-firma-admin:
+      rule: "(Path(`/firma/api/config`) && (Method(`GET`) || Method(`PUT`))) || (Path(`/firma/api/config/test`) && Method(`POST`))"
+      entryPoints: ["portal-admin"]
+      middlewares: ["portal-only", "vault-firma-admin-strip", "vault-firma-admin-hdr"]
+      service: "vault-firma"
     metamcp:
       rule: "Host(`mcp.{{ $d }}`) && !PathPrefix(`/metamcp/`)"
       entryPoints: ["web"]
@@ -632,6 +787,381 @@ http:
       headers:
         customRequestHeaders:
           X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_FIRMA` }}"
+    portal-only:
+      ipAllowList:
+        sourceRange: ["{{ env `PORTAL_IP` }}/32"]
+    vault-v01-admin-strip:
+      stripPrefix:
+        prefixes: ["/v01"]
+    vault-v01-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V01` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v02-admin-strip:
+      stripPrefix:
+        prefixes: ["/v02"]
+    vault-v02-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V02` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v03-admin-strip:
+      stripPrefix:
+        prefixes: ["/v03"]
+    vault-v03-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V03` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v04-admin-strip:
+      stripPrefix:
+        prefixes: ["/v04"]
+    vault-v04-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V04` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v05-admin-strip:
+      stripPrefix:
+        prefixes: ["/v05"]
+    vault-v05-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V05` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v06-admin-strip:
+      stripPrefix:
+        prefixes: ["/v06"]
+    vault-v06-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V06` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v07-admin-strip:
+      stripPrefix:
+        prefixes: ["/v07"]
+    vault-v07-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V07` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v08-admin-strip:
+      stripPrefix:
+        prefixes: ["/v08"]
+    vault-v08-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V08` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v09-admin-strip:
+      stripPrefix:
+        prefixes: ["/v09"]
+    vault-v09-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V09` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v10-admin-strip:
+      stripPrefix:
+        prefixes: ["/v10"]
+    vault-v10-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V10` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v11-admin-strip:
+      stripPrefix:
+        prefixes: ["/v11"]
+    vault-v11-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V11` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v12-admin-strip:
+      stripPrefix:
+        prefixes: ["/v12"]
+    vault-v12-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V12` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v13-admin-strip:
+      stripPrefix:
+        prefixes: ["/v13"]
+    vault-v13-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V13` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v14-admin-strip:
+      stripPrefix:
+        prefixes: ["/v14"]
+    vault-v14-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V14` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v15-admin-strip:
+      stripPrefix:
+        prefixes: ["/v15"]
+    vault-v15-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V15` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v16-admin-strip:
+      stripPrefix:
+        prefixes: ["/v16"]
+    vault-v16-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V16` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v17-admin-strip:
+      stripPrefix:
+        prefixes: ["/v17"]
+    vault-v17-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V17` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v18-admin-strip:
+      stripPrefix:
+        prefixes: ["/v18"]
+    vault-v18-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V18` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v19-admin-strip:
+      stripPrefix:
+        prefixes: ["/v19"]
+    vault-v19-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V19` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v20-admin-strip:
+      stripPrefix:
+        prefixes: ["/v20"]
+    vault-v20-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V20` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v21-admin-strip:
+      stripPrefix:
+        prefixes: ["/v21"]
+    vault-v21-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V21` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v22-admin-strip:
+      stripPrefix:
+        prefixes: ["/v22"]
+    vault-v22-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V22` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v23-admin-strip:
+      stripPrefix:
+        prefixes: ["/v23"]
+    vault-v23-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V23` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v24-admin-strip:
+      stripPrefix:
+        prefixes: ["/v24"]
+    vault-v24-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V24` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v25-admin-strip:
+      stripPrefix:
+        prefixes: ["/v25"]
+    vault-v25-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V25` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v26-admin-strip:
+      stripPrefix:
+        prefixes: ["/v26"]
+    vault-v26-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V26` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v27-admin-strip:
+      stripPrefix:
+        prefixes: ["/v27"]
+    vault-v27-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V27` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v28-admin-strip:
+      stripPrefix:
+        prefixes: ["/v28"]
+    vault-v28-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V28` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v29-admin-strip:
+      stripPrefix:
+        prefixes: ["/v29"]
+    vault-v29-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V29` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-v30-admin-strip:
+      stripPrefix:
+        prefixes: ["/v30"]
+    vault-v30-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_V30` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
+    vault-firma-admin-strip:
+      stripPrefix:
+        prefixes: ["/firma"]
+    vault-firma-admin-hdr:
+      headers:
+        customRequestHeaders:
+          X-Vault-Proxy-Secret: "{{ env `PROXY_SECRET_FIRMA` }}"
+          X-authentik-username: "lokyy-portal"
+          X-authentik-groups: "lokyy-admins"
+          X-authentik-email: ""
+          X-authentik-uid: ""
+          X-Mindbase-User: ""
     portal-fwd:
       headers:
         customRequestHeaders:
