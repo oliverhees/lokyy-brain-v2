@@ -101,3 +101,34 @@ describe('tree raw routes', () => {
     });
   });
 });
+
+describe('tree raw routes on a fresh (v1 layout) data dir (LBV2-32)', () => {
+  let dataDir: string;
+  let app: express.Application;
+  let ctx: ServerContext;
+  beforeEach(async () => {
+    dataDir = join(tmpdir(), `tree-raw-v1-${Date.now()}`);
+    await mkdir(dataDir, { recursive: true });
+    ctx = await createContext(dataDir);
+    app = express();
+    app.use(express.json());
+    app.use('/api/tree', treeRoutes(ctx));
+  });
+  afterEach(async () => { await rm(dataDir, { recursive: true, force: true }); });
+
+  it('lists and opens text ingested via /api/ingest/text', async () => {
+    const raw = await ingestPaste(ctx.store, { text: 'Rhine Falls near Schaffhausen.', title: 'Rhine Falls' });
+    const list = await request(app).get('/api/tree/raw');
+    expect(list.status).toBe(200);
+    const entry = list.body.entries.find((e: { id: string }) => e.id === raw.id);
+    expect(entry).toMatchObject({ kind: 'text', title: 'Rhine Falls' });
+    const res = await request(app).get(`/api/tree/raw/${entry.date}/${raw.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.body).toBe('Rhine Falls near Schaffhausen.');
+  });
+
+  it('upload still needs the v2 layout', async () => {
+    const res = await request(app).post('/api/tree/raw/upload').send({ data: Buffer.from('x').toString('base64'), filename: 'a.txt' });
+    expect(res.status).toBe(409);
+  });
+});

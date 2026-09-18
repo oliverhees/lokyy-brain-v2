@@ -75,7 +75,8 @@ export function rawTreeRoutes(ctx: ServerContext): Router {
   router.get('/raw', async (_req, res) => {
     const projectId = ctx.currentProjectId;
     const layout = await detectLayoutVersion(makeProjectRoot(ctx.dataDir, projectId));
-    if (layout === 'v1') return res.status(409).json({ error: 'V1_LAYOUT_UNSUPPORTED' });
+    // Ingested sources live in raw/ in both layouts; only sources/raw/ needs v2 (LBV2-32).
+    if (layout === 'v1') return res.json({ category: 'raw', entries: await listIngestedRaw(ctx) });
     const p = projectPaths();
     const root = join(ctx.dataDir, 'projects', projectId, p.rawDir);
     const entries: Array<{ date: string; id: string; size: number; kind: string; title?: string }> = [];
@@ -150,7 +151,13 @@ export function rawTreeRoutes(ctx: ServerContext): Router {
   router.get('/raw/:date/:id', async (req, res) => {
     const projectId = ctx.currentProjectId;
     const layout = await detectLayoutVersion(makeProjectRoot(ctx.dataDir, projectId));
-    if (layout === 'v1') return res.status(409).json({ error: 'V1_LAYOUT_UNSUPPORTED' });
+    if (layout === 'v1') {
+      const ingested = ingestedRawPath(ctx, req.params.date, req.params.id);
+      if (!ingested) return res.status(400).json({ error: 'Invalid raw entry' });
+      try {
+        return res.json({ date: req.params.date, id: req.params.id, body: await readFileP(ingested, 'utf-8') });
+      } catch { return res.status(404).json({ error: 'Not found' }); }
+    }
     const abs = rawEntryPath(ctx, req.params.date, req.params.id);
     if (!abs) return res.status(400).json({ error: 'Invalid raw entry' });
     const dirAbs = dirname(abs);
