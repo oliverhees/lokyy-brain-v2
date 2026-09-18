@@ -245,6 +245,7 @@ export async function createContext(dataDir?: string): Promise<ServerContext> {
         apiKey: config.apiKey,
         model: config.model,
         baseUrl: config.baseUrl || undefined,
+        ruleId: config.ruleId,
       });
     },
     reloadConfig: async () => {

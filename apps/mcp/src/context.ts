@@ -10,6 +10,8 @@ export interface MCPConfig {
   model: string;
   apiKey: string;
   baseUrl: string;
+  /** EUrouter routing rule (UUID), sent as `rule_id` (LBV2-30). */
+  ruleId?: string;
   autoSave?: boolean;
   mergeSaves?: boolean;
   maxContextChars?: number;
@@ -112,6 +114,7 @@ export async function loadContext(opts: {
         apiKey: config.apiKey,
         model: config.model,
         baseUrl: config.baseUrl || undefined,
+        ruleId: config.ruleId,
       });
     },
     reindex: async () => {
