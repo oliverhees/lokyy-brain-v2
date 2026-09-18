@@ -1,0 +1,13 @@
+# LBV2-29 fixture for tests/blueprint-check.sh: must be ACCEPTED.
+version: 1
+entries:
+  - { model: authentik_core.group, id: group-admins, identifiers: { name: lokyy-admins }, attrs: { name: lokyy-admins } }
+  - model: authentik_core.user
+    identifiers: { username: akadmin }
+    state: present
+    attrs:
+      groups: [!Find [authentik_core.group, [name, "authentik Admins"]], !KeyOf group-admins]
+  - model: authentik_core.user
+    identifiers: { username: akadmin2 }
+    attrs:
+      groups: [!KeyOf group-admins]

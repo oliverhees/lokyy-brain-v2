@@ -14,6 +14,7 @@ for f in "$@"; do
   bad=$(awk '
     function flush() { if (e ~ /username:[ ]*"?akadmin"?[ ,}]/ && e ~ /groups:/ && e !~ /"authentik Admins"/) print n; e = "" }
     /^  - / { flush(); n = NR }
+    /^[ ]*#/ { next }   # comments do not count (they may mention "authentik Admins")
     { e = e " " $0 }
     END { flush() }' "$f")
   if [[ -n $bad ]]; then
