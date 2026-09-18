@@ -4,6 +4,8 @@ import { useSettings } from '../store/settings';
 import { apiGet, apiPut, apiPost, apiSSE } from '../lib/api';
 import { editedKey, keyAfterDestinationChange } from '../lib/config-form';
 import { LOCAL_MODELS_DISABLED_MESSAGE, isNotFoundError, localModelsAvailable, type HealthFeatures } from '../lib/local-setup';
+import { EUROUTER_BASE_URL, isEurouterUrl } from '../lib/eurouter';
+import { EurouterRoutePicker } from './EurouterRoutePicker';
 
 type WizardStep = 'provider' | 'configure' | 'local-setup' | 'result';
 
@@ -41,6 +43,11 @@ const PROVIDERS: ProviderOption[] = [
     defaults: { model: 'deepseek-chat', baseUrl: '' },
   },
   {
+    id: 'eurouter', label: 'EUrouter', description: 'EU-hosted models, routed by your EUrouter routes',
+    configProvider: 'openai', needsApiKey: true, needsBaseUrl: false,
+    defaults: { model: '', baseUrl: EUROUTER_BASE_URL },
+  },
+  {
     id: 'ollama', label: 'Free — runs on your computer', description: 'No account, no API key. MindBase picks the best local model for your hardware.',
     configProvider: 'ollama', needsApiKey: false, needsBaseUrl: true,
     defaults: { model: '', baseUrl: 'http://localhost:11434' },
@@ -69,6 +76,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
     if (settings.provider === 'ollama') return 'ollama';
     if (settings.provider === 'anthropic') return 'anthropic';
     if (settings.provider === 'deepseek') return 'deepseek';
+    if (settings.provider === 'openai' && isEurouterUrl(settings.baseUrl)) return 'eurouter';
     if (settings.provider === 'openai' && settings.baseUrl) return 'custom';
     return 'openai';
   }
@@ -78,6 +86,8 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
   const [apiKey, setApiKey] = useState(settings.apiKey ?? '');
   const [baseUrl, setBaseUrl] = useState(settings.baseUrl ?? '');
   const [model, setModel] = useState(settings.model ?? '');
+  // EUrouter routing rule id (LBV2-30); '' = route by model only.
+  const [ruleId, setRuleId] = useState(settings.ruleId ?? '');
   const [autoSave, setAutoSave] = useState(settings.autoSave ?? true);
   const [mergeSaves, setMergeSaves] = useState(settings.mergeSaves ?? false);
   const [testing, setTesting] = useState(false);
@@ -189,11 +199,16 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
     setApiKey(settings.apiKey);
     setBaseUrl(settings.baseUrl);
     setModel(settings.model);
+    setRuleId(settings.ruleId ?? '');
     setAutoSave(settings.autoSave);
     setMergeSaves(settings.mergeSaves);
   }, [settings.loaded]);
 
   const selected = PROVIDERS.find((p) => p.id === selectedId)!;
+  // EUrouter selects by route (rule id); with a route the model is optional.
+  const usesEurouter = selected.configProvider === 'openai' && isEurouterUrl(baseUrl);
+  const effectiveRuleId = usesEurouter ? ruleId : '';
+  const canTest = !!model || !!effectiveRuleId;
 
   const stepIndex = step === 'provider' ? 0 : step === 'configure' ? 1 : 2;
 
@@ -203,6 +218,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
     setSelectedId(id);
     setModel(provider.defaults.model || model);
     setBaseUrl(provider.defaults.baseUrl || (id === 'custom' ? baseUrl : ''));
+    if (id !== selectedId) setRuleId('');
     if (!provider.needsApiKey) setApiKey('');
     // A masked stored key is only valid for the stored provider: ask for a real key on change.
     else if (id !== selectedId) setApiKey((k) => keyAfterDestinationChange(k));
@@ -221,6 +237,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
         model,
         apiKey,
         baseUrl,
+        ruleId: effectiveRuleId,
       });
       setTestResult(r);
       if (r.ok) {
@@ -246,6 +263,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
         model,
         apiKey,
         baseUrl,
+        ruleId: effectiveRuleId,
         autoSave,
         mergeSaves,
       };
@@ -265,6 +283,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
         model,
         apiKey,
         baseUrl,
+        ruleId: effectiveRuleId,
         autoSave: true,
         mergeSaves: false,
       };
@@ -334,7 +353,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
                       <div className="absolute top-3.5 right-3.5 w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold"
                         style={{ background: 'var(--accent-azure)', color: 'var(--text-inverse)' }}>✓</div>
                     )}
-                    <div className="text-[18px] mb-2 opacity-90">{p.id === 'openai' ? '⌬' : p.id === 'anthropic' ? '◆' : p.id === 'deepseek' ? '⬡' : p.id === 'ollama' ? '⌂' : '◇'}</div>
+                    <div className="text-[18px] mb-2 opacity-90">{p.id === 'openai' ? '⌬' : p.id === 'anthropic' ? '◆' : p.id === 'deepseek' ? '⬡' : p.id === 'eurouter' ? '€' : p.id === 'ollama' ? '⌂' : '◇'}</div>
                     <div className="text-[13px] font-semibold tracking-tight" style={{ color: 'var(--text-high)' }}>{p.label}</div>
                     <div className="text-[10.5px] mt-1 leading-[1.4]" style={{ color: 'var(--text-low)' }}>{p.description}</div>
                   </button>
@@ -556,19 +575,24 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
                     type="password"
                     value={apiKey}
                     onChange={(e) => { const next = e.target.value; setApiKey((prev) => editedKey(prev, next)); }}
-                    placeholder={selected.configProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}
+                    placeholder={selected.configProvider === 'anthropic' ? 'sk-ant-...' : selected.id === 'eurouter' ? 'eur_...' : 'sk-...'}
                     className="w-full rounded-[10px] px-3.5 py-3 text-[13px] font-mono outline-none glass-card transition-colors"
                     style={{ color: 'var(--text-default)' }}
                   />
                 </div>
               )}
+              {usesEurouter && (
+                <EurouterRoutePicker provider={selected.configProvider} baseUrl={baseUrl} apiKey={apiKey} value={ruleId} onChange={setRuleId} />
+              )}
               <div>
-                <div className="text-[10.5px] tracking-[1px] uppercase font-semibold mb-1.5" style={{ color: 'var(--text-mid)' }}>Model</div>
+                <div className="text-[10.5px] tracking-[1px] uppercase font-semibold mb-1.5" style={{ color: 'var(--text-mid)' }}>
+                  Model {usesEurouter && effectiveRuleId ? '(optional with a route)' : ''}
+                </div>
                 <input
                   type="text"
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
-                  placeholder={selected.defaults.model || 'model-name'}
+                  placeholder={usesEurouter ? 'e.g. qwen3.6-27b' : selected.defaults.model || 'model-name'}
                   className="w-full rounded-[10px] px-3.5 py-3 text-[13px] font-mono outline-none glass-card transition-colors"
                   style={{ color: 'var(--text-default)' }}
                 />
@@ -578,7 +602,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
             <div className="flex justify-center">
               <button
                 onClick={testConnection}
-                disabled={testing || saving || !model}
+                disabled={testing || saving || !canTest}
                 className="px-5 py-3 rounded-full text-[13px] font-semibold disabled:opacity-40"
                 style={{ background: 'rgba(255,255,255,0.95)', color: 'var(--text-inverse)' }}
               >
@@ -621,7 +645,7 @@ export function SetupWizard({ mode, onBack, onComplete, onSkip }: Props) {
               Your second brain<br /><span className="accent-italic">is online.</span>
             </div>
             <div className="text-[13px] mb-8" style={{ color: 'var(--text-mid)' }}>
-              {selected.label} · {model} · ready to compile.
+              {selected.label} · {model || 'route'} · ready to compile.
             </div>
             <button
               onClick={saveAndFinish}
