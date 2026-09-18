@@ -32,7 +32,8 @@ x-authentik-volumes: &authentik-volumes
   - ../../authentik/lokyy-portal.yaml:/blueprints/custom/lokyy-portal.yaml:ro
 
 x-vault: &vault
-  image: lokyy-brain-v2:dev
+  # E2E_VAULT_IMAGE: a vault image built from this branch (run.sh --vault-image); default the shared dev image
+  image: ${E2E_VAULT_IMAGE:-lokyy-brain-v2:dev}
   mem_limit: 1500m
   environment: &vault-env
     MCP_HTTP_PORT: "4322"
@@ -41,6 +42,8 @@ x-vault: &vault
     VAULT_LLM_ALLOWED_HOSTS: api.eurouter.ai
     MINDBASE_MODEL_CACHE: /home/vault
     MINDBASE_MODELS_OFFLINE: "1"
+    # LBV2-26: the shared embed service is not part of this stack; MINDBASE_EMBED_URL and
+    # MINDBASE_EMBED_TOKEN are both left unset (local embeddings). Setting only one aborts the vault.
 
 services:
   traefik:
@@ -123,6 +126,8 @@ services:
       # least-privilege service account token (blueprint), not the bootstrap token
       AUTHENTIK_API_TOKEN: ${PORTAL_AUTHENTIK_TOKEN:?run test/e2e/run.sh}
       GATE_SECRET: ${PORTAL_GATE_SECRET:?run test/e2e/run.sh}
+      # back-to-back test runs exceed the production default of 120 calls/min (the limit itself is unit-tested)
+      GATE_RATE_PER_MINUTE: "600"
     networks: [portal-gate, authentik-api]
 
   # ------------------------------------------------------------------- Portal

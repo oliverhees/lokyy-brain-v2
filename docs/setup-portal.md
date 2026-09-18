@@ -118,6 +118,10 @@ as `authentik_forbidden` ("change this account in Authentik directly").
   the flow `lokyy-set-password` (password twice, min. 12 characters, user_write `never_create`, login), sets it
   as recovery flow of the default brand, sets the brand locale to German, and binds a policy that allows the
   flow only for portal-managed employees (`attributes.lokyy_managed`, not superuser, not in `lokyy-admins`).
+  The policy's `ak_message` replaces Authentik's generic denial: a used or expired link shows "Dieser
+  Einladungslink ist abgelaufen oder wurde schon benutzt. Bitte deine Administratorin/deinen Administrator um
+  einen neuen Link.", any other account "Dieser Link gilt nicht für dein Konto …". The "Go back" button on that
+  page is Authentik's own UI text and stays English in 2026.8.2.
 - The stack blueprint provides the groups `vault-v01…`, `vault-firma-read`, `vault-firma-write`,
   `lokyy-admins` (with akadmin), `lokyy-users`, the per-slot proxy providers and a proxy provider/application
   `portal` for `app.<domain>` bound to `lokyy-users` **and** `lokyy-admins`, all in the embedded outpost's
@@ -216,6 +220,8 @@ apps/portal/test/e2e/run.sh test       # gate against real Authentik (refusals o
 apps/portal/test/e2e/run.sh down
 # parallel stacks (e.g. QA and dev at the same time): own project, port and subnet block
 apps/portal/test/e2e/run.sh -p lokyy-portal-qa --port 18382 --net 3 up|test|down
+# vaults from this branch instead of the shared lokyy-brain-v2:dev image
+docker build -f deploy/Dockerfile -t lokyy-brain-v2:lbv2-28 . && apps/portal/test/e2e/run.sh --vault-image lokyy-brain-v2:lbv2-28 … up
 # positive LLM path with a real key (never printed): route list, pick a route, every vault answers a chat
 EUROUTER_ENV=<file with EUROUTER_API_KEY=…> apps/portal/test/e2e/run.sh … up|test
 node apps/portal/test/dev/serve.ts     # UI preview on 127.0.0.1:18390 against fakes (?as=anna for an employee)

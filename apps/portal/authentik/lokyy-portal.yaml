@@ -39,11 +39,15 @@ entries:
     attrs:
       name: lokyy-set-password-portal-users-only
       expression: |
-        # Recovery links are created with the target user as pending_user.
+        # Recovery links are created with the target user as pending_user. A used or expired link carries
+        # no user; the message replaces Authentik's generic "flow does not apply" on the denial page.
         user = request.context.get("pending_user")
-        if user is None or not user.attributes.get("lokyy_managed", False):
+        if user is None:
+            ak_message("Dieser Einladungslink ist abgelaufen oder wurde schon benutzt. Bitte deine Administratorin/deinen Administrator um einen neuen Link.")
             return False
-        if user.is_superuser or user.groups.filter(name="lokyy-admins").exists():
+        if (not user.attributes.get("lokyy_managed", False) or user.is_superuser
+                or user.groups.filter(name="lokyy-admins").exists()):
+            ak_message("Dieser Link gilt nicht für dein Konto. Bitte wende dich an deine Administratorin/deinen Administrator.")
             return False
         return True
   - model: authentik_policies.policybinding

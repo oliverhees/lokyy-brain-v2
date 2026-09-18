@@ -111,8 +111,9 @@ describe.runIf(enabled)('E2E: invite → accept → vault login → MCP tools/li
   it('the employee sets a password with the link and is logged in', async () => {
     const after = await annaB.visit(link, { username: user, password: annaPass, newPassword: annaPass });
     expect(after.status).toBeLessThan(400);
-    // one-time link: a second use fails
-    await expect(new Browser().visit(link, { username: user, password: 'x', newPassword: 'another-password-123' })).rejects.toThrow();
+    // one-time link: a second use fails with a German explanation instead of Authentik's generic denial
+    await expect(new Browser().visit(link, { username: user, password: 'x', newPassword: 'another-password-123' }))
+      .rejects.toThrow(/ak-stage-access-denied.*Dieser Einladungslink ist abgelaufen oder wurde schon benutzt\. Bitte deine Administratorin\/deinen Administrator um einen neuen Link\./);
   });
 
   it('the employee sees "Mein Zugang", activates explicitly and reveals the MCP key', async () => {

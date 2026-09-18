@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # LBV2-28 — portal E2E stack.
-#   test/e2e/run.sh [-p project] [--port 18380] [--net TAG] up|test|down
+#   test/e2e/run.sh [-p project] [--port 18380] [--net TAG] [--vault-image IMAGE] up|test|down
 # Defaults: project lokyy-portal, 127.0.0.1:18380, subnets 10.234.0-13.0/24. For a parallel stack (e.g.
 # QA) choose another project, port and net block: -p lokyy-portal-qa --port 18382 --net 3 uses subnets
 # 10.234.48-61.0/24 (block n = 16n…16n+13, n = 0…15). Secrets are generated once per project in
@@ -15,11 +15,12 @@ while (($#)); do
     -p|--project) project=$2; shift 2 ;;
     --port) port=$2; shift 2 ;;
     --net) net=$2; shift 2 ;;
+    --vault-image) export E2E_VAULT_IMAGE=$2; shift 2 ;;
     up|test|down) cmd=$1; shift ;;
-    *) echo "usage: $0 [-p project] [--port port] [--net tag] up|test|down" >&2; exit 2 ;;
+    *) echo "usage: $0 [-p project] [--port port] [--net tag] [--vault-image image] up|test|down" >&2; exit 2 ;;
   esac
 done
-[[ -n ${cmd:-} ]] || { echo "usage: $0 [-p project] [--port port] [--net tag] up|test|down" >&2; exit 2; }
+[[ -n ${cmd:-} ]] || { echo "usage: $0 [-p project] [--port port] [--net tag] [--vault-image image] up|test|down" >&2; exit 2; }
 [[ $project =~ ^[a-z0-9][a-z0-9_-]*$ && $port =~ ^[0-9]+$ && $net =~ ^[0-9]+$ ]] && ((net <= 15)) || { echo "invalid project, port or net block (0-15)" >&2; exit 2; }
 
 envfile=.env.$project
