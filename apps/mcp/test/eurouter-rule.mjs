@@ -46,6 +46,14 @@ try {
   if (pdfCall?.url === 'https://api.eurouter.ai/api/v1/chat/completions') ok('PDF chat uses chat/completions'); else fail(`PDF chat went to ${pdfCall?.url}`);
   if (pdfCall?.body.rule_id === RULE && JSON.stringify(pdfCall?.body.messages).includes('Hello EU PDF')) ok('PDF text extracted locally and sent with rule_id');
   else fail('PDF text or rule_id missing');
+  // Bounded extraction (audit M1): an oversized PDF is refused before parsing, no provider call.
+  bodies.length = 0;
+  process.env.VAULT_PDF_MAX_BYTES = '10';
+  let limitError = '';
+  for await (const c of ctx.getAdapter().chat({ model: ctx.config.model, messages })) if (c.kind === 'error') limitError = c.error;
+  delete process.env.VAULT_PDF_MAX_BYTES;
+  if (limitError === 'Could not extract text from the PDF: PDF is larger than 10 bytes' && bodies.length === 0) ok('oversized PDF refused before parsing');
+  else fail(`oversized PDF not refused: ${limitError} / calls ${bodies.length}`);
   ctx.wikiIndex.close?.();
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));

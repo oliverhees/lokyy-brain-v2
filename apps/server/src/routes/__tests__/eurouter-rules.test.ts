@@ -184,7 +184,7 @@ describe('EUrouter routing rules (LBV2-30)', () => {
       await ctx.saveConfig({ ...BASE, apiKey: 'eur_wrong' });
       const res = await request(app).get('/api/config/eurouter/rules').set(ADMIN);
       expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: 'Key invalid or not authorised' });
+      expect(res.body).toEqual({ error: 'EUrouter key invalid or not authorised' });
       expect(JSON.stringify(warn.mock.calls)).not.toContain('eur_wrong');
     });
 
@@ -339,7 +339,7 @@ describe('PDF chat through EUrouter in the server adapter (LBV2-30)', () => {
   it('uses maxContextChars as the PDF text limit', async () => {
     const { fetchSpy, chunks } = await chatWith({ maxContextChars: 5 });
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(chunks.find((c) => c.kind === 'error')?.error).toMatch(/too long for the model context \(limit 5 characters\)/);
+    expect(chunks.find((c) => c.kind === 'error')?.error).toMatch(/too long for the model context \(more than 5 characters\)/);
   });
 });
 

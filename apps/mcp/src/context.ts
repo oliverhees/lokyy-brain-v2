@@ -116,7 +116,7 @@ export async function loadContext(opts: {
         model: config.model,
         baseUrl: config.baseUrl || undefined,
         ruleId: config.ruleId,
-        extractPdfText: (data) => extractPdfText(new Uint8Array(data)),
+        extractPdfText: (data, o) => extractPdfText(new Uint8Array(data), { maxChars: o.maxChars }),
         maxDocumentChars: config.maxContextChars,
       });
     },

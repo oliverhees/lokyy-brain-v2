@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { ingestPaste, ingestFile, fetchUntrusted, UntrustedFetchError, UNTRUSTED_FETCH_ERROR } from '@mindbase/core';
 import type { ServerContext } from '../context';
+import { extractPdfText, readPdfLimits } from '../lib/extract-pdf';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -154,20 +155,11 @@ async function fetchYouTubeTranscript(videoId: string): Promise<{ title: string;
   }
 }
 
-async function extractPdfText(file: File): Promise<string> {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const buf = await file.arrayBuffer();
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
-  const parts: string[] = [];
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i);
-    const content = await page.getTextContent();
-    const pageText = content.items
-      .map((it) => ('str' in it ? (it as { str: string }).str : ''))
-      .join(' ');
-    parts.push(pageText);
-  }
-  return parts.join('\n\n');
+async function extractPdfFile(file: File): Promise<string> {
+  // Size check before reading the upload into memory; the rest is bounded in extractPdfText.
+  const { maxBytes } = readPdfLimits();
+  if (file.size > maxBytes) throw new Error(`PDF is larger than ${maxBytes} bytes`);
+  return extractPdfText(new Uint8Array(await file.arrayBuffer()));
 }
 
 const EXT_TO_MIME: Record<string, string> = {
@@ -275,7 +267,7 @@ export function ingestRoutes(ctx: ServerContext): Router {
       }
       const blob = new Blob([new Uint8Array(file.buffer)], { type: file.mimetype });
       const fileObj = new File([blob], file.originalname, { type: file.mimetype });
-      const raw = await ingestFile(ctx.store, fileObj, { pdfExtract: extractPdfText });
+      const raw = await ingestFile(ctx.store, fileObj, { pdfExtract: extractPdfFile });
 
       // Save original file (PDF, etc.) alongside the extracted text
       await saveOriginalFile(ctx.store, raw.id, file.originalname, file.buffer);

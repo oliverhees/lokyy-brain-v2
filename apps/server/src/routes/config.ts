@@ -16,7 +16,6 @@ const ACTIONABLE_TEST_ERRORS: ReadonlySet<string> = new Set([
 ]);
 const NOT_EUROUTER_ERROR = 'EUrouter is not the configured endpoint';
 const RULES_FAILED_ERROR = 'Could not load EUrouter routes';
-const KEY_REJECTED_ERROR = 'Key invalid or not authorised';
 
 /** Lists the routing rules for the route picker (LBV2-30); upstream details are logged, never returned. */
 async function sendEurouterRules(res: Response, apiKey: string, baseUrl: string): Promise<void> {
@@ -25,7 +24,7 @@ async function sendEurouterRules(res: Response, apiKey: string, baseUrl: string)
   } catch (e) {
     console.warn(`[config/eurouter/rules] ${(e as Error).message}`);
     if (e instanceof EurouterHttpError && (e.status === 401 || e.status === 403)) {
-      res.status(400).json({ error: KEY_REJECTED_ERROR });
+      res.status(400).json({ error: EUROUTER_KEY_INVALID });
       return;
     }
     res.status(502).json({ error: RULES_FAILED_ERROR });
