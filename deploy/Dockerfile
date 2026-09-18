@@ -57,6 +57,8 @@ COPY --from=build /src/apps/web/dist /app/apps/web/dist
 COPY --from=build /src/apps/plugin/templates /app/apps/plugin/templates
 COPY --from=build /src/schema /app/schema
 COPY --from=build /src/deploy/entrypoint.sh /app/deploy/entrypoint.sh
+# Model prefetch + offline loader (deploy/stack/models), used by the Coolify packages without bind mounts
+COPY --from=build /src/deploy/stack/models /lokyy/models
 # Model cache: @xenova/transformers caches downloaded models (BGE-M3) in
 # <package>/.cache. That path is redirected to /models, writable by the vault
 # user. Mount a named volume at /models to keep models across container
