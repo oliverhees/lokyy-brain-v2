@@ -145,6 +145,7 @@ export function createEmbedService(o: EmbedServiceOptions): http.Server {
   const buckets = new Map<string, Bucket>();
   let total = 0;
   let current: string | null = null;
+  let pumping = false;
 
   const remove = (job: Job) => {
     const q = queues.get(job.vault);
@@ -183,8 +184,11 @@ export function createEmbedService(o: EmbedServiceOptions): http.Server {
   };
 
   async function pump(): Promise<void> {
-    if (current !== null) return;
-    for (let job = nextJob(); job; job = nextJob()) {
+    if (pumping) return;
+    pumping = true;
+    // ONNX inference blocks the event loop; yielding before each pick lets requests that arrived
+    // meanwhile (search queries) be read and queued, so the priority pass can see them.
+    for (let job = nextJob(); job; await new Promise<void>((r) => setImmediate(r)), job = nextJob()) {
       const vault = job.vault;
       current = vault;
       if (!job.cancelled) {
@@ -206,6 +210,7 @@ export function createEmbedService(o: EmbedServiceOptions): http.Server {
       current = null;
       if (queues.has(vault) && !rotation.includes(vault)) rotation.push(vault);
     }
+    pumping = false;
   }
 
   function enqueue(vault: string, texts: string[], res: http.ServerResponse): Promise<number[][]> {

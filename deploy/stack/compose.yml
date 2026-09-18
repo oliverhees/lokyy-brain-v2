@@ -155,11 +155,16 @@ services:
     restart: unless-stopped
     depends_on:
       model-prefetch: { condition: service_completed_successfully }
-    mem_limit: ${EMBED_MEM_LIMIT:-3584m}
+    mem_limit: ${EMBED_MEM_LIMIT:-4g}
     read_only: true
     tmpfs: ["/tmp:size=16m,mode=1777"]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    # Joined to every embed-<vault> network: never route between them (Docker's default here is 1)
+    sysctls:
+      net.ipv4.ip_forward: "0"
+    # ~30 threads in use (Node + ONNX runtime, one per core)
+    pids_limit: 256
     environment:
       EMBED_VAULTS: anna,ben,firma
       # sha256 of each vault's EMBED_TOKEN_<VAULT>, written to .env by ./embed-tokens.sh

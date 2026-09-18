@@ -327,3 +327,21 @@ test('a stuck inference fails its request and reports it, it does not hang forev
     assert.ok(s.logs.some((l) => /inference timeout/.test(l)));
   } finally { await s.close(); }
 });
+
+test('a query arriving while bulk texts run synchronously (ONNX blocks the event loop) is not queued behind the whole bulk request', async () => {
+  const order: string[] = [];
+  const busy = (ms: number) => { const end = Date.now() + ms; while (Date.now() < end) { /* inference */ } };
+  const s = await start({
+    priorityMaxChars: 5,
+    maxTexts: 10,
+    embedOne: (t) => { busy(30); order.push(t); return Promise.resolve([1, 0, 0, 0]); },
+  });
+  try {
+    const bulkTexts = Array.from({ length: 10 }, (_, i) => `b${i}-${'x'.repeat(20)}`);
+    const bulk = post(s.base, { texts: bulkTexts }, auth(TOKEN_ANNA));
+    await new Promise((r) => setTimeout(r, 20));
+    const q = post(s.base, { texts: ['q'] }, auth(TOKEN_BEN));
+    await Promise.all([bulk, q]);
+    assert.ok(order.indexOf('q') < 8, `query only after the whole bulk request: ${order.join(',')}`);
+  } finally { await s.close(); }
+});

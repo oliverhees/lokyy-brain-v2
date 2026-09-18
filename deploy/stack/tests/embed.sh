@@ -5,6 +5,10 @@
 #   2. Memory: 200 pages are indexed in vault-anna through the service and 20 hybrid searches run
 #      through Traefik; the vault stays below VAULT_RSS_LIMIT_MIB (default 400) the whole time.
 #      Peaks of vault-anna and embed are printed (docker stats, 1 s sampling).
+#   3. Worst case (audit HIGH-2/MED-2): 16 × 8000 CJK chars in one request are refused by the token
+#      budget; 4 × 4 texts of 8000 CJK chars (anna) and 4 × 4 texts of 8000 random single-char tokens
+#      (ben) run concurrently at the 2048-token cap and embed stays inside its limit; a search query
+#      from firma meanwhile is answered within QUERY_MAX_S (default 15) seconds.
 # Run from deploy/stack/ with the stack up: tests/embed.sh   (writes 200 test pages into vault-anna)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -105,6 +109,54 @@ expect "embed stays below its mem_limit" \
   "$(( embed_peak * 1024 * 1024 < $(docker inspect "${STACK}-embed-1" --format '{{.HostConfig.Memory}}') ? 1 : 0 ))" "1"
 expect "embed was not OOM-killed" "$(docker inspect "${STACK}-embed-1" --format '{{.State.OOMKilled}} {{.RestartCount}}')" "false 0"
 docker compose exec -T vault-anna sh -c 'rm -f /data/projects/default/wiki/notes/embed-ram-* /data/embeddings/embed-ram-*'
+
+echo "== 3. Worst case: token-heavy input (CJK, random single-char tokens), query latency under load"
+# post_from <vault> <token> <body-file> → "<http status> <seconds>"
+post_from() {
+  docker compose exec -T "$1" sh -c 'cat > /tmp/embed-body.json' <"$3"
+  printf 'authorization: Bearer %s\n' "$2" | docker compose exec -T "$1" sh -c \
+    'h=$(mktemp); cat >"$h"; curl -s -o /dev/null -w "%{http_code} %{time_total}" --max-time 300 -X POST -H "content-type: application/json" -H @"$h" --data-binary @/tmp/embed-body.json http://embed:8080/embed; rm -f "$h" /tmp/embed-body.json'
+}
+node -e '
+  const fs = require("fs");
+  const cjk = (seed) => { let s = ""; for (let i = 0; i < 8000; i++) s += String.fromCharCode(0x4e00 + ((i + seed) * 7919) % 20900); return s; };
+  // Random code points from scripts that tokenize to roughly one token per character
+  const ranges = [[0x4e00, 0x9fff], [0x3040, 0x30ff], [0xac00, 0xd7a3], [0x0e00, 0x0e7f], [0x2200, 0x22ff]];
+  const rnd = () => { let s = ""; while (s.length < 8000) { const [a, b] = ranges[Math.floor(Math.random() * ranges.length)]; s += String.fromCharCode(a + Math.floor(Math.random() * (b - a))); } return s.slice(0, 8000); };
+  fs.writeFileSync(process.argv[1] + "/cjk16.json", JSON.stringify({ texts: Array.from({ length: 16 }, (_, i) => cjk(i)) }));
+  for (let r = 0; r < 4; r++) {
+    fs.writeFileSync(`${process.argv[1]}/cjk4-${r}.json`, JSON.stringify({ texts: Array.from({ length: 4 }, (_, i) => cjk(r * 4 + i)) }));
+    fs.writeFileSync(`${process.argv[1]}/rnd4-${r}.json`, JSON.stringify({ texts: Array.from({ length: 4 }, rnd) }));
+  }
+  fs.writeFileSync(process.argv[1] + "/query.json", JSON.stringify({ texts: ["Wo steht die Messung des Speicherbedarfs?"] }));
+' "$tmp"
+expect "16 × 8000 CJK chars in one request: refused by the token budget" "$(post_from vault-anna "$EMBED_TOKEN_ANNA" "$tmp/cjk16.json" | cut -d' ' -f1)" "413"
+: >"$tmp/stats"
+( while :; do docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' "${STACK}-embed-1" 2>/dev/null | awk '{print $1, $2}' >>"$tmp/stats"; sleep 1; done ) &
+sampler=$!
+( for r in 0 1 2 3; do post_from vault-anna "$EMBED_TOKEN_ANNA" "$tmp/cjk4-$r.json"; echo; done >"$tmp/anna.out" ) &
+a_pid=$!
+( for r in 0 1 2 3; do post_from vault-ben "$EMBED_TOKEN_BEN" "$tmp/rnd4-$r.json"; echo; done >"$tmp/ben.out" ) &
+b_pid=$!
+sleep 8
+q=$(post_from vault-firma "$EMBED_TOKEN_FIRMA" "$tmp/query.json")
+wait "$a_pid" "$b_pid"
+kill "$sampler" 2>/dev/null; sampler=
+echo "     query under load: ${q#* } s; anna: $(cut -d' ' -f1 "$tmp/anna.out" | tr '\n' ' ')ben: $(cut -d' ' -f1 "$tmp/ben.out" | tr '\n' ' ')"
+expect "4 × 4 CJK texts (2048-token cap) all embedded" "$(grep -c '^200 ' "$tmp/anna.out")" "4"
+expect "4 × 4 random-token texts all embedded" "$(grep -c '^200 ' "$tmp/ben.out")" "4"
+expect "search query under bulk load answered within ${QUERY_MAX_S:-15} s (priority)" \
+  "$(awk -v t="${q#* }" -v m="${QUERY_MAX_S:-15}" -v c="${q%% *}" 'BEGIN{print (c == 200 && t < m) ? "ok" : c " " t}')" "ok"
+worst=0
+while read -r _ usage; do m=$(to_mib "$usage"); (( m > worst )) && worst=$m; done <"$tmp/stats"
+limit_mib=$(( $(docker inspect "${STACK}-embed-1" --format '{{.HostConfig.Memory}}') / 1024 / 1024 ))
+echo "     embed worst-case peak=${worst} MiB of ${limit_mib} MiB ($(wc -l <"$tmp/stats") samples)"
+expect "embed worst-case peak below its mem_limit" "$(( worst > 0 && worst < limit_mib ? 1 : 0 ))" "1"
+# docker stats samples once per second and misses short spikes; the cgroup's own high-water mark does not
+cg_peak=$(( $(docker compose exec -T embed cat /sys/fs/cgroup/memory.peak | tr -d '\r') / 1024 / 1024 ))
+echo "     embed cgroup memory.peak since container start=${cg_peak} MiB of ${limit_mib} MiB"
+expect "embed cgroup peak (all sections, incl. spikes) below its mem_limit" "$(( cg_peak > 0 && cg_peak < limit_mib ? 1 : 0 ))" "1"
+expect "embed still not OOM-killed / restarted" "$(docker inspect "${STACK}-embed-1" --format '{{.State.OOMKilled}} {{.RestartCount}}')" "false 0"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

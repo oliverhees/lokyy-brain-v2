@@ -297,6 +297,9 @@ expect "embed networks (only the per-vault embed networks)" \
   "$(docker inspect "${STACK}-embed-1" --format '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | sed "s/^${STACK}_//" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')" "embed-anna embed-ben embed-firma"
 expect "embed hardening: read-only rootfs, no capabilities, no-new-privileges, memory limit" \
   "$(docker inspect "${STACK}-embed-1" --format '{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}} {{gt .HostConfig.Memory 0}}')" "true \[ALL\] \[no-new-privileges:true\] true"
+expect "embed does not forward packets between vault networks (net.ipv4.ip_forward=0)" \
+  "$(docker compose exec -T embed cat /proc/sys/net/ipv4/ip_forward | tr -d '\r')" "0"
+expect "embed has a pids limit" "$(docker inspect "${STACK}-embed-1" --format '{{.HostConfig.PidsLimit}}')" "[1-9][0-9]*"
 expect "embed runs as non-root" "$(docker compose exec -T embed id -u | tr -d '\r')" "[1-9][0-9]*"
 expect "embed's root filesystem is not writable" \
   "$(docker compose exec -T embed sh -c 'touch /app/x 2>/dev/null && echo WRITABLE || echo read-only' | tr -d '\r')" "read-only"

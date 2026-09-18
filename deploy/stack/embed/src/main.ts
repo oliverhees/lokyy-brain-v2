@@ -17,6 +17,9 @@ interface FeatureExtractor {
   (text: string, options: typeof EMBED_OPTIONS): Promise<{ data: Float32Array }>;
   tokenizer: { model_max_length: number; encode: (text: string) => number[] };
 }
+interface OrtModule {
+  InferenceSession: { create: (model: unknown, options?: Record<string, unknown>) => Promise<unknown> };
+}
 interface TransformersModule {
   env: TransformersEnv;
   pipeline: (task: 'feature-extraction', model: string) => Promise<FeatureExtractor>;
@@ -84,7 +87,16 @@ server.listen(port, '0.0.0.0', () => log(`embed listening on :${port} for ${[...
 
 try {
   const require = createRequire(process.env.EMBED_TRANSFORMERS_FROM ?? '/app/apps/server/');
-  const t = (await import(pathToFileURL(require.resolve('@xenova/transformers')).href)) as TransformersModule;
+  const transformersPath = require.resolve('@xenova/transformers');
+  // Audit HIGH-2 (memory): ONNX Runtime's CPU arena keeps the largest buffers of every sequence length
+  // seen and never returns them, so memory climbs with varied input lengths. Off by default here;
+  // transformers.js does not pass session options, so they are added to InferenceSession.create.
+  if (process.env.EMBED_ONNX_ARENA !== '1') {
+    const ort = createRequire(transformersPath)('onnxruntime-node') as OrtModule;
+    const create = ort.InferenceSession.create.bind(ort.InferenceSession);
+    ort.InferenceSession.create = (model, options) => create(model, { ...options, enableCpuMemArena: false, enableMemPattern: false });
+  }
+  const t = (await import(pathToFileURL(transformersPath).href)) as TransformersModule;
   configureTransformersEnv(t.env, process.env.EMBED_MODELS_DIR ?? '/models');
   const extractor = await t.pipeline('feature-extraction', MODEL_ID);
   extractor.tokenizer.model_max_length = maxTokens;
