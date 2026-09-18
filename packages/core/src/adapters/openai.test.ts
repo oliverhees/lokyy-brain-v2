@@ -362,11 +362,19 @@ describe('OpenAIAdapter — PDF chat through EUrouter (LBV2-30)', () => {
     expect(chunks.some((c) => c.kind === 'done')).toBe(true);
   });
 
-  it('refuses a PDF whose text is too long for the model context, without calling EUrouter', async () => {
-    const { fetchImpl, chunks } = await run({ extractPdfText: async () => 'x'.repeat(101), maxDocumentChars: 100 });
+  it('asks the extractor to stop past the limit and refuses the PDF without calling EUrouter', async () => {
+    const extract = vi.fn(async () => 'x'.repeat(101));
+    const { fetchImpl, chunks } = await run({ extractPdfText: extract, maxDocumentChars: 100 });
+    expect(extract).toHaveBeenCalledWith(expect.any(Uint8Array), { maxChars: 100 });
     expect(fetchImpl).not.toHaveBeenCalled();
     const err = chunks.find((c) => c.kind === 'error') as { error: string } | undefined;
-    expect(err?.error).toBe('The PDF text (101 characters) is too long for the model context (limit 100 characters). Use a shorter document or raise maxContextChars.');
+    expect(err?.error).toBe('The PDF text is too long for the model context (more than 100 characters). Use a shorter document or raise maxContextChars.');
+  });
+
+  it('reports extractor limits (size, pages, time) with their message', async () => {
+    const { fetchImpl, chunks } = await run({ extractPdfText: async () => { throw new Error('PDF has more than 500 pages'); } });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect((chunks.find((c) => c.kind === 'error') as { error: string } | undefined)?.error).toBe('Could not extract text from the PDF: PDF has more than 500 pages');
   });
 
   it('fails clearly when no local PDF extractor is configured', async () => {

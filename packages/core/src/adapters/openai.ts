@@ -210,9 +210,11 @@ export class OpenAIAdapter implements LLMAdapter {
         if (b.type !== 'document') { blocks.push(b); continue; }
         let text: string;
         try {
-          text = (await extract(Buffer.from(b.data, 'base64'))).trim();
-        } catch {
-          yield { kind: 'error', error: 'Could not extract text from the PDF' };
+          // The extractor stops reading pages once it passes the remaining budget.
+          text = (await extract(Buffer.from(b.data, 'base64'), { maxChars: Math.max(0, limit - total) })).trim();
+        } catch (e) {
+          // Extractor errors are our own limit messages (size, pages, time) or pdfjs parse errors.
+          yield { kind: 'error', error: `Could not extract text from the PDF: ${(e as Error).message}` };
           return;
         }
         if (!text) {
@@ -220,16 +222,16 @@ export class OpenAIAdapter implements LLMAdapter {
           return;
         }
         total += text.length;
+        if (total > limit) {
+          yield {
+            kind: 'error',
+            error: `The PDF text is too long for the model context (more than ${limit} characters). Use a shorter document or raise maxContextChars.`,
+          };
+          return;
+        }
         blocks.push({ type: 'text', text: `PDF document text:\n\n${text}` });
       }
       messages.push({ ...m, content: blocks });
-    }
-    if (total > limit) {
-      yield {
-        kind: 'error',
-        error: `The PDF text (${total} characters) is too long for the model context (limit ${limit} characters). Use a shorter document or raise maxContextChars.`,
-      };
-      return;
     }
     yield* this.chatViaCompletions({ ...request, messages });
   }
