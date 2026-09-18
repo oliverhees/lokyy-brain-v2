@@ -1,7 +1,7 @@
 // Shared embedding service (LBV2-26): one BGE-M3 instance for every vault on a server.
 // API: POST /embed {"texts": string[]} → {"vectors": number[][], "dim": number}; GET /healthz.
 // Order of checks, all before any inference: path (404) → method (405) → bearer token of a
-// configured vault (401) → model loaded (503) → JSON content type (415) → body size (413, also
+// configured vault, from that vault's network if bound (401) → model loaded (503) → JSON content type (415) → body size (413, also
 // while streaming) → body shape and limits (400) → the vault's pending-request cap (429) → global
 // queue cap (503) → the vault's text rate (429 + Retry-After). Texts are embedded one at a time,
 // round-robin across vaults, so one vault cannot starve the others. Error bodies are static; logs
@@ -9,9 +9,11 @@
 // The service makes no outbound connections and forwards nothing.
 import http from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { inNetworks, type Ipv4Net } from './config.ts';
 
 export interface EmbedServiceOptions {
   tokens: ReadonlyMap<string, string>;   // vault → sha256(token) hex
+  sources?: ReadonlyMap<string, readonly Ipv4Net[]>; // vault → networks its token is accepted from
   embedOne: (text: string) => Promise<ArrayLike<number>>;
   dim: number;
   maxTexts: number;          // texts per request
@@ -233,7 +235,9 @@ export function createEmbedService(o: EmbedServiceOptions): http.Server {
       send(res, o.isReady() ? 200 : 503, o.isReady() ? '{"status":"ok"}' : BODIES.unavailable);
       return;
     }
-    const vault = path === '/embed' ? vaultFor(req, o.tokens) : null;
+    let vault = path === '/embed' ? vaultFor(req, o.tokens) : null;
+    const bound = vault ? o.sources?.get(vault) : undefined;
+    if (bound && !inNetworks(req.socket.remoteAddress, bound)) vault = null;
     const finish = (status: number, texts: number) =>
       o.log(`${new Date().toISOString()} vault=${vault ?? '-'} texts=${texts} status=${status} ms=${Date.now() - t0}`);
     const fail = (e: unknown) => {

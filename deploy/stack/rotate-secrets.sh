@@ -2,7 +2,7 @@
 # Runbook: rotate every access secret of the stack at once (e.g. after a MetaMCP DB leak —
 # MetaMCP stores API keys and vault bearer tokens in plain text).
 #
-#   1. new MCP_TOKEN_*, MCP_READONLY_TOKEN_* and PROXY_SECRET_* in .env (old .env kept as .env.bak-<ts>, mode 600)
+#   1. new MCP_TOKEN_*, MCP_READONLY_TOKEN_*, PROXY_SECRET_* and EMBED_TOKEN_* in .env (hashes via embed-tokens.sh) (old .env kept as .env.bak-<ts>, mode 600)
 #   2. docker compose up -d        → vaults restart with the new tokens/proxy secrets,
 #                                    Traefik picks up the new proxy-secret labels
 #   3. tests/wait-ready.sh
@@ -23,7 +23,9 @@ cp -p .env "$backup"
 tmp=$(mktemp .env.XXXXXX)
 rotated=0
 while IFS= read -r line || [[ -n $line ]]; do
-  if [[ $line =~ ^((MCP_TOKEN|MCP_READONLY_TOKEN|PROXY_SECRET)_[A-Z0-9_]+)= ]]; then
+  if [[ $line =~ ^EMBED_TOKEN_SHA256_ ]]; then
+    printf '%s\n' "$line"   # derived below by embed-tokens.sh
+  elif [[ $line =~ ^((MCP_TOKEN|MCP_READONLY_TOKEN|PROXY_SECRET|EMBED_TOKEN)_[A-Z0-9_]+)= ]]; then
     printf '%s=%s\n' "${BASH_REMATCH[1]}" "$(openssl rand -hex 32)"
     rotated=$((rotated + 1))
   else
@@ -32,6 +34,7 @@ while IFS= read -r line || [[ -n $line ]]; do
 done <.env >"$tmp"
 chmod 600 "$tmp"
 mv "$tmp" .env
+./embed-tokens.sh
 echo "rotated $rotated secrets in .env (backup: $backup — delete it once the rotation is verified)"
 
 docker compose up -d

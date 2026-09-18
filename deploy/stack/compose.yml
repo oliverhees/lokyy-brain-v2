@@ -10,19 +10,25 @@
 #   edge        traefik <-> authentik, metamcp
 #   web-<vault> traefik <-> exactly one vault web UI   (internal, no egress)
 #   mcp-<vault> metamcp <-> exactly one vault MCP port (internal, no egress)
-#   egress      vaults -> internet (EUrouter, model download); inter-container traffic disabled
+#   embed-<vault> exactly one vault -> shared embedding service (internal, no egress; LBV2-26)
+#   egress      vaults -> internet (EUrouter); inter-container traffic disabled
 # No vault publishes a port. Vaults cannot reach each other on any network.
+# STACK_HTTP_PORT (default 18080), STACK_NET (default 10.231, the /16 prefix of all subnets) and IMAGE_TAG
+# (default dev) let a second stack run next to this one, e.g. for tests.
 
 name: ${STACK_NAME:-lokyy-stack}
 
 x-vault: &vault
-  image: lokyy-brain-v2:dev
+  image: lokyy-brain-v2:${IMAGE_TAG:-dev}
   build:
     context: ../..
     dockerfile: deploy/Dockerfile
   restart: unless-stopped
+  # No model in the vault any more (LBV2-26); measured in README "Memory"
+  mem_limit: ${VAULT_MEM_LIMIT:-1g}
   depends_on:
-    model-prefetch: { condition: service_completed_successfully }
+    # Vaults embed through the shared service (LBV2-26); they do not mount the model at all.
+    embed: { condition: service_healthy }
   environment: &vault-env
     MCP_HTTP_PORT: "4322"
     MINDBASE_MDNS: "off"
@@ -30,9 +36,11 @@ x-vault: &vault
     MINDBASE_DISABLE_CAPTURE: "1"
     # LBV2-19: guarded vaults only call LLM hosts on this list (web server and MCP process)
     VAULT_LLM_ALLOWED_HOSTS: api.eurouter.ai
-    # Persistent, per-vault cache for tesseract language data (/models is read-only and shared)
+    # Persistent, per-vault cache for tesseract language data (vaults do not mount the shared /models)
     MINDBASE_MODEL_CACHE: /home/vault
-    # transformers.js never downloads in a vault: only the verified /models cache is used (models/offline.mjs)
+    # Embeddings come from the shared service; every vault has its own token (MINDBASE_EMBED_TOKEN below)
+    MINDBASE_EMBED_URL: http://embed:8080
+    # Second layer if the service were ever unset: transformers.js may not download (models/offline.mjs)
     NODE_OPTIONS: --import=/lokyy/offline.mjs
     # The embedder itself also refuses downloads (apps/server/src/lib/transformers-offline.ts)
     MINDBASE_MODELS_OFFLINE: "1"
@@ -50,7 +58,7 @@ services:
       - --api.dashboard=false
       - --log.level=INFO
     ports:
-      - "127.0.0.1:18080:80"
+      - "127.0.0.1:${STACK_HTTP_PORT:-18080}:80"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [edge, web-anna, web-ben, web-firma]
@@ -90,6 +98,8 @@ services:
       DEMO_PASS_ANNA: ${DEMO_PASS_ANNA:?set in .env}
       DEMO_PASS_BEN: ${DEMO_PASS_BEN:?set in .env}
       DEMO_PASS_CARL: ${DEMO_PASS_CARL:?set in .env}
+      # Port in the blueprint's external hosts (tests run a second stack on another port)
+      STACK_HTTP_PORT: ${STACK_HTTP_PORT:-18080}
     volumes:
       - ./authentik/blueprints:/blueprints/custom:ro
     shm_size: 512mb
@@ -124,7 +134,7 @@ services:
   # One-shot: fills the shared model cache that vaults mount read-only (a vault cannot tamper with
   # the model files the others load). Needs internet (Hugging Face) on the first start.
   model-prefetch:
-    image: lokyy-brain-v2:dev
+    image: lokyy-brain-v2:${IMAGE_TAG:-dev}
     restart: "no"
     entrypoint: ["node", "/prefetch/prefetch.mjs"]
     volumes:
@@ -133,6 +143,38 @@ services:
       - ./models:/prefetch:ro
     networks: [model-egress]
 
+  # Shared embedding service (LBV2-26): BGE-M3 loaded once for all vaults instead of once per vault.
+  # Reachable only on the per-vault embed-<vault> networks (one vault each, internal: no egress); it
+  # accepts only POST /embed with that vault's token and makes no connections of its own.
+  embed:
+    image: lokyy-embed:${IMAGE_TAG:-dev}
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+      target: embed
+    restart: unless-stopped
+    depends_on:
+      model-prefetch: { condition: service_completed_successfully }
+    mem_limit: ${EMBED_MEM_LIMIT:-3584m}
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      EMBED_VAULTS: anna,ben,firma
+      # sha256 of each vault's EMBED_TOKEN_<VAULT>, written to .env by ./embed-tokens.sh
+      EMBED_TOKEN_SHA256_ANNA: ${EMBED_TOKEN_SHA256_ANNA:?run ./embed-tokens.sh}
+      EMBED_TOKEN_SHA256_BEN: ${EMBED_TOKEN_SHA256_BEN:?run ./embed-tokens.sh}
+      EMBED_TOKEN_SHA256_FIRMA: ${EMBED_TOKEN_SHA256_FIRMA:?run ./embed-tokens.sh}
+      # A vault's token is accepted only from its own embed network (a leaked token is useless elsewhere)
+      EMBED_SOURCE_ANNA: ${STACK_NET:-10.231}.12.0/28
+      EMBED_SOURCE_BEN: ${STACK_NET:-10.231}.13.0/28
+      EMBED_SOURCE_FIRMA: ${STACK_NET:-10.231}.14.0/28
+      # Second layer on top of the service's own offline configuration
+      NODE_OPTIONS: --import=/lokyy/offline.mjs
+    volumes: [models:/models:ro, ./models/offline.mjs:/lokyy/offline.mjs:ro]
+    networks: [embed-anna, embed-ben, embed-firma]
+
   vault-anna:
     <<: *vault
     environment:
@@ -140,8 +182,9 @@ services:
       MCP_HTTP_TOKEN: ${MCP_TOKEN_ANNA:?set in .env}
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-anna:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_ANNA:?set in .env}
+      MINDBASE_EMBED_TOKEN: ${EMBED_TOKEN_ANNA:?set in .env}
       VAULT_ADMIN_GROUPS: vault-anna-admin,lokyy-admins
-    volumes: [vault-anna:/data, models:/models:ro, vault-anna-home:/home/vault, ./models/offline.mjs:/lokyy/offline.mjs:ro]
+    volumes: [vault-anna:/data, vault-anna-home:/home/vault, ./models/offline.mjs:/lokyy/offline.mjs:ro]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-anna
@@ -159,6 +202,7 @@ services:
       web-anna: {}
       # Unique alias for vault-connector: a plain service name could resolve to the egress IP, where traffic is blocked
       mcp-anna: { aliases: [upstream.vault-anna] }
+      embed-anna: {}
       egress: {}
 
   vault-ben:
@@ -168,8 +212,9 @@ services:
       MCP_HTTP_TOKEN: ${MCP_TOKEN_BEN:?set in .env}
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-ben:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_BEN:?set in .env}
+      MINDBASE_EMBED_TOKEN: ${EMBED_TOKEN_BEN:?set in .env}
       VAULT_ADMIN_GROUPS: vault-ben-admin,lokyy-admins
-    volumes: [vault-ben:/data, models:/models:ro, vault-ben-home:/home/vault, ./models/offline.mjs:/lokyy/offline.mjs:ro]
+    volumes: [vault-ben:/data, vault-ben-home:/home/vault, ./models/offline.mjs:/lokyy/offline.mjs:ro]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-ben
@@ -186,6 +231,7 @@ services:
       web-ben: {}
       # Unique alias for vault-connector: a plain service name could resolve to the egress IP, where traffic is blocked
       mcp-ben: { aliases: [upstream.vault-ben] }
+      embed-ben: {}
       egress: {}
 
   vault-firma:
@@ -197,8 +243,9 @@ services:
       MCP_HTTP_READONLY_TOKEN: ${MCP_READONLY_TOKEN_FIRMA:?set in .env}
       MCP_HTTP_ALLOWED_HOSTS: mcp.vault-firma:4322
       VAULT_PROXY_SECRET: ${PROXY_SECRET_FIRMA:?set in .env}
+      MINDBASE_EMBED_TOKEN: ${EMBED_TOKEN_FIRMA:?set in .env}
       VAULT_ADMIN_GROUPS: vault-firma-admin,lokyy-admins
-    volumes: [vault-firma:/data, models:/models:ro, vault-firma-home:/home/vault, ./models/offline.mjs:/lokyy/offline.mjs:ro]
+    volumes: [vault-firma:/data, vault-firma-home:/home/vault, ./models/offline.mjs:/lokyy/offline.mjs:ro]
     labels:
       - traefik.enable=true
       - traefik.docker.network=${STACK_NAME:-lokyy-stack}_web-firma
@@ -215,6 +262,7 @@ services:
       web-firma: {}
       # Unique alias for vault-connector: a plain service name could resolve to the egress IP, where traffic is blocked
       mcp-firma: { aliases: [upstream.vault-firma] }
+      embed-firma: {}
       egress: {}
 
   # ------------------------------------------------------------------ MetaMCP
@@ -245,8 +293,8 @@ services:
       POSTGRES_USER: metamcp
       POSTGRES_PASSWORD: ${METAMCP_PG_PASS}
       POSTGRES_DB: metamcp
-      APP_URL: http://mcp.localhost:18080
-      NEXT_PUBLIC_APP_URL: http://mcp.localhost:18080
+      APP_URL: http://mcp.localhost:${STACK_HTTP_PORT:-18080}
+      NEXT_PUBLIC_APP_URL: http://mcp.localhost:${STACK_HTTP_PORT:-18080}
       BETTER_AUTH_SECRET: ${METAMCP_AUTH_SECRET:?set in .env}
       TRANSFORM_LOCALHOST_TO_DOCKER_INTERNAL: "false"
     labels:
@@ -269,7 +317,7 @@ services:
   # Session-binding proxy for MCP clients (finding M2): a session id only works with the API key and
   # endpoint that created it. Only POST/GET/DELETE on /metamcp/<name>/mcp reach MetaMCP.
   mcp-gate:
-    image: lokyy-mcp-gate:dev
+    image: lokyy-mcp-gate:${IMAGE_TAG:-dev}
     build: ./mcp-gate
     restart: unless-stopped
     mem_limit: 128m
@@ -309,7 +357,7 @@ services:
   # One-way path MetaMCP -> vaults. Listens only on its fixed mcp-upstream address and routes by Host
   # (mcp.vault-<vault>:4322) to upstream.vault-<vault>; nothing on a vault network can connect to it.
   vault-connector:
-    image: lokyy-mcp-gate:dev
+    image: lokyy-mcp-gate:${IMAGE_TAG:-dev}
     restart: unless-stopped
     mem_limit: 128m
     read_only: true
@@ -318,10 +366,10 @@ services:
     environment:
       MODE: connector
       CONNECTOR_VAULTS: anna,ben,firma
-      CONNECTOR_LISTEN_HOST: 10.231.11.2
+      CONNECTOR_LISTEN_HOST: ${STACK_NET:-10.231}.11.2
     networks:
       mcp-upstream:
-        ipv4_address: 10.231.11.2
+        ipv4_address: ${STACK_NET:-10.231}.11.2
         aliases: [mcp.vault-anna, mcp.vault-ben, mcp.vault-firma]
       mcp-anna: {}
       mcp-ben: {}
@@ -349,70 +397,85 @@ networks:
   edge:
     ipam:
       config:
-        - subnet: 10.231.0.0/28
+        - subnet: ${STACK_NET:-10.231}.0.0/28
   authentik-internal:
     internal: true
     ipam:
       config:
-        - subnet: 10.231.1.0/28
+        - subnet: ${STACK_NET:-10.231}.1.0/28
   metamcp-internal:
     internal: true
     ipam:
       config:
-        - subnet: 10.231.2.0/28
+        - subnet: ${STACK_NET:-10.231}.2.0/28
   web-anna:
     internal: true
     ipam:
       config:
-        - subnet: 10.231.3.0/28
+        - subnet: ${STACK_NET:-10.231}.3.0/28
   web-ben:
     internal: true
     ipam:
       config:
-        - subnet: 10.231.4.0/28
+        - subnet: ${STACK_NET:-10.231}.4.0/28
   web-firma:
     internal: true
     ipam:
       config:
-        - subnet: 10.231.5.0/28
+        - subnet: ${STACK_NET:-10.231}.5.0/28
   mcp-anna:
     internal: true
     ipam:
       config:
-        - subnet: 10.231.6.0/28
+        - subnet: ${STACK_NET:-10.231}.6.0/28
   mcp-ben:
     internal: true
     ipam:
       config:
-        - subnet: 10.231.7.0/28
+        - subnet: ${STACK_NET:-10.231}.7.0/28
   mcp-firma:
     internal: true
     ipam:
       config:
-        - subnet: 10.231.8.0/28
+        - subnet: ${STACK_NET:-10.231}.8.0/28
   mcp-upstream:
     internal: true
     ipam:
       config:
-        - subnet: 10.231.11.0/28
+        - subnet: ${STACK_NET:-10.231}.11.0/28
+  embed-anna:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${STACK_NET:-10.231}.12.0/28
+  embed-ben:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${STACK_NET:-10.231}.13.0/28
+  embed-firma:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${STACK_NET:-10.231}.14.0/28
   model-egress:
     ipam:
       config:
-        - subnet: 10.231.10.0/28
+        - subnet: ${STACK_NET:-10.231}.10.0/28
   egress:
     driver: bridge
     driver_opts:
       com.docker.network.bridge.enable_icc: "false"
     ipam:
       config:
-        - subnet: 10.231.9.0/28
+        - subnet: ${STACK_NET:-10.231}.9.0/28
 
 volumes:
   authentik-db:
   vault-anna-home:
   vault-ben-home:
   vault-firma-home:
-  # Shared embedding model cache (BGE-M3), read and written by every vault
+  # Embedding model cache (BGE-M3): written only by model-prefetch, mounted read-only by embed
   models:
   metamcp-db:
   vault-anna:

@@ -52,3 +52,47 @@ export function configureTransformersEnv(env: TransformersEnv, modelsDir: string
   env.cacheDir = modelsDir;
   env.localModelPath = modelsDir.endsWith('/') ? modelsDir : `${modelsDir}/`;
 }
+
+/** An IPv4 network as a 32-bit base address and prefix length. */
+export interface Ipv4Net { base: number; bits: number }
+
+const ipv4 = (s: string): number | null => {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+  if (!m) return null;
+  const parts = m.slice(1).map(Number);
+  if (parts.some((p) => p > 255)) return null;
+  return ((parts[0]! << 24) | (parts[1]! << 16) | (parts[2]! << 8) | parts[3]!) >>> 0;
+};
+const mask = (bits: number) => (bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0);
+
+/**
+ * Optional source binding: EMBED_SOURCE_<VAULT>=<cidr>[,<cidr>…] (the vault's own embed network).
+ * A vault's token is then accepted only from those addresses, so a token that leaks to another vault
+ * is useless there. Vaults without the variable are not bound.
+ */
+export function parseSourceConfig(vaults: readonly string[], env: Record<string, string | undefined>): Map<string, Ipv4Net[]> {
+  const out = new Map<string, Ipv4Net[]>();
+  for (const vault of vaults) {
+    const name = `EMBED_SOURCE_${vault.toUpperCase().replaceAll('-', '_')}`;
+    const raw = env[name];
+    if (raw === undefined) continue;
+    const nets = raw.split(',').map((c) => c.trim()).map((cidr) => {
+      const m = /^([\d.]+)\/(\d{1,2})$/.exec(cidr);
+      const base = m ? ipv4(m[1]!) : null;
+      const bits = m ? Number(m[2]) : -1;
+      if (base === null || bits < 0 || bits > 32 || (base & mask(bits)) >>> 0 !== base) {
+        throw new Error(`${name} must be a comma-separated list of IPv4 networks (a.b.c.d/nn)`);
+      }
+      return { base, bits };
+    });
+    out.set(vault, nets);
+  }
+  return out;
+}
+
+/** True if the (possibly IPv4-mapped IPv6) address lies in one of the networks. */
+export function inNetworks(address: string | undefined, nets: readonly Ipv4Net[]): boolean {
+  const ip = ipv4((address ?? '').replace(/^::ffff:/i, ''));
+  if (ip === null) return false;
+  return nets.some((n) => (ip & mask(n.bits)) >>> 0 === n.base);
+}

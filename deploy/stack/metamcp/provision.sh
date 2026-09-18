@@ -27,7 +27,7 @@ done
 
 LOKYY_USERS=$(jq -c . "$users_file")
 LOKYY_ROTATE=$(printf '%s\n' "${rotate[@]:-}" | jq -Rsc 'split("\n") | map(select(length > 0))')
-LOKYY_PUBLIC_BASE=${METAMCP_PUBLIC_BASE:-http://mcp.localhost:18080}
+LOKYY_PUBLIC_BASE=${METAMCP_PUBLIC_BASE:-http://mcp.localhost:${STACK_HTTP_PORT:-18080}}
 export LOKYY_USERS LOKYY_ROTATE LOKYY_PUBLIC_BASE
 
 env_args=(-e LOKYY_USERS -e LOKYY_ROTATE -e LOKYY_PUBLIC_BASE)

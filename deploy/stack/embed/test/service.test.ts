@@ -268,3 +268,18 @@ test('responses are JSON with nosniff and no-store', async () => {
   assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(r.headers.get('cache-control'), 'no-store');
 });
+
+test('source binding: a vault token is only accepted from that vault network', async () => {
+  const s = await start({ sources: new Map([['anna', [{ base: 0x0a000000, bits: 8 }]]]) });
+  try {
+    // Requests come from 127.0.0.1: anna is bound to 10.0.0.0/8, ben is unbound.
+    const r = await post(s.base, { texts: ['x'] }, auth(TOKEN_ANNA));
+    assert.equal(r.status, 401);
+    assert.equal(r.text, '{"error":"unauthorized"}');
+    assert.equal((await post(s.base, { texts: ['x'] }, auth(TOKEN_BEN))).status, 200);
+  } finally { await s.close(); }
+  const ok = await start({ sources: new Map([['anna', [{ base: 0x7f000000, bits: 8 }]]]) });
+  try {
+    assert.equal((await post(ok.base, { texts: ['x'] }, auth(TOKEN_ANNA))).status, 200);
+  } finally { await ok.close(); }
+});
