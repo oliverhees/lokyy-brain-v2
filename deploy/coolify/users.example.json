@@ -1,8 +1,0 @@
-{
-  "companyVault": "firma",
-  "users": [
-    { "username": "anna", "role": "reader", "vault": "u1", "allowVaultNameMismatch": true },
-    { "username": "ben", "role": "writer", "vault": "u2", "allowVaultNameMismatch": true },
-    { "username": "carl", "role": "writer", "vault": "u3", "allowVaultNameMismatch": true }
-  ]
-}

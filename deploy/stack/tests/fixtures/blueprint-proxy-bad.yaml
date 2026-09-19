@@ -1,0 +1,7 @@
+# LBV2-27 fixture: proxy providers without explicit property mappings / without the scope blueprints
+# they depend on must be REJECTED (fresh stacks otherwise get property_mappings=[] and empty identities).
+version: 1
+entries:
+  - model: authentik_providers_proxy.proxyprovider
+    identifiers: { name: vault-a }
+    attrs: { name: vault-a, mode: forward_single, external_host: "https://a.example.test" }

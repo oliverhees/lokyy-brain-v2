@@ -7,7 +7,8 @@ export const de = {
     loading: 'Wird geladen …',
     retry: 'Erneut versuchen',
     signedInAs: (u: string) => `Angemeldet als ${u}`,
-    package: (p: string) => `Paket ${p}`,
+    // Coolify package letters (s, m) upper case; named packages as they are
+    package: (p: string) => `Paket ${/^[a-z]$/.test(p) ? p.toUpperCase() : p}`,
     nav: { setup: 'Einrichtung', users: 'Mitarbeitende', audit: 'Protokoll', me: 'Mein Zugang' },
     navLabel: 'Hauptnavigation',
   },

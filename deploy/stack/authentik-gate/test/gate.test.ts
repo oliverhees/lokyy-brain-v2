@@ -128,6 +128,40 @@ test('ends sessions of and deletes a managed user', async () => {
   assert.equal((await call('DELETE', `/v1/users/${pk}`)).status, 404);
 });
 
+test('ending sessions also purges the outpost (forward-auth) sessions via the fixed lokyy-end-proxy-sessions policy', async () => {
+  const pk = (await create('pia')).body.user.pk;
+  ak.proxySessions.push({ username: 'pia' }, { username: 'pia' }, { username: 'akadmin' });
+  const tests = () => ak.requests.filter((r) => r.path === '/api/v3/policies/all/pol-purge/test/').length;
+  const before = tests();
+  assert.equal((await call('DELETE', `/v1/users/${pk}/sessions`)).status, 204);
+  assert.deepEqual(ak.proxySessions.map((s) => s.username), ['akadmin']);
+  assert.equal(tests() - before, 1, 'the exact-name policy, not the similarly named one');
+  assert.ok(logs.some((l) => l.includes('"action":"end_sessions"') && l.includes('"outpost":true')), logs.join('\n'));
+});
+
+test('ending sessions fails loudly (502) when the outpost purge policy is missing or does not pass', async () => {
+  const pk = (await create('quirin')).body.user.pk;
+  try {
+    for (const mode of ['missing', 'fails'] as const) {
+      ak.purgePolicy = mode;
+      ak.proxySessions.push({ username: 'quirin' });
+      assert.equal((await call('DELETE', `/v1/users/${pk}/sessions`)).status, 502, mode);
+    }
+  } finally { ak.purgePolicy = 'ok'; }
+  // refused targets never reach the policy
+  const before = ak.requests.filter((r) => r.path.includes('/policies/')).length;
+  assert.equal((await call('DELETE', `/v1/users/${akadmin().pk}/sessions`)).status, 403);
+  assert.equal(ak.requests.filter((r) => r.path.includes('/policies/')).length, before);
+});
+
+test('audit LOW: a missing user (user_not_found) is distinguishable from an unknown route (not_found)', async () => {
+  const missing = await call('DELETE', '/v1/users/999999/sessions');
+  assert.deepEqual([missing.status, missing.body], [404, { error: 'user_not_found' }]);
+  assert.deepEqual((await call('DELETE', '/v1/users/999999')).body, { error: 'user_not_found' });
+  const unknown = await call('DELETE', '/v1/users/1/sessions/all');
+  assert.deepEqual([unknown.status, unknown.body], [404, { error: 'not_found' }]);
+});
+
 test('lists managed users only', async () => {
   await create('hans');
   const names = (await call('GET', '/v1/users')).body.users.map((u: { username: string }) => u.username);

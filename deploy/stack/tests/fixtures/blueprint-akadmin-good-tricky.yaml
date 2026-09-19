@@ -1,0 +1,16 @@
+# LBV2-27 fixture for tests/blueprint-check.ts: must be ACCEPTED (anchors, merge keys, other layouts).
+version: 1
+entries:
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs: { identifiers: { name: authentik Bootstrap }, required: true }
+  - { model: authentik_core.group, id: group-admins, identifiers: { name: lokyy-admins }, attrs: { name: lokyy-admins } }
+  - model: authentik_core.user
+    attrs: &akattrs
+        groups:
+          - !Find [authentik_core.group, [name, "authentik Admins"]]
+          - !KeyOf group-admins
+    identifiers:
+        username: 'akadmin'
+  - model: authentik_core.user
+    identifiers: { username: "akadmin" }
+    attrs: { <<: *akattrs }

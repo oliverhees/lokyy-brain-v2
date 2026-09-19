@@ -23,6 +23,15 @@ describe('managedGroupsFor', () => {
 });
 
 describe('AuthentikGateClient', () => {
+  it('audit LOW: only user_not_found counts as "already gone"; a 404 for an unknown gate route throws (version skew)', async () => {
+    await expect(client.endSessions(999999)).resolves.toBeUndefined();
+    await expect(client.deleteUser(999999)).resolves.toBeUndefined();
+    const oldGate = new AuthentikGateClient({ gateUrl: GATE_URL, secret: GATE_SECRET,
+      fetch: async () => new Response(JSON.stringify({ error: 'not_found' }), { status: 404, headers: { 'content-type': 'application/json' } }) });
+    await expect(oldGate.endSessions(1)).rejects.toBeInstanceOf(AuthentikError);
+    await expect(oldGate.deleteUser(1)).rejects.toBeInstanceOf(AuthentikError);
+  });
+
   it('talks only to the gate, with the gate secret as bearer and never in the URL', async () => {
     await anna();
     expect(gate.requests.length).toBeGreaterThan(0);

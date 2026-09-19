@@ -210,12 +210,23 @@ describe('role change, disable, enable, remove', () => {
     expect(await h.service.revealKey('anna')).not.toBe(before);
   });
 
+  it('role change ends the web sessions (Authentik and outpost): old group access must not survive (QA High)', async () => {
+    await invite('anna', 'writer');
+    h.ak.sessions.push({ uuid: 's1', username: 'anna' });
+    h.ak.proxySessions.push({ username: 'anna' }, { username: 'other' });
+    await h.service.changeRole('admin', 'anna', 'reader');
+    expect(h.ak.sessions).toEqual([]);
+    expect(h.ak.proxySessions).toEqual([{ username: 'other' }]);
+  });
+
   it('disable deactivates in Authentik, ends sessions and revokes the MCP key; the slot stays taken', async () => {
     await invite('anna');
     h.ak.sessions.push({ uuid: 's1', username: 'anna' });
+    h.ak.proxySessions.push({ username: 'anna' });
     await h.service.disable('admin', 'anna');
     expect(h.ak.userByName('anna')!.is_active).toBe(false);
     expect(h.ak.sessions).toEqual([]);
+    expect(h.ak.proxySessions).toEqual([]);
     expect(await h.mm.db.query('select key from api_keys where user_id = $1 and name = $2', ['lokyy-anna', 'lokyy']).then((r) => r.rows)).toEqual([]);
     expect((await invite('ben')).user.slot).toBe('v02');
   });
@@ -232,9 +243,11 @@ describe('role change, disable, enable, remove', () => {
 
   it('remove deletes Authentik user and MetaMCP account, keeps the data and blocks the slot', async () => {
     await invite('anna');
+    h.ak.proxySessions.push({ username: 'anna' });
     await expect(h.service.remove('admin', 'anna', { confirm: 'wrong', keepData: true })).rejects.toMatchObject({ status: 400, code: 'confirm_mismatch' });
     await h.service.remove('admin', 'anna', { confirm: 'anna', keepData: true });
     expect(h.ak.userByName('anna')).toBeUndefined();
+    expect(h.ak.proxySessions).toEqual([]);
     expect(h.mm.users.has('lokyy-anna')).toBe(false);
     const list = await h.service.listUsers();
     expect(list.users).toEqual([]);
@@ -304,6 +317,20 @@ describe('role change, disable, enable, remove', () => {
     h.mm.httpDown = false;
     h.mm.failRevoke = true;
     await expect(h.service.changeRole('admin', 'anna', 'writer')).rejects.toMatchObject({ status: 502, code: 'revocation_failed' });
+  });
+
+  it('remove deactivates the Authentik account before ending sessions: a failed session end cannot leave it able to log in (audit LOW)', async () => {
+    await invite('anna');
+    h.ak.purgeFails = true;
+    await expect(h.service.remove('admin', 'anna', { confirm: 'anna', keepData: true })).rejects.toMatchObject({ status: 502 });
+    expect(h.ak.userByName('anna')!.is_active).toBe(false);
+  });
+
+  it('remove still succeeds when the Authentik account is already gone (retry after a partial removal)', async () => {
+    await invite('anna');
+    h.ak.users.delete(h.ak.userByName('anna')!.pk);
+    await h.service.remove('admin', 'anna', { confirm: 'anna', keepData: true });
+    expect((await h.service.listUsers()).users).toEqual([]);
   });
 
   it('remove disables the user before the Authentik step: a failed Authentik call cannot re-provision a key (re-audit LOW)', async () => {
