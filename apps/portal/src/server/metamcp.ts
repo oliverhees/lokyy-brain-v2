@@ -96,6 +96,8 @@ export interface ProvisionResult {
   failedUsers: string[];
   /** Open MetaMCP sessions may still carry outdated upstream credentials (see header comment). */
   restartMetamcp: boolean;
+  /** Readers stopped by the tripwire; their API keys were deleted (revokedKeys null: the deletion failed). */
+  tripped: { username: string; revokedKeys: number | null }[];
   users: ProvisionedUser[];
 }
 
@@ -161,7 +163,7 @@ export class MetamcpProvisioner {
       try {
         current = typeof spec === 'function' ? await spec() : spec;
       } catch (e) {
-        return { status: 'failed' as const, error: (e as Error).message, failedUsers: [], restartMetamcp: false, users: [] };
+        return { status: 'failed' as const, error: (e as Error).message, failedUsers: [], restartMetamcp: false, tripped: [], users: [] };
       }
       return this.#reconcile(current, opts.rotate ?? []);
     });
@@ -173,13 +175,13 @@ export class MetamcpProvisioner {
     const clients: Client[] = [];
     const failed = new Map<string, string>();
     const errors: string[] = [];
-    const state = { restart: false };
+    const state = { restart: false, tripped: [] as ProvisionResult['tripped'] };
     const strip = (c: Client): ProvisionedUser => ({ username: c.username, role: c.role, vault: c.vault, url: c.url, ...(c.tools ? { tools: c.tools } : {}) });
     try {
       validateUsersSpec(spec); // structural errors stop the run; token problems fail only that user
     } catch (e) {
       this.#o.log(`FAILED: ${(e as Error).message}`);
-      return { status: 'failed', error: (e as Error).message, failedUsers: spec.users?.map((u) => u.username) ?? [], restartMetamcp: false, users: [] };
+      return { status: 'failed', error: (e as Error).message, failedUsers: spec.users?.map((u) => u.username) ?? [], restartMetamcp: false, tripped: [], users: [] };
     }
     const listedNames = new Set(spec.users.map((u) => u.username));
     const rotate = (u: string) => rotateList.includes('*') || rotateList.includes(u);
@@ -221,7 +223,7 @@ export class MetamcpProvisioner {
     }
     for (const c of clients) {
       try {
-        await this.#tripwire(c);
+        await this.#tripwire(c, state);
       } catch (e) {
         failed.set(c.username, (e as Error).message);
       }
@@ -230,10 +232,10 @@ export class MetamcpProvisioner {
     const users = clients.filter((c) => !failed.has(c.username)).map(strip);
     if (errors.length > 0) {
       this.#o.log(`FAILED: ${errors.join('; ')}`);
-      return { status: 'failed', error: errors.join('; '), failedUsers: [...failed.keys()], restartMetamcp: state.restart, users };
+      return { status: 'failed', error: errors.join('; '), failedUsers: [...failed.keys()], restartMetamcp: state.restart, tripped: state.tripped, users };
     }
     this.#o.log(`ok: ${clients.map((c) => `${c.username}(${c.role}) tools ${c.tools?.total}, company ${c.tools?.company}`).join('; ')}`);
-    return { status: 'ok', failedUsers: [], restartMetamcp: state.restart, users };
+    return { status: 'ok', failedUsers: [], restartMetamcp: state.restart, tripped: state.tripped, users };
   }
 
   async #withLogin<T>(username: string, fn: (trpc: Trpc, id: string) => Promise<T>): Promise<T> {
@@ -380,21 +382,35 @@ export class MetamcpProvisioner {
     return ((list.msg?.result?.tools ?? []) as { name: string }[]).map((t) => t.name);
   }
 
-  async #tripwire(client: Client): Promise<void> {
+  async #tripwire(client: Client, state: { restart: boolean; tripped: ProvisionResult['tripped'] }): Promise<void> {
     const names = await this.#mcpToolNames(`${this.#o.baseUrl}/metamcp/${client.username}/mcp`, client.apiKey);
     const prefix = `${client.companyServer}__`;
     const companyTools = names.filter((n) => n.startsWith(prefix)).map((n) => n.slice(prefix.length));
     const violations = companyTools.filter((n) => !READ_TOOLS.has(n));
     client.tools = { total: names.length, company: companyTools.length };
     if (client.role !== 'reader' || violations.length === 0) return;
-    await this.#withLogin(client.username, async (trpc) => {
-      await trpc('namespaces.refreshTools', { namespaceUuid: client.namespaceUuid,
-        tools: violations.map((n) => ({ name: `${prefix}${n}`, inputSchema: {} })) });
-      const tools = (await trpc('namespaces.getTools', { namespaceUuid: client.namespaceUuid }, false)).data ?? [];
-      for (const t of tools.filter((t: { serverName: string; name: string }) => t.serverName === client.companyServer && violations.includes(t.name))) {
-        await trpc('namespaces.updateToolStatus', { namespaceUuid: client.namespaceUuid, toolUuid: t.uuid, serverUuid: t.serverUuid, status: 'INACTIVE' });
-      }
-    });
-    throw new Error(`${client.username}: company server exposes non-read tools (${violations.join(', ')}); marked INACTIVE in MetaMCP — fix the vault token`);
+    // Keys first and independently of MetaMCP HTTP: an existing or just-issued key must not keep write access.
+    let revokedKeys: number | null = null;
+    try {
+      revokedKeys = await this.revoke(client.username);
+    } catch (e) {
+      this.#o.log(`${client.username}: revoking the API keys failed (${(e as Error).message})`);
+    }
+    state.tripped.push({ username: client.username, revokedKeys });
+    state.restart = true;
+    const keys = revokedKeys === null ? 'revoking the API keys failed' : 'API keys revoked';
+    try {
+      await this.#withLogin(client.username, async (trpc) => {
+        await trpc('namespaces.refreshTools', { namespaceUuid: client.namespaceUuid,
+          tools: violations.map((n) => ({ name: `${prefix}${n}`, inputSchema: {} })) });
+        const tools = (await trpc('namespaces.getTools', { namespaceUuid: client.namespaceUuid }, false)).data ?? [];
+        for (const t of tools.filter((t: { serverName: string; name: string }) => t.serverName === client.companyServer && violations.includes(t.name))) {
+          await trpc('namespaces.updateToolStatus', { namespaceUuid: client.namespaceUuid, toolUuid: t.uuid, serverUuid: t.serverUuid, status: 'INACTIVE' });
+        }
+      });
+    } catch (e) {
+      throw new Error(`${client.username}: company server exposes non-read tools (${violations.join(', ')}); ${keys}; marking them INACTIVE failed (${(e as Error).message}) — fix the vault token`);
+    }
+    throw new Error(`${client.username}: company server exposes non-read tools (${violations.join(', ')}); ${keys}, marked INACTIVE in MetaMCP — fix the vault token`);
   }
 }

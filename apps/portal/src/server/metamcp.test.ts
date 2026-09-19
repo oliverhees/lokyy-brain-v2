@@ -135,6 +135,45 @@ describe('MetamcpProvisioner.reconcile', () => {
     for (const t of mm.inactiveTools) expect(READ_TOOLS.has(t.split('__')[1]!)).toBe(false);
   });
 
+  it('tripwire revokes the reader\'s existing API keys, returns no key and fails only that user', async () => {
+    await prov.reconcile(spec(['anna', 'reader', 'v01'], ['ben', 'writer', 'v02']));
+    const [annaKey, benKey] = [await prov.readKey('anna'), await prov.readKey('ben')];
+    mm.toolsByToken['tok-firma-ro'] = ALL_TOOLS;
+    const r = await prov.reconcile(spec(['anna', 'reader', 'v01'], ['ben', 'writer', 'v02']));
+    expect(r).toMatchObject({ status: 'failed', failedUsers: ['anna'], restartMetamcp: true, tripped: [{ username: 'anna', revokedKeys: 1 }] });
+    expect(mm.apiKeys.filter((k) => k.user_id === 'lokyy-anna')).toEqual([]);
+    expect(await prov.readKey('anna')).toBeNull();
+    expect(r.users.map((u) => u.username)).toEqual(['ben']);
+    expect(JSON.stringify(r)).not.toContain(String(annaKey));
+    expect(await prov.readKey('ben')).toBe(benKey);
+  });
+
+  it('tripwire revokes the key just issued to a new reader', async () => {
+    mm.toolsByToken['tok-firma-ro'] = ALL_TOOLS;
+    const r = await prov.reconcile(spec(['anna', 'reader', 'v01']));
+    expect(r).toMatchObject({ status: 'failed', failedUsers: ['anna'], tripped: [{ username: 'anna', revokedKeys: 1 }] });
+    expect(mm.apiKeys.filter((k) => k.user_id === 'lokyy-anna')).toEqual([]);
+  });
+
+  it('tripwire revokes the keys even when marking the tools INACTIVE fails', async () => {
+    await prov.reconcile(spec(['anna', 'reader', 'v01']));
+    mm.toolsByToken['tok-firma-ro'] = ALL_TOOLS;
+    mm.failProc = 'namespaces.refreshTools';
+    const r = await prov.reconcile(spec(['anna', 'reader', 'v01']));
+    expect(r).toMatchObject({ status: 'failed', failedUsers: ['anna'], tripped: [{ username: 'anna', revokedKeys: 1 }] });
+    expect(await prov.readKey('anna')).toBeNull();
+  });
+
+  it('tripwire reports a failed revocation (revokedKeys null) and still fails the user', async () => {
+    await prov.reconcile(spec(['anna', 'reader', 'v01']));
+    mm.toolsByToken['tok-firma-ro'] = ALL_TOOLS;
+    mm.failRevoke = true;
+    const r = await prov.reconcile(spec(['anna', 'reader', 'v01']));
+    expect(r).toMatchObject({ status: 'failed', failedUsers: ['anna'], tripped: [{ username: 'anna', revokedKeys: null }] });
+    expect(r.error).toMatch(/revoking the API keys failed/);
+    expect(mm.inactiveTools.size).toBeGreaterThan(0);
+  });
+
   it('a structural error in the spec changes nothing', async () => {
     const r = await prov.reconcile(spec(['anna', 'reader', 'v01'], ['anna', 'writer', 'v02']));
     expect(r.status).toBe('failed');

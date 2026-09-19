@@ -520,6 +520,11 @@ export class PortalService {
       for (const u of s.users) if (listed.has(u.username)) u.provisioning = failedUsers.has(u.username) ? 'failed' : 'ok';
       s.lastProvisioning = { at: now(), status: result.status, restartMetamcp: result.restartMetamcp, ...(result.error ? { error: result.error } : {}) };
     });
+    // Tripwire: the reader's keys were deleted in MetaMCP; the status above shows it as failed in the admin UI.
+    for (const t of result.tripped) {
+      await this.#d.audit.write({ actor: 'system', action: 'provision.tripwire', target: t.username,
+        details: { revoked: t.revokedKeys !== null, revokedKeys: t.revokedKeys } });
+    }
     if (result.status !== 'ok') this.#d.log(`MetaMCP provisioning failed: ${result.error}`);
     return result;
   }

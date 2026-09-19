@@ -173,6 +173,11 @@ as `authentik_forbidden` ("change this account in Authentik directly").
   needed). If the revocation fails the API answers `502 revocation_failed` (audit `revoked: false`); the user
   stays disabled so the action can be retried. Provisioning then runs with the state read inside its queue:
   removals first and always completed in the database, one broken account or missing token fails only that user.
+- **Reader tripwire:** if a reader's company server exposes any tool outside the read allowlist (wrong vault
+  token), provisioning first deletes all of that reader's MetaMCP API keys in the database (existing and
+  just issued), then marks the tools INACTIVE. The reader gets `provisioning: failed`, no key is handed out,
+  and the audit log gets `provision.tripwire` (actor `system`, `revoked`, `revokedKeys`; no key). Other users
+  are unaffected.
 - **Role change:** old key revoked, groups swapped, provisioning issues a new key with the new company token.
 - **Disable:** key revoked, Authentik user inactive, sessions ended, MetaMCP account removed. **Enable** issues a new key.
 - **Remove:** key revoked, Authentik user and MetaMCP account deleted after typing the username; the vault data
