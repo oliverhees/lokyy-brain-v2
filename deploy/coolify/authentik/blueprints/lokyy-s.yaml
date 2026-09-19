@@ -397,12 +397,19 @@ entries:
     attrs:
       re_evaluate_policies: true
   - model: authentik_flows.flowstagebinding
+    id: binding-lokyy-30
     identifiers: { target: !KeyOf flow-lokyy-authentication, stage: !Find [authentik_stages_authenticator_validate.authenticatorvalidatestage, [name, default-authentication-mfa-validation]], order: 30 }
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
   - model: authentik_flows.flowstagebinding
     identifiers: { target: !KeyOf flow-lokyy-authentication, stage: !Find [authentik_stages_user_login.userloginstage, [name, default-authentication-login]], order: 100 }
   - model: authentik_policies.policybinding
     identifiers: { order: 10, target: !KeyOf binding-lokyy-20, policy: !Find [authentik_policies_expression.expressionpolicy, [name, default-authentication-flow-password-stage]] }
     attrs: { failure_result: true }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf binding-lokyy-30, policy: !KeyOf policy-admin-mfa }
+    attrs: { target: !KeyOf binding-lokyy-30, policy: !KeyOf policy-admin-mfa, order: 0, negate: true, failure_result: false }
   - model: authentik_flows.flowstagebinding
     id: binding-admin-mfa-lokyy
     identifiers: { target: !KeyOf flow-lokyy-authentication, stage: !KeyOf stage-admin-mfa, order: 35 }

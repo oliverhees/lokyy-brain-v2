@@ -858,12 +858,19 @@ export function renderBlueprint(pkg: PackageName): string {
     '      authentication: none',
     ...bind(find('authentik_stages_identification.identificationstage', 'default-authentication-identification'), 10),
     ...bind(find('authentik_stages_password.passwordstage', 'default-authentication-password'), 20, ['      re_evaluate_policies: true']),
-    ...bind(find('authentik_stages_authenticator_validate.authenticatorvalidatestage', 'default-authentication-mfa-validation'), 30),
+    // QA: the default MFA validation (optional, for employees with a device) and lokyy-admin-mfa (35) are gated by
+    // the same admin policy, once negated: exactly one MFA prompt per login. Decided when the user is known.
+    ...bind(find('authentik_stages_authenticator_validate.authenticatorvalidatestage', 'default-authentication-mfa-validation'), 30,
+      ['      evaluate_on_plan: false', '      re_evaluate_policies: true']),
     ...bind(find('authentik_stages_user_login.userloginstage', 'default-authentication-login'), 100),
     // Same optional-stage policies as the default flow (password skipped after passwordless WebAuthn)
     '  - model: authentik_policies.policybinding',
     '    identifiers: { order: 10, target: !KeyOf binding-lokyy-20, policy: !Find [authentik_policies_expression.expressionpolicy, [name, default-authentication-flow-password-stage]] }',
     '    attrs: { failure_result: true }',
+    // On an error the employee stage is skipped (failure_result is not negated); the admin stage then requires MFA
+    '  - model: authentik_policies.policybinding',
+    '    identifiers: { target: !KeyOf binding-lokyy-30, policy: !KeyOf policy-admin-mfa }',
+    '    attrs: { target: !KeyOf binding-lokyy-30, policy: !KeyOf policy-admin-mfa, order: 0, negate: true, failure_result: false }',
     ...ADMIN_MFA_BINDING('lokyy', '!KeyOf flow-lokyy-authentication'),
     '  - model: authentik_brands.brand',
     '    identifiers: { domain: authentik-default }',

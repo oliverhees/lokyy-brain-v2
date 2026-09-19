@@ -512,8 +512,35 @@ test('LOW-A: admin MFA policy bindings fail closed (failure_result: true): an ex
   for (const pkg of pkgs) {
     const lines = renderBlueprint(pkg).split('\n');
     const bindings = lines.flatMap((l, i) => (l.includes('policy: !KeyOf policy-admin-mfa }') && l.trimStart().startsWith('identifiers:') ? [i] : []));
-    assert.equal(bindings.length, 2, 'default flow + Lokyy login flow');
-    for (const i of bindings) assert.match(lines[i + 1], /^    attrs: \{.*\bfailure_result: true\b.*\}$/, lines[i + 1]);
+    const positive = bindings.filter((i) => !/\bnegate: true\b/.test(lines[i + 1]));
+    assert.equal(positive.length, 2, 'admin stage in the default flow + Lokyy login flow');
+    for (const i of positive) assert.match(lines[i + 1], /^    attrs: \{.*\bfailure_result: true\b.*\}$/, lines[i + 1]);
+    // the negated binding (employees' optional MFA) is skipped on an error: the admin stage then requires MFA alone
+    for (const i of bindings.filter((j) => !positive.includes(j))) assert.match(lines[i + 1], /\bfailure_result: false\b/, lines[i + 1]);
+  }
+});
+
+test('QA: exactly one MFA prompt on the Lokyy login flow (admins: lokyy-admin-mfa only, others: default validation only)', () => {
+  for (const pkg of pkgs) {
+    const b = renderBlueprint(pkg);
+    const entries = b.split('\n  - model: ').slice(1);
+    const validateBindings = entries.filter((e) => e.startsWith('authentik_flows.flowstagebinding')
+      && e.includes('target: !KeyOf flow-lokyy-authentication')
+      && (e.includes('authenticatorvalidatestage') || e.includes('stage: !KeyOf stage-admin-mfa')));
+    assert.equal(validateBindings.length, 2, 'default MFA validation (30) + admin MFA (35)');
+    const idOf = (e: string) => e.match(/\n    id: (\S+)/)?.[1] ?? assert.fail(`binding without id: ${e.slice(0, 200)}`);
+    const policyBindings = (id: string) => entries.filter((e) => e.startsWith('authentik_policies.policybinding') && e.includes(`target: !KeyOf ${id},`));
+    const byStage = Object.fromEntries(validateBindings.map((e) => [e.includes('stage-admin-mfa') ? 'admin' : 'default', idOf(e)]));
+    // both gated by the same admin policy, one positive and one negated: mutually exclusive, so never two prompts
+    const [adminPb] = policyBindings(byStage.admin);
+    const [defaultPb, ...more] = policyBindings(byStage.default);
+    assert.equal(more.length, 0);
+    assert.ok(adminPb.includes('policy: !KeyOf policy-admin-mfa') && !adminPb.includes('negate: true'));
+    assert.ok(defaultPb.includes('policy: !KeyOf policy-admin-mfa') && defaultPb.includes('negate: true'), defaultPb);
+    const def = validateBindings.find((e) => idOf(e) === byStage.default) ?? '';
+    assert.ok(def.includes('order: 30') && def.includes('evaluate_on_plan: false') && def.includes('re_evaluate_policies: true'), def);
+    // enrolment only through the admin stage; the default validation stays optional (skip) for employees
+    assert.ok(def.includes('default-authentication-mfa-validation'));
   }
 });
 

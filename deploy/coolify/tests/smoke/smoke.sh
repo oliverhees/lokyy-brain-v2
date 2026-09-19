@@ -96,7 +96,7 @@ login() {
   curlk -c "$jar" -b "$jar" "$exec_url" >/dev/null
   post "$(jq -cn --arg u "$user" '{component:"ak-stage-identification",uid_field:$u}')" >/dev/null
   resp=$(post "$(jq -cn --arg p "$pass" '{component:"ak-stage-password",password:$p}')")
-  MFA_SEEN=""
+  MFA_SEEN="" MFA_PROMPTS=0
   for _ in 1 2 3 4 5 6; do
     kind=$(jq -r '.component // .type' <<<"$resp")
     case $kind in
@@ -105,6 +105,7 @@ login() {
         curlk -L -c "$jar" -b "$jar" -o /dev/null "$([[ $to == http* ]] && echo "$to" || echo "$(U auth)$to")"; return 0 ;;
       ak-stage-consent) resp=$(post "$(jq -c '{component:"ak-stage-consent",token:.token}' <<<"$resp")") ;;
       ak-stage-authenticator-validate)
+        MFA_PROMPTS=$((MFA_PROMPTS + 1))
         [[ -n ${MFA_SECRET_FILE:-} ]] || { echo "MFA required for $user" >&2; MFA_SEEN=validate; return 5; }
         if [[ $(jq '.device_challenges | length' <<<"$resp") -gt 0 ]]; then
           MFA_SEEN=${MFA_SEEN:-challenge}
@@ -228,6 +229,7 @@ isolation_checks() { # isolation_checks <pkg> <last-slot>
   expect "admin login stops at the MFA stage without a device" "${MFA_SEEN:-none}" "validate"
   rm -f "$jars/admin"
   MFA_SECRET_FILE=$work/admin-totp login "$jars/admin" "$(U mcp)/" "ops@example.com" "$admin_pass" && ok "admin login with ADMIN_EMAIL + MFA (${MFA_SEEN})" || bad "admin login with ADMIN_EMAIL + MFA"
+  expect "admin login: exactly one MFA prompt (QA: no second code prompt)" "$MFA_PROMPTS" "1"
   [[ $pkg == s ]] && expect "first admin login enrols TOTP" "$MFA_SEEN" "setup"
   [[ $pkg == m ]] && expect "later admin login asks for the TOTP code" "$MFA_SEEN" "challenge"
   expect "admin → MetaMCP admin UI" "$(access "$jars/admin" "$(U mcp)/health")" "DATA"
