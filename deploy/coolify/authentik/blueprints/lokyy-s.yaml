@@ -367,10 +367,13 @@ entries:
     attrs:
       name: lokyy-admin-mfa-required
       expression: |
-        user = request.context.get("pending_user") or request.user
-        if user.is_superuser:
+        try:
+            user = request.context.get("pending_user") or request.user
+            if user.is_superuser:
+                return True
+            return user.groups.filter(name__in=["lokyy-admins", "authentik Admins"]).exists()
+        except Exception:
             return True
-        return user.groups.filter(name__in=["lokyy-admins", "authentik Admins"]).exists()
   - model: authentik_flows.flowstagebinding
     id: binding-admin-mfa
     identifiers: { target: !Find [authentik_flows.flow, [slug, default-authentication-flow]], stage: !KeyOf stage-admin-mfa, order: 35 }

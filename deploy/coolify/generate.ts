@@ -712,7 +712,7 @@ function ADMIN_MFA_BINDING(suffix: string, flow: string): string[] {
     '      invalid_response_action: retry',
     '  - model: authentik_policies.policybinding',
     `    identifiers: { target: !KeyOf ${id}, policy: !KeyOf policy-admin-mfa }`,
-    // LOW-A: an exception in the expression requires MFA (fail closed) instead of skipping the stage
+    // LOW-A: a PolicyException requires MFA (fail closed); runtime errors are caught in the expression itself
     `    attrs: { target: !KeyOf ${id}, policy: !KeyOf policy-admin-mfa, order: 0, failure_result: true }`,
   ];
 }
@@ -727,18 +727,24 @@ const ADMIN_MFA = [
   '      configuration_stages:',
   '        - !Find [authentik_stages_authenticator_totp.authenticatortotpstage, [name, default-authenticator-totp-setup]]',
   '        - !Find [authentik_stages_authenticator_webauthn.authenticatorwebauthnstage, [name, default-authenticator-webauthn-setup]]',
-  // A device validated moments ago by the default MFA stage (order 30) counts: no second prompt
+  // A device validated by this stage in the last 5 minutes counts (per stage: the default validation stage does not)
   '      last_auth_threshold: minutes=5',
   '  - model: authentik_policies_expression.expressionpolicy',
   '    id: policy-admin-mfa',
   '    identifiers: { name: lokyy-admin-mfa-required }',
   '    attrs:',
   '      name: lokyy-admin-mfa-required',
+  // Fail closed inside the expression: Authentik turns a runtime error here into PolicyResult(False) (failure_result
+  // applies only to a PolicyException) and then applies negate, which would skip MFA for admins without a device.
+  // True on error: lokyy-admin-mfa enforces MFA, the negated employee binding skips.
   '      expression: |',
-  '        user = request.context.get("pending_user") or request.user',
-  '        if user.is_superuser:',
+  '        try:',
+  '            user = request.context.get("pending_user") or request.user',
+  '            if user.is_superuser:',
+  '                return True',
+  '            return user.groups.filter(name__in=["lokyy-admins", "authentik Admins"]).exists()',
+  '        except Exception:',
   '            return True',
-  '        return user.groups.filter(name__in=["lokyy-admins", "authentik Admins"]).exists()',
   // On the default flow too: it stays reachable by its slug
   ...ADMIN_MFA_BINDING('', '!Find [authentik_flows.flow, [slug, default-authentication-flow]]'),
 ];
@@ -867,7 +873,8 @@ export function renderBlueprint(pkg: PackageName): string {
     '  - model: authentik_policies.policybinding',
     '    identifiers: { order: 10, target: !KeyOf binding-lokyy-20, policy: !Find [authentik_policies_expression.expressionpolicy, [name, default-authentication-flow-password-stage]] }',
     '    attrs: { failure_result: true }',
-    // On an error the employee stage is skipped (failure_result is not negated); the admin stage then requires MFA
+    // On a PolicyException the employee stage is skipped (failure_result is not negated) and the admin stage requires
+    // MFA; any other error makes the expression return True (negated: skipped here, enforced at 35)
     '  - model: authentik_policies.policybinding',
     '    identifiers: { target: !KeyOf binding-lokyy-30, policy: !KeyOf policy-admin-mfa }',
     '    attrs: { target: !KeyOf binding-lokyy-30, policy: !KeyOf policy-admin-mfa, order: 0, negate: true, failure_result: false }',

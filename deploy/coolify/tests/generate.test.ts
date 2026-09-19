@@ -515,8 +515,24 @@ test('LOW-A: admin MFA policy bindings fail closed (failure_result: true): an ex
     const positive = bindings.filter((i) => !/\bnegate: true\b/.test(lines[i + 1]));
     assert.equal(positive.length, 2, 'admin stage in the default flow + Lokyy login flow');
     for (const i of positive) assert.match(lines[i + 1], /^    attrs: \{.*\bfailure_result: true\b.*\}$/, lines[i + 1]);
-    // the negated binding (employees' optional MFA) is skipped on an error: the admin stage then requires MFA alone
+    // failure_result covers only a PolicyException; for it the employee binding (failure_result not negated) is skipped
     for (const i of bindings.filter((j) => !positive.includes(j))) assert.match(lines[i + 1], /\bfailure_result: false\b/, lines[i + 1]);
+  }
+});
+
+test('audit: admin MFA expression fails closed itself (any runtime error returns True: admin stage enforces, employee stage skips)', () => {
+  // Authentik turns a runtime error inside an expression into PolicyResult(False) (not failure_result) and then
+  // applies negate: without this, an admin without a device would log in without MFA.
+  for (const pkg of pkgs) {
+    const b = renderBlueprint(pkg);
+    const start = b.indexOf('      expression: |\n', b.indexOf('name: lokyy-admin-mfa-required'));
+    const rest = b.slice(start).split('\n').slice(1);
+    const expr = rest.slice(0, rest.findIndex((l) => !l.startsWith('        '))).map((l) => l.slice(8));
+    assert.equal(expr[0], 'try:', expr.join('\n'));
+    assert.deepEqual(expr.slice(-2), ['except Exception:', '    return True'], expr.join('\n'));
+    // every statement between try and except is inside the try block
+    for (const l of expr.slice(1, -2)) assert.ok(l.startsWith('    '), l);
+    assert.ok(!expr.some((l) => /return False/.test(l)));
   }
 });
 
