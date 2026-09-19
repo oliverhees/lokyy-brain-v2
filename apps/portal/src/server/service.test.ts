@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { harness, RULE_A, RULE_B, type Harness } from '../../test/fakes/harness.ts';
 import { ServiceError } from './service.ts';
+import { ALL_TOOLS } from '../../test/fakes/metamcp.ts';
 
 let h: Harness;
 beforeEach(() => { h = harness(); });
@@ -331,6 +332,22 @@ describe('role change, disable, enable, remove', () => {
     expect(h.mm.users.has('lokyy-anna')).toBe(false);
     const l = await h.service.listUsers();
     expect(l.users.find((u) => u.username === 'ben')!.provisioning).toBe('failed');
+  });
+
+  it('tripwire: a reader who would get write tools loses the key, is marked failed and audited; others stay ok', async () => {
+    await invite('anna', 'reader'); await invite('ben', 'writer');
+    const key = await h.service.revealKey('anna');
+    h.mm.toolsByToken['tok-firma-ro'] = ALL_TOOLS;
+    const r = await h.service.reprovision('admin');
+    expect(r.status).toBe('failed');
+    const users = (await h.service.listUsers()).users;
+    expect(users.find((u) => u.username === 'anna')!.provisioning).toBe('failed');
+    expect(users.find((u) => u.username === 'ben')!.provisioning).toBe('ok');
+    expect(h.mm.apiKeys.filter((k) => k.user_id === 'lokyy-anna')).toEqual([]);
+    await expect(h.service.revealKey('anna')).rejects.toMatchObject({ status: 409, code: 'key_not_provisioned' });
+    const entries = audit().filter((e) => e.action === 'provision.tripwire');
+    expect(entries[0]).toMatchObject({ actor: 'system', target: 'anna', details: { revoked: true, revokedKeys: 1 } });
+    expect(JSON.stringify(audit())).not.toContain(key);
   });
 
   it('a rotation queued behind a disable cannot re-provision the disabled user (state read inside the queue)', async () => {
