@@ -38,6 +38,8 @@ An object permission on exactly this policy therefore does not work on this vers
 | clear the policy cache | 403 |
 | delete the purge policy | 500 (the same crash); the policy still exists |
 
+Why `add_policy` is harmless on 2026.8.2, and the remaining risk: nothing in Authentik 2026.8.2 checks `authentik_policies.add_policy` except that POST mapping on `PolicyViewSet`, and `PolicyViewSet` has no create action. A later Authentik version could add a create action to `/policies/all/` or use the permission elsewhere. The smoke's negative probe (create policies of several types, patch, bind, cache clear, delete) runs against the pinned Authentik image on every run. An upgrade that turns `add_policy` into a real write permission therefore fails the smoke before it ships. Check this again for every Authentik upgrade.
+
 With these permissions, the service account (token held only by authentik-gate) can read every policy and evaluate any policy for users it can view. Side effects are limited to this one policy. The policy refuses privileged and unmanaged accounts, and the gate refuses them before calling it. The Coolify smoke repeats the probe on every run: other policy types, patch, binding, cache and delete. A generator test requires exactly these two policy permissions. Revisit this once Authentik fixes the permission check or offers an API for proxy sessions.
 
 ## Mistake during implementation, and what follows from it
