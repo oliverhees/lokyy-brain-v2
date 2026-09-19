@@ -380,7 +380,7 @@ entries:
       invalid_response_action: retry
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa }
-    attrs: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa, order: 0 }
+    attrs: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa, order: 0, failure_result: true }
   - model: authentik_flows.flow
     id: flow-lokyy-authentication
     identifiers: { slug: lokyy-authentication }
@@ -412,7 +412,7 @@ entries:
       invalid_response_action: retry
   - model: authentik_policies.policybinding
     identifiers: { target: !KeyOf binding-admin-mfa-lokyy, policy: !KeyOf policy-admin-mfa }
-    attrs: { target: !KeyOf binding-admin-mfa-lokyy, policy: !KeyOf policy-admin-mfa, order: 0 }
+    attrs: { target: !KeyOf binding-admin-mfa-lokyy, policy: !KeyOf policy-admin-mfa, order: 0, failure_result: true }
   - model: authentik_brands.brand
     identifiers: { domain: authentik-default }
     state: present

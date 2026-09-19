@@ -218,6 +218,10 @@ async function tripwire(client) {
   const violations = companyTools.filter((n) => !READ_TOOLS.has(n));
   client.tools = { total: names.length, company: companyTools.length };
   if (client.role !== 'reader' || violations.length === 0) return;
+  // LOW-C: first revoke every key of this reader (the existing one and one issued in this run), directly in the
+  // database so nothing later in this function can prevent it; open sessions end with the MetaMCP restart.
+  await db.query('delete from api_keys where user_id = $1', [`${ID_PREFIX}${client.username}`]);
+  restartMetamcp = true;
   await withLogin(client.username, async ({ trpc }) => {
     await trpc('namespaces.refreshTools', { namespaceUuid: client.namespaceUuid,
       tools: violations.map((n) => ({ name: `${prefix}${n}`, inputSchema: {} })) });
@@ -226,7 +230,7 @@ async function tripwire(client) {
       await trpc('namespaces.updateToolStatus', { namespaceUuid: client.namespaceUuid, toolUuid: t.uuid, serverUuid: t.serverUuid, status: 'INACTIVE' });
     }
   });
-  fail(`${client.username}: company server exposes non-read tools (${violations.join(', ')}); marked INACTIVE in MetaMCP — fix the vault token`);
+  fail(`${client.username}: company server exposes non-read tools (${violations.join(', ')}); marked INACTIVE in MetaMCP and API keys revoked — fix the vault token`);
 }
 
 // ------------------------------------------------------------------ main

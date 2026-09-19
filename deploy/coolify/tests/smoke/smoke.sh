@@ -42,6 +42,8 @@ if [[ ! -f $env_file ]]; then
    { grep -oE 'SERVICE_[A-Z0-9_]+' "$coolify/compose-m.yml" | sort -u | while read -r v; do printf '%s=%s\n' "$v" "$(magic_value "$v")"; done
      printf 'BASE_DOMAIN=%s\nADMIN_EMAIL=ops@example.com\nLOKYY_NET_PREFIX=%s\n' "$DOMAIN" "$NETP"; } >"$env_file")
 fi
+# Coolify's resource UUID (LOW-B: required, no default); the project name is unique per smoke instance
+grep -q '^COOLIFY_RESOURCE_UUID=' "$env_file" || printf 'COOLIFY_RESOURCE_UUID=%s\n' "$PROJECT" >>"$env_file"
 envv() { sed -n "s/^$1=//p" "$env_file"; }
 
 dc() { local pkg=$1; shift; docker compose -p "$PROJECT" --env-file "$env_file" -f "$coolify/compose-$pkg.yml" -f "$here/fake-coolify.override.yml" "$@"; }
@@ -186,6 +188,8 @@ provision_run() {
     local name=MCP_TOKEN_$v; [[ $v == READONLYFIRMA ]] && name=MCP_READONLY_TOKEN_FIRMA
     export "$name=$(envv "SERVICE_HEX_64_MCP$v")"; args+=(-e "$name")
   done
+  # TRIPWIRE_TOKEN: hand readers a full-access company token (a misconfigured vault) to trip the tripwire
+  [[ -n ${TRIPWIRE_TOKEN:-} ]] && export MCP_READONLY_TOKEN_FIRMA=$TRIPWIRE_TOKEN
   export LOKYY_USERS; LOKYY_USERS=$(jq -cn --argjson u "$users" '{companyVault:"firma",users:$u}')
   export LOKYY_ROTATE=$rotate LOKYY_PUBLIC_BASE; LOKYY_PUBLIC_BASE=$(U mcp)
   wait_for "MetaMCP ready before provisioning" 300 metamcp_ready "$PKG" >/dev/null
@@ -330,6 +334,23 @@ PKG=s provision_run '[{"username":"alice","role":"reader","vault":"v01","allowVa
 [[ $(jq -r .status "$work/clients.json") == ok ]] && ok "bob back, carl removed" || bad "second provisioning run"
 wait_for "MCP endpoint answers after the MetaMCP restart" 240 mcp_ok "$(key bob)" bob
 expect "alice key unchanged without rotation" "$(mcp_init "$(key alice)" alice)" "200"
+
+echo "== [s] reader tripwire: a reader with write tools gets no key, and every key of that reader is revoked (LOW-C)"
+old_alice=$(key alice)
+cp "$work/clients.json" "$work/clients.before.json"
+TRIPWIRE_TOKEN=$(envv SERVICE_HEX_64_MCPFIRMA) PKG=s provision_run '[{"username":"alice","role":"reader","vault":"v01","allowVaultNameMismatch":true},
+                      {"username":"bob","role":"writer","vault":"v02","allowVaultNameMismatch":true}]'
+expect "run status" "$(jq -r .status "$work/clients.json")" "failed"
+expect "per-user status" "$(jq -r '[.users[] | "\(.username)=\(.status)"] | sort | join(",")' "$work/clients.json")" "alice=failed,bob=ok"
+expect "no key handed out for alice" "$(jq -r '.users[] | select(.username == "alice") | .apiKey // "none"' "$work/clients.json")" "none"
+expect "tripwire named the write tools" "$(jq -r '.users[] | select(.username == "alice") | .error' "$work/clients.json" | grep -c 'non-read tools')" "1"
+expect "MetaMCP restarted (sessions of revoked keys end)" "$(jq -r .restartMetamcp "$work/clients.json")" "true"
+expect "alice's API keys in MetaMCP" "$(dc s exec -T metamcp-db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select count(*) from api_keys where user_id = '"'lokyy-alice'"'"')" "0"
+expect "alice's previous key" "$(mcp_init "$old_alice" alice)" "401"
+provision s && ok "fixed token: alice provisioned again" || { cat "$work/provision.log"; bad "provisioning after the tripwire"; }
+wait_for "MCP endpoint answers after the MetaMCP restart" 240 mcp_ok "$(key alice)" alice
+expect "alice's new key" "$(mcp_init "$(key alice)" alice)" "200"
+expect "alice's pre-tripwire key stays revoked" "$(mcp_init "$old_alice" alice)" "401"
 
 echo "== [s] Authentik providers carry the proxy scope mappings (non-empty identity on a fresh stack)"
 PKG=s

@@ -136,9 +136,9 @@ for (const pkg of pkgs) {
     const labels = c.services['lokyy-traefik'].labels ?? [];
     const hosts = ['auth', 'mcp', 'app', ...vaultNames(pkg)];
     for (const h of hosts) {
-      assert.ok(labels.includes(`traefik.http.routers.lokyy-\${COOLIFY_RESOURCE_UUID:-local}-${h}.rule=Host(\`${h}.\${BASE_DOMAIN}\`)`), `router for ${h}`);
-      assert.ok(labels.includes(`traefik.http.routers.lokyy-\${COOLIFY_RESOURCE_UUID:-local}-${h}.tls.certresolver=letsencrypt`));
-      assert.ok(labels.includes(`traefik.http.routers.lokyy-\${COOLIFY_RESOURCE_UUID:-local}-${h}.entrypoints=https`));
+      assert.ok(labels.includes(`traefik.http.routers.lokyy-\${COOLIFY_RESOURCE_UUID:?}-${h}.rule=Host(\`${h}.\${BASE_DOMAIN}\`)`), `router for ${h}`);
+      assert.ok(labels.includes(`traefik.http.routers.lokyy-\${COOLIFY_RESOURCE_UUID:?}-${h}.tls.certresolver=letsencrypt`));
+      assert.ok(labels.includes(`traefik.http.routers.lokyy-\${COOLIFY_RESOURCE_UUID:?}-${h}.entrypoints=https`));
     }
     assert.ok(labels.includes('traefik.docker.network=coolify'));
     // only lokyy-traefik carries traefik.* labels: the inner routing lives in its file provider
@@ -359,7 +359,18 @@ test('MED-2: coolify-proxy router, middleware and service names are unique per C
   for (const pkg of pkgs) {
     const labels = buildCompose(pkg).services['lokyy-traefik'].labels ?? [];
     for (const l of labels.filter((x) => /^traefik\.http\.(routers|middlewares|services)\./.test(x))) {
-      assert.match(l, /^traefik\.http\.(routers|middlewares|services)\.lokyy-\$\{COOLIFY_RESOURCE_UUID:-local\}-[a-z0-9-]+\./, l);
+      assert.match(l, /^traefik\.http\.(routers|middlewares|services)\.lokyy-\$\{COOLIFY_RESOURCE_UUID:\?\}-[a-z0-9-]+\./, l);
+    }
+  }
+});
+
+test('LOW-B: no default instance id; rendering stops without COOLIFY_RESOURCE_UUID (no silent lokyy-local-* collision)', () => {
+  for (const { path, content } of outputs()) assert.ok(!content.includes('COOLIFY_RESOURCE_UUID:-'), path);
+  for (const pkg of pkgs) {
+    const labels = buildCompose(pkg).services['lokyy-traefik'].labels ?? [];
+    assert.ok(labels.filter((l) => l.includes('COOLIFY_RESOURCE_UUID')).length > 0);
+    for (const l of labels.filter((x) => x.includes('COOLIFY_RESOURCE_UUID'))) {
+      assert.ok(!/\$\{COOLIFY_RESOURCE_UUID(?!:\?\})/.test(l), l);
     }
   }
 });
@@ -494,6 +505,15 @@ test('mandatory MFA for admins only (Oliver): policy-bound validation stage in t
     const expr = b.slice(b.indexOf('lokyy-admin-mfa-required'));
     for (const x of ['is_superuser', '"lokyy-admins"', '"authentik Admins"', 'pending_user']) assert.ok(expr.includes(x), x);
     assert.ok(b.includes('    identifiers: { target: !KeyOf binding-admin-mfa, policy: !KeyOf policy-admin-mfa }'));
+  }
+});
+
+test('LOW-A: admin MFA policy bindings fail closed (failure_result: true): an exception in the expression never skips MFA', () => {
+  for (const pkg of pkgs) {
+    const lines = renderBlueprint(pkg).split('\n');
+    const bindings = lines.flatMap((l, i) => (l.includes('policy: !KeyOf policy-admin-mfa }') && l.trimStart().startsWith('identifiers:') ? [i] : []));
+    assert.equal(bindings.length, 2, 'default flow + Lokyy login flow');
+    for (const i of bindings) assert.match(lines[i + 1], /^    attrs: \{.*\bfailure_result: true\b.*\}$/, lines[i + 1]);
   }
 });
 

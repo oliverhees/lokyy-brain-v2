@@ -194,7 +194,9 @@ export function buildCompose(pkg: PackageName, options: GenerateOptions = {}): C
   // coolify-proxy labels: one TLS router (own HTTP-01 certificate) per public host, one HTTP->HTTPS
   // redirect router for all of them. Only this container carries traefik.* labels.
   // MED-2: router/middleware/service names are global in coolify-proxy: unique per Coolify resource
-  const id = (n: string) => `lokyy-\${COOLIFY_RESOURCE_UUID:-local}-${n}`;
+  // LOW-B: no default: without COOLIFY_RESOURCE_UUID the deploy stops (compose "required variable") instead of
+  // two instances on one host sharing lokyy-local-* names (docs/beta-runbook.md)
+  const id = (n: string) => `lokyy-\${COOLIFY_RESOURCE_UUID:?}-${n}`;
   const labels = ['traefik.enable=true', 'traefik.docker.network=coolify'];
   for (const h of hosts) {
     const r = id(h);
@@ -710,7 +712,8 @@ function ADMIN_MFA_BINDING(suffix: string, flow: string): string[] {
     '      invalid_response_action: retry',
     '  - model: authentik_policies.policybinding',
     `    identifiers: { target: !KeyOf ${id}, policy: !KeyOf policy-admin-mfa }`,
-    `    attrs: { target: !KeyOf ${id}, policy: !KeyOf policy-admin-mfa, order: 0 }`,
+    // LOW-A: an exception in the expression requires MFA (fail closed) instead of skipping the stage
+    `    attrs: { target: !KeyOf ${id}, policy: !KeyOf policy-admin-mfa, order: 0, failure_result: true }`,
   ];
 }
 const ADMIN_MFA = [

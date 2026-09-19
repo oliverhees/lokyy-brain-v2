@@ -22,7 +22,7 @@ magic_value() { case $1 in SERVICE_PASSWORD_64_*) openssl rand -base64 192 | tr 
 # Emulates Coolify: one random value per magic variable referenced in the file.
 magic_env() {
   grep -oE 'SERVICE_[A-Z0-9_]+' "$1" | sort -u | while read -r v; do printf '%s=%s\n' "$v" "$(magic_value "$v")"; done
-  printf 'BASE_DOMAIN=beta.example.test\nADMIN_EMAIL=ops@example.test\n'
+  printf 'BASE_DOMAIN=beta.example.test\nADMIN_EMAIL=ops@example.test\nCOOLIFY_RESOURCE_UUID=rsc0test\n'
 }
 
 for pkg in s m; do
@@ -31,6 +31,9 @@ for pkg in s m; do
   check "$pkg: docker compose config -q with Coolify-like env" 'docker compose --env-file "$tmp/$pkg.env" -f "$f" config -q'
   check "$pkg: rendering fails without BASE_DOMAIN" '! docker compose --env-file <(grep -v ^BASE_DOMAIN= "$tmp/$pkg.env") -f "$f" config -q 2>/dev/null'
   check "$pkg: rendering fails without ADMIN_EMAIL" '! docker compose --env-file <(grep -v ^ADMIN_EMAIL= "$tmp/$pkg.env") -f "$f" config -q 2>/dev/null'
+  # LOW-B: without an instance id the coolify-proxy router names of two instances on one host would collide
+  check "$pkg: rendering fails without COOLIFY_RESOURCE_UUID" '! env -u COOLIFY_RESOURCE_UUID docker compose --env-file <(grep -v ^COOLIFY_RESOURCE_UUID= "$tmp/$pkg.env") -f "$f" config -q 2>/dev/null'
+  check "$pkg: rendering fails with an empty COOLIFY_RESOURCE_UUID" '! env -u COOLIFY_RESOURCE_UUID docker compose --env-file <(sed "s/^COOLIFY_RESOURCE_UUID=.*/COOLIFY_RESOURCE_UUID=/" "$tmp/$pkg.env") -f "$f" config -q 2>/dev/null'
   docker compose --env-file "$tmp/$pkg.env" -f "$f" config --format json >"$tmp/$pkg.json"
   q() { jq -r "$1" "$tmp/$pkg.json"; }
 
@@ -62,7 +65,7 @@ for pkg in s m; do
     [[ $(q "[.services | to_entries[] | select(.value.networks | has(\"mcp-$v\")) | .key] | sort | join(\",\")") == "vault-connector,vault-$v" ]] || { echo "FAIL $pkg: mcp-$v members"; fail=1; }
     [[ $(q "[.services | to_entries[] | select(.value.networks | has(\"embed-$v\")) | .key] | sort | join(\",\")") == "embed,vault-$v" ]] || { echo "FAIL $pkg: embed-$v members"; fail=1; }
     [[ $(q ".networks[\"web-$v\"].internal and .networks[\"mcp-$v\"].internal and .networks[\"embed-$v\"].internal") == true ]] || { echo "FAIL $pkg: $v networks not internal"; fail=1; }
-    host="traefik.http.routers.lokyy-local-$v.rule"
+    host="traefik.http.routers.lokyy-rsc0test-$v.rule"
     [[ $(q ".services[\"lokyy-traefik\"].labels[\"$host\"]") == "Host(\`$v.beta.example.test\`)" ]] || { echo "FAIL $pkg: coolify-proxy router for $v"; fail=1; }
   done
   expected=$([[ $pkg == s ]] && echo 16 || echo 31)
