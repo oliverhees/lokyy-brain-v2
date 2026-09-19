@@ -1,6 +1,6 @@
 # ADR 0002 — End forward-auth (outpost) sessions through a fixed blueprint policy
 
-- Status: accepted (lead decision (a), security audit of 2ce91e6 passed without High/Critical)
+- Status: accepted (lead decision (a) with view_policy + add_policy; re-audit pending)
 - Date: 2026-09-19
 - Work item: LBV2-27 (QA finding "disabled user keeps vault session", High)
 - Decision by: lead (LBV2-27), to be confirmed by Oliver
@@ -16,13 +16,33 @@ Authentik 2026.8.2 has no API to list or delete proxy sessions (`ProxySession` i
 1. The Coolify blueprint (`deploy/coolify/generate.ts`) ships a fixed expression policy `lokyy-end-proxy-sessions`. It is bound to nothing. For its target user it deletes exactly that user's `ProxySession` rows (`session_data.claims.sub == user.uid`) and returns `True`. For superusers, members of `lokyy-admins` / `authentik Admins`, and accounts without `path == "lokyy"` and `lokyy_managed` it deletes nothing and returns `False`.
 2. authentik-gate runs it through the policy test API (`POST /api/v3/policies/all/<pk>/test/`, `user = <target pk>`). It does this after deleting the Authentik sessions, in `DELETE /v1/users/<pk>/sessions`, and only for targets its own policy allows. If the policy is missing, returns `False` or fails, the gate answers 502. The portal then reports an error, never success.
 3. The portal ends sessions on disable, on remove and on role change.
-4. The portal's service-account role gets `authentik_policies.view_policy`, because the test API requires it. This permission is read-only: it does not grant changing, creating or deleting policies.
+4. The portal's service-account role gets the global permissions `authentik_policies.view_policy` and `authentik_policies.add_policy`, and no other policy permission. The test API needs both, see below.
 
-## Why the permission is global
+## Why these two permissions, globally
 
-The intended scope was an object permission on exactly this policy. On Authentik 2026.8.2 the test endpoint checks `has_perm("authentik_policies.view_policy", <ExpressionPolicy>)`. With only an object permission, the endpoint fails with `WrongAppError`: the permission's app label is `authentik_policies`, the object's is `authentik_policies_expression`. The result is HTTP 500, verified on the QA stack. An object permission on the child model (`view_expressionpolicy`) lets the service account list the policy, but not test it. The global permission is therefore the only working option on this version.
+The test endpoint is a POST detail action on `/api/v3/policies/all/`. Authentik 2026.8.2 checks it in two steps:
 
-With the global permission, the service account (token held only by authentik-gate) can read every policy and evaluate any policy for users it can view. Side effects are limited to this one policy. The policy refuses privileged and unmanaged accounts, and the gate refuses them before calling it. Revisit this once Authentik fixes the object-permission check or offers an API for proxy sessions.
+- The action decorator requires `view_policy`, either globally or on the object.
+- `ObjectPermissions` (Authentik's DRF permission class) maps POST to `add_<model>`, so `add_policy` on the base `Policy` model. Only the global permission avoids a crash. Without it, Authentik falls back to a per-object check, and for a subclass object (`ExpressionPolicy`) that check fails with `WrongAppError`: the permission's app label is `authentik_policies`, the object's is `authentik_policies_expression`. The result is HTTP 500.
+
+An object permission on exactly this policy therefore does not work on this version, whether as `view_policy` or as `view_expressionpolicy`. The latter only lets the account list the policy.
+
+`add_policy` on the base model creates nothing: `/policies/all/` has no create action, and the endpoints of the policy types check their own `add_<type>policy` permissions. Probe on a smoke stack with the portal service-account token and both permissions:
+
+| Call | Result |
+|------|--------|
+| test `lokyy-end-proxy-sessions` | 200 (`passing: false` for an unmanaged user) |
+| create an expression policy | 403 |
+| patch the purge policy | 403 |
+| create a policy binding | 403 |
+| clear the policy cache | 403 |
+| delete the purge policy | 500 (the same crash); the policy still exists |
+
+With these permissions, the service account (token held only by authentik-gate) can read every policy and evaluate any policy for users it can view. Side effects are limited to this one policy. The policy refuses privileged and unmanaged accounts, and the gate refuses them before calling it. The Coolify smoke repeats the probe on every run: other policy types, patch, binding, cache and delete. A generator test requires exactly these two policy permissions. Revisit this once Authentik fixes the permission check or offers an API for proxy sessions.
+
+## Mistake during implementation, and what follows from it
+
+The first version granted only `view_policy`. The unit tests (a fake Authentik behind the real gate) passed, but the smoke failed: the gate got HTTP 500 and old sessions stayed valid. The fakes did not model Authentik's POST→`add_<model>` permission mapping, and the earlier live probe only covered the object permission, not the global one. Consequence: the unit tests cover the gate's logic only. That the gate works against Authentik is proven by the Coolify smoke alone (managed user, disable and remove during an outpost refresh storm, negative permission probe).
 
 ## Why a policy test instead of something else
 
@@ -38,7 +58,7 @@ On the QA stack the outpost refreshed about 8 times a minute for about 13 minute
 ## Consequences
 
 - The side effect of a "test" call is unusual. It is documented at the policy (generator comment), in the gate (`deploy/stack/authentik-gate/src/gate.ts`) and here.
-- Only this policy may write. A generator test scans every policy expression in the Coolify, portal and stack blueprints for write and I/O calls: ORM writes, `setattr`, `cursor`/`execute`, `requests`, and `ak_*` helpers other than `ak_message`. This is a tripwire, not a proof: it catches the usual patterns, not every possible side effect. Reviews of new expressions stay necessary. A second generator test checks that `view_policy` is the portal role's only policy permission (read only).
+- Only this policy may write. A generator test scans every policy expression in the Coolify, portal and stack blueprints for write and I/O calls: ORM writes, `setattr`, `cursor`/`execute`, `requests`, and `ak_*` helpers other than `ak_message`. This is a tripwire, not a proof: it catches the usual patterns, not every possible side effect. Reviews of new expressions stay necessary. A second generator test checks that `view_policy` and `add_policy` are the portal role's only policy permissions.
 - The gate answers `user_not_found` for a missing user and `not_found` for an unknown route. The portal accepts only `user_not_found` as "already gone", so an older gate without the session endpoint makes the portal report an error instead of a silent success.
 - The policy matches on `user_id` (UUID) or on the `sub` claim, so it keeps working if a provider's `sub_mode` changes.
 - The portal deactivates the account before ending sessions on disable and on remove. A failed session end therefore never leaves an account that can log in again.

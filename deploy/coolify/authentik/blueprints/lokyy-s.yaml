@@ -61,6 +61,7 @@ entries:
         - authentik_core.view_authenticatedsession
         - authentik_core.delete_authenticatedsession
         - authentik_policies.view_policy
+        - authentik_policies.add_policy
   - model: authentik_core.user
     id: sa-portal
     identifiers: { username: lokyy-portal }

@@ -429,8 +429,8 @@ test('MED-3: least-privilege Authentik service account for the portal; no bootst
       'add_user_to_group', 'remove_user_from_group', 'view_authenticatedsession', 'delete_authenticatedsession']) {
       assert.ok(b.includes(`        - authentik_core.${perm}\n`), perm);
     }
-    // + authentik_policies.view_policy (QA High: run the outpost session purge policy)
-    assert.equal((b.match(/        - authentik_\w+\.\w+\n/g) ?? []).filter((l) => !l.includes('scopemapping')).length, 11, 'exactly 11 permissions');
+    // + authentik_policies.view_policy and add_policy (QA High: run the outpost session purge policy)
+    assert.equal((b.match(/        - authentik_\w+\.\w+\n/g) ?? []).filter((l) => !l.includes('scopemapping')).length, 12, 'exactly 12 permissions');
     assert.ok(b.includes('      type: service_account\n'));
     assert.ok(b.includes('      key: !Env PORTAL_AUTHENTIK_TOKEN\n'));
     assert.ok(b.includes('      expiring: false\n') && b.includes('      intent: api\n'));
@@ -575,10 +575,13 @@ test('QA High: outpost session purge policy; the portal role may only run (test)
       'ProxySession.objects.filter(Q(user_id=user.uuid) | Q(session_data__claims__sub=user.uid)).delete()']) {
       assert.ok(e.includes(x), x);
     }
-    // The policy test API needs the global view_policy (an object permission crashes it in 2026.8.2 with
-    // WrongAppError): the only policy permission of the portal role; no change/add/delete on policies
+    // The policy test API (POST detail action on /policies/all/) needs the global view_policy and add_policy:
+    // Authentik's ObjectPermissions map POST to add_<model> and otherwise fall back to an object check that
+    // crashes for subclass policies (WrongAppError, 2026.8.2). add_policy on the base model creates nothing
+    // (/policies/all/ has no create action). Exactly these two policy permissions, nothing else (ADR 0002).
     const role = entries.find((x) => x.startsWith('authentik_rbac.role') && x.includes('name: lokyy-portal'))!;
-    assert.deepEqual(role.split('\n').filter((l) => l.includes('authentik_policies')), ['        - authentik_policies.view_policy']);
+    assert.deepEqual(role.split('\n').filter((l) => l.includes('authentik_policies')).sort(),
+      ['        - authentik_policies.add_policy', '        - authentik_policies.view_policy']);
   }
 });
 

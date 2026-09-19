@@ -782,9 +782,13 @@ export function renderBlueprint(pkg: PackageName): string {
     '      name: lokyy-portal',
     '      permissions:',
     ...PORTAL_PERMISSIONS.map((p) => `        - authentik_core.${p}`),
-    // QA High: run (test) lokyy-end-proxy-sessions below. Global because Authentik 2026.8.2's policy test API
-    // crashes on an object permission (WrongAppError); read-only on policies, no change/add/delete.
+    // QA High (ADR 0002): run (test) lokyy-end-proxy-sessions below. The policy test API is a POST detail action
+    // on /policies/all/: Authentik's ObjectPermissions need the global view_policy and add_policy (POST maps to
+    // add_<model>), otherwise they fall back to an object check that crashes for subclass policies (WrongAppError,
+    // 2026.8.2). add_policy on the base model creates nothing: /policies/all/ has no create action, subclass
+    // endpoints check their own add permissions (smoke: create/patch/bind as this account → 403).
     '        - authentik_policies.view_policy',
+    '        - authentik_policies.add_policy',
     '  - model: authentik_core.user',
     '    id: sa-portal',
     '    identifiers: { username: lokyy-portal }',

@@ -364,6 +364,21 @@ while time.time() < end:
   expect "gate: remove gina" "$(gate s DELETE "/v1/users/$gina_pk" | cut -c1-3)" "204"
 fi
 
+echo "== [s] portal service account may run the purge policy, never change policies (view_policy + add_policy, ADR 0002)"
+sa() { curlk -o /dev/null -w '%{http_code}' -X "$1" -H "Authorization: Bearer $(envv SERVICE_HEX_64_PORTALAKTOKEN)" -H 'content-type: application/json' ${3:+-d "$3"} "$(U auth)/api/v3$2"; }
+purge() { api GET '/policies/all/?search=lokyy-end-proxy-sessions' | jq -r '[.results[] | select(.name == "lokyy-end-proxy-sessions") | .pk] | join(",")'; }
+purge_pk=$(purge)
+expect "purge policy visible to the portal account" "$([[ $purge_pk =~ ^[0-9a-f-]{36}$ ]] && echo yes || echo "no:$purge_pk")" "yes"
+expect "SA: create expression policy" "$(sa POST /policies/expression/ '{"name":"lokyy-smoke-x","expression":"return True"}')" "403"
+expect "SA: create dummy policy" "$(sa POST /policies/dummy/ '{"name":"lokyy-smoke-y"}')" "403"
+expect "SA: create password policy" "$(sa POST /policies/password/ '{"name":"lokyy-smoke-z","length_min":1}')" "403"
+expect "SA: patch purge policy" "$(sa PATCH "/policies/expression/$purge_pk/" '{"expression":"return True"}')" "403"
+expect "SA: bind purge policy" "$(sa POST /policies/bindings/ "{\"policy\":\"$purge_pk\",\"target\":\"$purge_pk\",\"order\":0}")" "403"
+expect "SA: clear policy cache" "$(sa POST /policies/all/cache_clear/)" "403"
+sa DELETE "/policies/all/$purge_pk/" >/dev/null
+expect "SA: delete purge policy → still there" "$(purge)" "$purge_pk"
+expect "SA: nothing created" "$(api GET '/policies/all/?search=lokyy-smoke' | jq -r '.results | length')" "0"
+
 echo "== [s] provisioning: invalid input refused as a whole; rotation and removal"
 old_alice=$(key alice) old_bob=$(key bob)
 cp "$work/clients.json" "$work/clients.before.json"
