@@ -1,0 +1,24 @@
+# LBV2-27 fixture for tests/blueprint-check.ts: every akadmin entry here must be REJECTED.
+version: 1
+entries:
+  - { model: authentik_core.group, id: group-admins, identifiers: { name: lokyy-admins }, attrs: { name: lokyy-admins } }
+  # single-quoted username
+  - { model: authentik_core.user, identifiers: { username: 'akadmin' }, attrs: { groups: [!KeyOf group-admins] } }
+  # username on the entry's last line, 4-space indentation
+  - model: authentik_core.user
+    attrs:
+        groups: [!KeyOf group-admins]
+    identifiers:
+        username: akadmin
+  # "authentik Admins" only inside a string, not a !Find
+  - model: authentik_core.user
+    identifiers: { username: akadmin }
+    attrs: { name: "authentik Admins", groups: [!KeyOf group-admins] }
+  # groups through an alias of a list without authentik Admins
+  - model: authentik_core.group
+    id: group-other
+    identifiers: { name: other }
+    attrs: { name: other, x: &only-admins [!KeyOf group-admins] }
+  - model: authentik_core.user
+    identifiers: { username: akadmin }
+    attrs: { groups: *only-admins }

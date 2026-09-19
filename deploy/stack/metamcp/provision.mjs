@@ -41,8 +41,12 @@ const token = (vault, readonly = false) => {
   return process.env[name] || fail(`${name} not set`);
 };
 if (!Array.isArray(spec.users)) fail('users must be an array');
+// Input is validated as a whole before anything changes: an invalid users file is refused and changes
+// nothing (tests/metamcp-attacks.sh "refused runs"). Runtime failures later are per user (see main).
 const seen = new Set();
 const vaultsSeen = new Set();
+const users = [];
+const failed = [];
 for (const u of spec.users) {
   if (typeof u.username !== 'string' || !/^[a-z][a-z0-9-]{1,30}$/.test(u.username) || u.username.includes('--')) fail(`invalid username: ${u.username}`);
   if (typeof u.vault !== 'string' || !VAULT_RE.test(u.vault)) fail(`invalid vault for ${u.username}`);
@@ -55,6 +59,7 @@ for (const u of spec.users) {
   if (seen.has(u.username)) fail(`duplicate user ${u.username}`);
   seen.add(u.username);
   token(u.vault); token(company, u.role === 'reader');
+  users.push(u);
 }
 for (const r of rotateList) if (r !== "*" && !seen.has(r)) fail(`--rotate ${r}: not in users file`);
 
@@ -213,6 +218,10 @@ async function tripwire(client) {
   const violations = companyTools.filter((n) => !READ_TOOLS.has(n));
   client.tools = { total: names.length, company: companyTools.length };
   if (client.role !== 'reader' || violations.length === 0) return;
+  // LOW-C: first revoke every key of this reader (the existing one and one issued in this run), directly in the
+  // database so nothing later in this function can prevent it; open sessions end with the MetaMCP restart.
+  await db.query('delete from api_keys where user_id = $1', [`${ID_PREFIX}${client.username}`]);
+  restartMetamcp = true;
   await withLogin(client.username, async ({ trpc }) => {
     await trpc('namespaces.refreshTools', { namespaceUuid: client.namespaceUuid,
       tools: violations.map((n) => ({ name: `${prefix}${n}`, inputSchema: {} })) });
@@ -221,41 +230,64 @@ async function tripwire(client) {
       await trpc('namespaces.updateToolStatus', { namespaceUuid: client.namespaceUuid, toolUuid: t.uuid, serverUuid: t.serverUuid, status: 'INACTIVE' });
     }
   });
-  fail(`${client.username}: company server exposes non-read tools (${violations.join(', ')}); marked INACTIVE in MetaMCP — fix the vault token`);
+  fail(`${client.username}: company server exposes non-read tools (${violations.join(', ')}); marked INACTIVE in MetaMCP and API keys revoked — fix the vault token`);
 }
 
 // ------------------------------------------------------------------ main
-const clients = [];
-// Set when open MetaMCP sessions may carry outdated access (changed or removed user): provision.sh restarts MetaMCP.
+// Set when open MetaMCP sessions may carry outdated access (changed or removed user): the caller restarts MetaMCP.
 let restartMetamcp = false;
+const removed = [];
+const clients = [];
+// LBV2-27: revocations first and each on its own, so a failing user can never delay or block removing access
+// of another; then every listed user independently. Every user ends up "ok" (with key) or "failed".
+async function revoke(id) {
+  const username = id.slice(ID_PREFIX.length);
+  // Delete what the account owns directly (no login needed), then the account; sessions die with the restart.
+  await db.query('delete from api_keys where user_id = $1', [id]).catch(() => {});
+  await withLogin(username, async ({ trpc }) => {
+    for (const k of (await trpc('apiKeys.list', undefined, false)).apiKeys ?? []) if (k.user_id === id || k.user_id === undefined) await trpc('apiKeys.delete', { uuid: k.uuid }).catch(() => {});
+    for (const e of (await trpc('endpoints.list', undefined, false)).data) if (e.user_id === id) await trpc('endpoints.delete', { uuid: e.uuid });
+    for (const n of (await trpc('namespaces.list', undefined, false)).data) if (n.user_id === id) await trpc('namespaces.delete', { uuid: n.uuid });
+    for (const s of (await trpc('mcpServers.list', undefined, false)).data) if (s.user_id === id) await trpc('mcpServers.delete', { uuid: s.uuid });
+  }).catch((e) => log(`${username}: cleanup via API failed (${e.message}); deleting the account directly`));
+  await db.query('delete from users where id = $1', [id]); // cascades any remaining owned rows
+}
+let fatal = null;
 try {
-  for (const u of spec.users) clients.push(await reconcile(u));
-
-  const listed = new Set(spec.users.map((u) => `${ID_PREFIX}${u.username}`));
+  const listed = new Set(users.map((u) => `${ID_PREFIX}${u.username}`));
   const { rows } = await db.query('select id from users where id like $1', [`${ID_PREFIX}%`]);
   for (const { id } of rows.filter((r) => !listed.has(r.id))) {
     const username = id.slice(ID_PREFIX.length);
-    await withLogin(username, async ({ trpc }) => {
-      for (const k of (await trpc('apiKeys.list', undefined, false)).apiKeys ?? []) if (k.user_id === id || k.user_id === undefined) await trpc('apiKeys.delete', { uuid: k.uuid }).catch(() => {});
-      for (const e of (await trpc('endpoints.list', undefined, false)).data) if (e.user_id === id) await trpc('endpoints.delete', { uuid: e.uuid });
-      for (const n of (await trpc('namespaces.list', undefined, false)).data) if (n.user_id === id) await trpc('namespaces.delete', { uuid: n.uuid });
-      for (const s of (await trpc('mcpServers.list', undefined, false)).data) if (s.user_id === id) await trpc('mcpServers.delete', { uuid: s.uuid });
-    });
-    restartMetamcp = true;
-    await db.query('delete from users where id = $1', [id]); // cascades any remaining owned rows
-    log(`${username}: removed (not in users file)`);
+    try {
+      await revoke(id);
+      restartMetamcp = true;
+      removed.push(username);
+      log(`${username}: removed (not in users file)`);
+    } catch (e) {
+      restartMetamcp = true; // whatever was deleted may already have changed live sessions
+      log(`${username}: REMOVAL FAILED: ${e.message}`);
+      fatal ??= `removal of ${username} failed: ${e.message}`;
+    }
   }
-
-  for (const c of clients) await tripwire(c);
-  for (const c of clients) delete c.namespaceUuid;
-  console.log(JSON.stringify({ generatedAt: new Date().toISOString(), status: "ok", restartMetamcp, users: clients }, null, 2));
-  log(`ok: ${clients.map((c) => `${c.username}(${c.role}) tools ${c.tools.total}, company ${c.tools.company}`).join('; ')}`);
+  for (const u of users) {
+    try {
+      const c = await reconcile(u);
+      await tripwire(c);
+      delete c.namespaceUuid;
+      clients.push({ ...c, status: 'ok' });
+    } catch (e) {
+      // No key is handed out for a user whose run failed (a reader with write tools, half-updated servers)
+      log(`${u.username}: FAILED: ${e.message}`);
+      failed.push({ username: u.username, role: u.role, vault: u.vault, status: 'failed', error: e.message });
+    }
+  }
 } catch (e) {
-  // Keys may already be rotated or issued: always hand back what exists now, marked as failed.
-  for (const c of clients) delete c.namespaceUuid;
-  console.log(JSON.stringify({ generatedAt: new Date().toISOString(), status: "failed", error: e.message, restartMetamcp, users: clients }, null, 2));
-  log(`FAILED: ${e.message}`);
-  process.exitCode = 1;
+  fatal = e.message;
 } finally {
   await db.end();
 }
+const status = fatal || failed.length ? 'failed' : 'ok';
+console.log(JSON.stringify({ generatedAt: new Date().toISOString(), status, ...(fatal ? { error: fatal } : {}), restartMetamcp,
+  removed, users: [...clients, ...failed] }, null, 2));
+log(`${status}: ${clients.map((c) => `${c.username}(${c.role}) tools ${c.tools.total}, company ${c.tools.company}`).join('; ')}${failed.length ? `; failed: ${failed.map((f) => f.username).join(', ')}` : ''}${removed.length ? `; removed: ${removed.join(', ')}` : ''}`);
+if (status !== 'ok') process.exitCode = 1;

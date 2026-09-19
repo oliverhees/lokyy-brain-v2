@@ -60,6 +60,8 @@ COPY --from=prod-deps /src/node_modules /app/node_modules
 COPY --from=prod-deps /src/apps/server/node_modules /app/apps/server/node_modules
 COPY --from=embed-test /embed/package.json /app/embed/package.json
 COPY --from=embed-test /embed/src /app/embed/src
+# Offline loader for NODE_OPTIONS=--import=... (Coolify packages mount nothing from the repository)
+COPY deploy/stack/models/offline.mjs /lokyy/models/offline.mjs
 RUN useradd -r -u 10002 embed
 USER embed
 ENV NODE_ENV=production \
@@ -86,6 +88,8 @@ COPY --from=build /src/apps/web/dist /app/apps/web/dist
 COPY --from=build /src/apps/plugin/templates /app/apps/plugin/templates
 COPY --from=build /src/schema /app/schema
 COPY --from=build /src/deploy/entrypoint.sh /app/deploy/entrypoint.sh
+# Model prefetch + offline loader (deploy/stack/models), used by the Coolify packages without bind mounts
+COPY --from=build /src/deploy/stack/models /lokyy/models
 # Model cache: @xenova/transformers caches downloaded models (BGE-M3) in
 # <package>/.cache. That path is redirected to /models, writable by the vault
 # user. Mount a named volume at /models to keep models across container
