@@ -38,7 +38,8 @@ On the QA stack the outpost refreshed about 8 times a minute for about 13 minute
 ## Consequences
 
 - The side effect of a "test" call is unusual. It is documented at the policy (generator comment), in the gate (`deploy/stack/authentik-gate/src/gate.ts`) and here.
-- Only this policy may write. A generator test checks every policy expression in the Coolify and portal blueprints for write calls, and a second generator test checks that `view_policy` is the portal role's only policy permission (read only).
+- Only this policy may write. A generator test scans every policy expression in the Coolify, portal and stack blueprints for write and I/O calls: ORM writes, `setattr`, `cursor`/`execute`, `requests`, and `ak_*` helpers other than `ak_message`. This is a tripwire, not a proof: it catches the usual patterns, not every possible side effect. Reviews of new expressions stay necessary. A second generator test checks that `view_policy` is the portal role's only policy permission (read only).
+- The gate answers `user_not_found` for a missing user and `not_found` for an unknown route. The portal accepts only `user_not_found` as "already gone", so an older gate without the session endpoint makes the portal report an error instead of a silent success.
 - The policy matches on `user_id` (UUID) or on the `sub` claim, so it keeps working if a provider's `sub_mode` changes.
 - The portal deactivates the account before ending sessions on disable and on remove. A failed session end therefore never leaves an account that can log in again.
 - The policy depends on Authentik internals: the `ProxySession` model and its `user_id` / claims. The Coolify smoke checks the behaviour end to end, including during an outpost refresh storm, so an Authentik upgrade that changes either detail fails the smoke.

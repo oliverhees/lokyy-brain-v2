@@ -73,7 +73,8 @@ export class AuthentikGateClient {
     this.#timeoutMs = opts.timeoutMs ?? 20_000;
   }
 
-  /** 404 is returned to the caller (some operations accept it); every other failure throws. */
+  /** A missing user (404 user_not_found) is returned to the caller (some operations accept it); every other
+   * failure throws, including a 404 for an unknown route (an older gate without that endpoint). */
   async #call<T>(method: string, path: string, body?: unknown): Promise<{ status: number; data: T }> {
     let res: Response;
     try {
@@ -89,7 +90,8 @@ export class AuthentikGateClient {
     const text = await res.text();
     let data: unknown = null;
     try { data = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
-    if (!res.ok && res.status !== 404) {
+    const missingUser = res.status === 404 && (data as { error?: unknown } | null)?.error === 'user_not_found';
+    if (!res.ok && !missingUser) {
       const error = data && typeof data === 'object' && typeof (data as { error?: unknown }).error === 'string' ? (data as { error: string }).error : '';
       throw new AuthentikError(GATE_ERRORS[res.status] ?? 'http', `authentik-gate ${method} ${path}: HTTP ${res.status}${error ? ` (${error})` : ''}`, res.status);
     }

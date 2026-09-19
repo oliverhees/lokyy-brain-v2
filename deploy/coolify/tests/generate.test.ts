@@ -582,19 +582,27 @@ test('QA High: outpost session purge policy; the portal role may only run (test)
   }
 });
 
-test('audit INFO-1: only lokyy-end-proxy-sessions writes; every other policy expression is side-effect free', () => {
-  const WRITE = /\.(delete|save|update|create|bulk_create|bulk_update|get_or_create|update_or_create|set|add|remove|clear|set_password)\(/;
-  const portal = readFileSync(join(coolifyDir, '../../apps/portal/authentik/lokyy-portal.yaml'), 'utf8');
-  for (const b of [...pkgs.map(renderBlueprint), portal]) {
-    const policies = b.split('\n  - model: ').slice(1).filter((e) => e.startsWith('authentik_policies_expression.expressionpolicy'));
-    assert.ok(policies.length > 0);
-    for (const e of policies) {
-      const name = /identifiers: \{ name: ([^ }]+)/.exec(e)?.[1];
+test('audit INFO-1: only lokyy-end-proxy-sessions writes; every other policy expression is side-effect free (tripwire)', () => {
+  // A tripwire, not a proof: it catches the usual write and I/O calls in expressions, nothing more (ADR 0002).
+  // ak_* helpers: only ak_message (a UI message) is allowed; everything else (ak_create_event, ak_send_email, …) trips.
+  const WRITE = /\.(delete|save|update|create|bulk_create|bulk_update|get_or_create|update_or_create|set|add|remove|clear|set_password|execute)\(|\bsetattr\(|\bcursor\b|\brequests\b|\bak_(?!message\b)\w+/;
+  const read = (rel: string) => readFileSync(join(coolifyDir, rel), 'utf8');
+  const files = [...pkgs.map((p) => [`lokyy-${p}`, renderBlueprint(p)]), ['portal', read('../../apps/portal/authentik/lokyy-portal.yaml')],
+    ['stack', read('../stack/authentik/blueprints/lokyy-vaults.yaml')]];
+  let seen = 0;
+  for (const [file, b] of files) {
+    for (const e of b.split(/\n\s*- model: /).slice(1).filter((x) => /\bexpression: \|/.test(x))) {
+      seen++;
+      const name = /name: ([^\s}]+)/.exec(e)?.[1];
       const expr = e.slice(e.indexOf('expression: |'));
       if (name === 'lokyy-end-proxy-sessions') assert.equal((expr.match(new RegExp(WRITE.source, 'g')) ?? []).length, 1, 'exactly one delete');
-      else assert.ok(!WRITE.test(expr), `${name} has a write call`);
+      else assert.ok(!WRITE.test(expr), `${file}: ${name} has a write or I/O call`);
     }
   }
+  assert.ok(seen >= 5, `expressions checked: ${seen}`);
+  // the tripwire itself trips
+  for (const bad of ['user.save()', 'setattr(user, "x", 1)', 'import requests', 'ak_create_event("x")', 'c.execute("x")', 'connection.cursor()']) assert.ok(WRITE.test(bad), bad);
+  assert.ok(!WRITE.test('ak_message("x")'));
 });
 
 test('brand (LBV2-35): user-visible names say "Lokyy Brain"; no old product name in deploy/coolify or the runbook', () => {

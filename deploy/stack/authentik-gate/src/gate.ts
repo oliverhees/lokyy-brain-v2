@@ -130,7 +130,8 @@ export function createGateHandler(o: GateOptions): (req: GateRequest) => Promise
   /** The target, fetched fresh from Authentik; 404 if missing, 403 unless it is a managed employee. */
   async function target(pk: number): Promise<RawUser> {
     const { status, data } = await ak<RawUser>('GET', `/core/users/${pk}/`, undefined, { include_groups: 'true' });
-    if (status === 404 || !data) throw new GateError(404, 'not_found');
+    // user_not_found (missing user) differs from not_found (unknown route): the portal accepts only the former
+    if (status === 404 || !data) throw new GateError(404, 'user_not_found');
     if (targetRefusal(data)) {
       audit({ action: 'refused', target: data.username, pk, reason: targetRefusal(data) });
       throw new GateError(403, 'forbidden_target');

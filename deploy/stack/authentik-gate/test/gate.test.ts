@@ -154,6 +154,14 @@ test('ending sessions fails loudly (502) when the outpost purge policy is missin
   assert.equal(ak.requests.filter((r) => r.path.includes('/policies/')).length, before);
 });
 
+test('audit LOW: a missing user (user_not_found) is distinguishable from an unknown route (not_found)', async () => {
+  const missing = await call('DELETE', '/v1/users/999999/sessions');
+  assert.deepEqual([missing.status, missing.body], [404, { error: 'user_not_found' }]);
+  assert.deepEqual((await call('DELETE', '/v1/users/999999')).body, { error: 'user_not_found' });
+  const unknown = await call('DELETE', '/v1/users/1/sessions/all');
+  assert.deepEqual([unknown.status, unknown.body], [404, { error: 'not_found' }]);
+});
+
 test('lists managed users only', async () => {
   await create('hans');
   const names = (await call('GET', '/v1/users')).body.users.map((u: { username: string }) => u.username);
