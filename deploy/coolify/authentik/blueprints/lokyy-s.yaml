@@ -60,6 +60,7 @@ entries:
         - authentik_core.remove_user_from_group
         - authentik_core.view_authenticatedsession
         - authentik_core.delete_authenticatedsession
+        - authentik_policies.view_policy
   - model: authentik_core.user
     id: sa-portal
     identifiers: { username: lokyy-portal }
@@ -77,6 +78,19 @@ entries:
       user: !KeyOf sa-portal
       expiring: false
       key: !Env PORTAL_AUTHENTIK_TOKEN
+  - model: authentik_policies_expression.expressionpolicy
+    id: policy-end-proxy-sessions
+    identifiers: { name: lokyy-end-proxy-sessions }
+    attrs:
+      name: lokyy-end-proxy-sessions
+      expression: |
+        from authentik.providers.proxy.models import ProxySession
+        user = request.user
+        if (user.is_superuser or user.path != "lokyy" or not user.attributes.get("lokyy_managed", False)
+                or user.groups.filter(name__in=["lokyy-admins", "authentik Admins"]).exists()):
+            return False
+        ProxySession.objects.filter(session_data__claims__sub=user.uid).delete()
+        return True
   - model: authentik_core.user
     identifiers: { username: akadmin }
     state: present

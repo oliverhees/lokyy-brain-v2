@@ -310,15 +310,25 @@ export class PortalService {
     // Old key first and independently of MetaMCP HTTP: open sessions must not keep the old access (audit H1).
     const revoked = await this.#revoke(username);
     await this.#patch(username, (x) => { x.role = role as Role; });
+    let pk: number | null = null;
     try {
-      if (u.status !== 'disabled') await this.#d.authentik.setGroups(await this.#ensureAuthentik({ ...u, role: role as Role }), managedGroupsFor(u.slot, role as Role));
+      if (u.status !== 'disabled') {
+        pk = await this.#ensureAuthentik({ ...u, role: role as Role });
+        await this.#d.authentik.setGroups(pk, managedGroupsFor(u.slot, role as Role));
+      }
     } catch (e) {
       await this.#patch(username, (x) => { x.role = from; });
       throw this.#mapAuthentik(e);
     }
+    // Open web sessions still carry the old groups (e.g. firma-write after a downgrade): end them (QA High)
+    let sessionsError: Error | null = null;
+    if (pk !== null) {
+      try { await this.#d.authentik.endSessions(pk); } catch (e) { sessionsError = this.#mapAuthentik(e); }
+    }
     await this.#provision();
-    await this.#d.audit.write({ actor, action: 'user.role', target: username, details: { from, to: role as string, revoked } });
+    await this.#d.audit.write({ actor, action: 'user.role', target: username, details: { from, to: role as string, revoked, sessionsEnded: sessionsError === null } });
     if (!revoked) throw new ServiceError(502, 'revocation_failed');
+    if (sessionsError) throw sessionsError;
     return this.#get(username);
   }
 

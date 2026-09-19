@@ -782,6 +782,9 @@ export function renderBlueprint(pkg: PackageName): string {
     '      name: lokyy-portal',
     '      permissions:',
     ...PORTAL_PERMISSIONS.map((p) => `        - authentik_core.${p}`),
+    // QA High: run (test) lokyy-end-proxy-sessions below. Global because Authentik 2026.8.2's policy test API
+    // crashes on an object permission (WrongAppError); read-only on policies, no change/add/delete.
+    '        - authentik_policies.view_policy',
     '  - model: authentik_core.user',
     '    id: sa-portal',
     '    identifiers: { username: lokyy-portal }',
@@ -799,6 +802,25 @@ export function renderBlueprint(pkg: PackageName): string {
     '      user: !KeyOf sa-portal',
     '      expiring: false',
     '      key: !Env PORTAL_AUTHENTIK_TOKEN',
+  );
+  // QA High: forward-auth sessions live in the outpost's ProxySession table and end only when the outpost
+  // receives the session-end event, which is lost while it refreshes. authentik-gate runs this policy through
+  // the policy test API (target user = request.user) after deleting the Authentik sessions: it removes the
+  // user's ProxySession rows directly. Refuses the same accounts the gate refuses.
+  L.push(
+    '  - model: authentik_policies_expression.expressionpolicy',
+    '    id: policy-end-proxy-sessions',
+    '    identifiers: { name: lokyy-end-proxy-sessions }',
+    '    attrs:',
+    '      name: lokyy-end-proxy-sessions',
+    '      expression: |',
+    '        from authentik.providers.proxy.models import ProxySession',
+    '        user = request.user',
+    '        if (user.is_superuser or user.path != "lokyy" or not user.attributes.get("lokyy_managed", False)',
+    '                or user.groups.filter(name__in=["lokyy-admins", "authentik Admins"]).exists()):',
+    '            return False',
+    '        ProxySession.objects.filter(session_data__claims__sub=user.uid).delete()',
+    '        return True',
   );
   L.push(
     '  - model: authentik_core.user',

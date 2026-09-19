@@ -429,7 +429,8 @@ test('MED-3: least-privilege Authentik service account for the portal; no bootst
       'add_user_to_group', 'remove_user_from_group', 'view_authenticatedsession', 'delete_authenticatedsession']) {
       assert.ok(b.includes(`        - authentik_core.${perm}\n`), perm);
     }
-    assert.equal((b.match(/        - authentik_\w+\.\w+\n/g) ?? []).filter((l) => !l.includes('scopemapping')).length, 10, 'exactly 10 permissions');
+    // + authentik_policies.view_policy (QA High: run the outpost session purge policy)
+    assert.equal((b.match(/        - authentik_\w+\.\w+\n/g) ?? []).filter((l) => !l.includes('scopemapping')).length, 11, 'exactly 11 permissions');
     assert.ok(b.includes('      type: service_account\n'));
     assert.ok(b.includes('      key: !Env PORTAL_AUTHENTIK_TOKEN\n'));
     assert.ok(b.includes('      expiring: false\n') && b.includes('      intent: api\n'));
@@ -557,6 +558,25 @@ test('QA: exactly one MFA prompt on the Lokyy login flow (admins: lokyy-admin-mf
     assert.ok(def.includes('order: 30') && def.includes('evaluate_on_plan: false') && def.includes('re_evaluate_policies: true'), def);
     // enrolment only through the admin stage; the default validation stays optional (skip) for employees
     assert.ok(def.includes('default-authentication-mfa-validation'));
+  }
+});
+
+test('QA High: outpost session purge policy; the portal role may only run (test) this one policy', () => {
+  for (const pkg of pkgs) {
+    const b = renderBlueprint(pkg);
+    const entries = b.split('\n  - model: ').slice(1);
+    const pol = entries.filter((e) => e.startsWith('authentik_policies_expression.expressionpolicy') && e.includes('identifiers: { name: lokyy-end-proxy-sessions }'));
+    assert.equal(pol.length, 1);
+    const e = pol[0];
+    // refuses everyone the gate refuses, then deletes only this user's forward-auth sessions
+    for (const x of ['request.user', 'is_superuser', '"lokyy_managed"', 'path != "lokyy"', '"lokyy-admins"', '"authentik Admins"',
+      'from authentik.providers.proxy.models import ProxySession', 'ProxySession.objects.filter(session_data__claims__sub=user.uid).delete()']) {
+      assert.ok(e.includes(x), x);
+    }
+    // The policy test API needs the global view_policy (an object permission crashes it in 2026.8.2 with
+    // WrongAppError): the only policy permission of the portal role; no change/add/delete on policies
+    const role = entries.find((x) => x.startsWith('authentik_rbac.role') && x.includes('name: lokyy-portal'))!;
+    assert.deepEqual(role.split('\n').filter((l) => l.includes('authentik_policies')), ['        - authentik_policies.view_policy']);
   }
 });
 

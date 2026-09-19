@@ -55,6 +55,8 @@ class GateError extends Error {
 
 const DURATION = /^(days|hours)=(\d{1,3})$/;
 const MANAGED_PATH = 'lokyy';
+/** Blueprint expression policy that deletes the target's outpost (forward-auth) sessions (deploy/coolify/generate.ts) */
+const PURGE_POLICY = 'lokyy-end-proxy-sessions';
 
 const digest = (s: string) => createHash('sha256').update(s).digest();
 
@@ -106,6 +108,17 @@ export function createGateHandler(o: GateOptions): (req: GateRequest) => Promise
     const hit = (data?.results ?? []).find((g) => g.name === name);
     if (!hit) throw new GateError(422, 'group_missing');
     groupPks.set(name, hit.pk);
+    return hit.pk;
+  }
+
+  // Looked up per call (not cached): a re-created policy gets a new pk
+  async function purgePolicyPk(): Promise<string> {
+    const { data } = await ak<{ results: { pk: string; name: string }[] }>('GET', '/policies/all/', undefined, { search: PURGE_POLICY });
+    const hit = (data?.results ?? []).find((p) => p.name === PURGE_POLICY);
+    if (!hit) {
+      o.log(`policy ${PURGE_POLICY} missing`);
+      throw new GateError(502, 'upstream');
+    }
     return hit.pk;
   }
 
@@ -199,7 +212,14 @@ export function createGateHandler(o: GateOptions): (req: GateRequest) => Promise
       const u = await target(Number(m[1]));
       const { data } = await ak<{ results: { uuid: string }[] }>('GET', '/core/authenticated_sessions/', undefined, { user__username: u.username });
       for (const s of data?.results ?? []) await ak('DELETE', `/core/authenticated_sessions/${encodeURIComponent(s.uuid)}/`);
-      audit({ action: 'end_sessions', target: u.username, pk: u.pk, count: (data?.results ?? []).length });
+      // QA High: the outpost drops its forward-auth sessions only when it receives the session-end event,
+      // which is lost while it refreshes; the fixed blueprint policy deletes this user's ProxySession rows.
+      const { data: test } = await ak<{ passing?: boolean }>('POST', `/policies/all/${encodeURIComponent(await purgePolicyPk())}/test/`, { user: u.pk });
+      if (test?.passing !== true) {
+        audit({ action: 'end_sessions', target: u.username, pk: u.pk, count: (data?.results ?? []).length, outpost: false });
+        throw new GateError(502, 'upstream');
+      }
+      audit({ action: 'end_sessions', target: u.username, pk: u.pk, count: (data?.results ?? []).length, outpost: true });
       return { status: 204 };
     }
     throw new GateError(404, 'not_found');

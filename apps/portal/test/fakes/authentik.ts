@@ -29,6 +29,8 @@ export class FakeAuthentik {
   users = new Map<number, FakeUser>();
   groups = new Map<string, string>(); // pk → name
   sessions: { uuid: string; username: string }[] = [];
+  /** outpost (proxy) sessions, purged by the lokyy-end-proxy-sessions policy */
+  proxySessions: { username: string }[] = [];
   requests: RecordedRequest[] = [];
   recoveryRequests: { pk: number; token_duration: unknown }[] = [];
   recoveryFlowSet = true;
@@ -128,6 +130,15 @@ export class FakeAuthentik {
     if ((m = /^\/api\/v3\/core\/authenticated_sessions\/([^/]+)\/$/.exec(path)) && method === 'DELETE') {
       this.sessions = this.sessions.filter((s) => s.uuid !== m![1]);
       return json(204, undefined);
+    }
+    if (path === '/api/v3/policies/all/' && method === 'GET') {
+      return json(200, { results: [{ pk: 'pol-purge', name: 'lokyy-end-proxy-sessions' }] });
+    }
+    if ((m = /^\/api\/v3\/policies\/all\/pol-purge\/test\/$/.exec(path)) && method === 'POST') {
+      const u = this.users.get(Number(body?.user));
+      if (!u) return json(400, {});
+      this.proxySessions = this.proxySessions.filter((x) => x.username !== u.username);
+      return json(200, { passing: true, messages: [] });
     }
     return json(404, { detail: `fake: no route ${method} ${path}` });
   };

@@ -11,6 +11,9 @@ export class FakeAuthentik {
   users = new Map<number, FakeUser>();
   groups = new Map<string, { name: string; is_superuser: boolean }>();
   sessions: { uuid: string; username: string }[] = [];
+  /** outpost (proxy) sessions, purged by the lokyy-end-proxy-sessions policy (ProxySession rows) */
+  proxySessions: { username: string }[] = [];
+  purgePolicy: 'ok' | 'missing' | 'fails' = 'ok';
   requests: { method: string; path: string; auth: string | undefined }[] = [];
   recoveryFlowSet = true;
   #next = 100;
@@ -92,6 +95,19 @@ export class FakeAuthentik {
     if ((m = /^\/api\/v3\/core\/authenticated_sessions\/([^/]+)\/$/.exec(p)) && method === 'DELETE') {
       this.sessions = this.sessions.filter((s) => s.uuid !== m![1]);
       return send(204);
+    }
+    // Needs the global view_policy (the portal role's only policy permission); search is a substring match
+    if (p === '/api/v3/policies/all/' && method === 'GET') {
+      const q = url.searchParams.get('search');
+      const all = this.purgePolicy === 'missing' ? [] : [{ pk: 'pol-other', name: 'lokyy-end-proxy-sessions-x' }, { pk: 'pol-purge', name: 'lokyy-end-proxy-sessions' }];
+      return send(200, { results: all.filter((x) => q === null || x.name.includes(q)) });
+    }
+    if ((m = /^\/api\/v3\/policies\/all\/([^/]+)\/test\/$/.exec(p)) && method === 'POST') {
+      const u = this.users.get(Number(body!['user']));
+      if (!u || m[1] !== 'pol-purge') return send(400, {});
+      if (this.purgePolicy === 'fails') return send(200, { passing: false, messages: [] });
+      this.proxySessions = this.proxySessions.filter((x) => x.username !== u.username);
+      return send(200, { passing: true, messages: [] });
     }
     return send(404, { detail: `no route ${method} ${p}` });
   }

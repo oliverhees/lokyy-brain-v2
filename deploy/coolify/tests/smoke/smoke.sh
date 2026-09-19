@@ -313,6 +313,43 @@ create_user alice "$(cat "$work/pass-alice")" vault-v01 && create_user bob "$(ca
 provision s && ok "MCP provisioning (provision.mjs, as the portal does)" || { cat "$work/provision.log"; bad "provisioning"; }
 isolation_checks s v15
 
+# gate <pkg> <method> <path> [json] → "<status> <body>" from authentik-gate, called from the portal container
+# (the only holder of the gate secret), exactly as the portal does
+gate() {
+  dc "$1" exec -T -e M="$2" -e P="$3" -e B="${4:-}" portal node -e 'fetch(process.env.AUTHENTIK_GATE_URL + process.env.P, { method: process.env.M,
+    headers: { authorization: "Bearer " + process.env.AUTHENTIK_GATE_SECRET, "content-type": "application/json" }, body: process.env.B || undefined })
+    .then(async (r) => console.log(r.status + " " + (await r.text())), (e) => console.log("ERR " + e.message))' 2>/dev/null
+}
+if has_portal && [[ -n $(dc s ps -q portal 2>/dev/null) ]]; then
+  echo "== [s] deactivating ends the open vault session, also while the outpost refreshes (QA High)"
+  gina_pk=$(gate s POST /v1/users '{"username":"gina","name":"Gina","email":"gina@example.com","slot":"v05","groups":["vault-v05","lokyy-users"]}' | sed -nE 's/^201 //p' | jq -r .user.pk)
+  [[ ${gina_pk:-} =~ ^[0-9]+$ ]] && ok "managed user via authentik-gate" || bad "managed user via authentik-gate"
+  (umask 077; openssl rand -hex 16 >"$work/pass-gina")
+  api POST "/core/users/$gina_pk/set_password/" "$(jq -cn --arg p "$(cat "$work/pass-gina")" '{password:$p}')" >/dev/null
+  rm -f "$jars/gina"; login "$jars/gina" "$(U v05)/" gina "$(cat "$work/pass-gina")" || bad "gina login"
+  expect "gina → v05 (own slot)" "$(access "$jars/gina" "$(U v05)/api/config")" "DATA"
+  # Outpost refresh storm: the session-end event alone is lost while the outpost reloads its providers
+  dc s exec -T authentik-worker ak shell -c "
+import time
+from authentik.providers.proxy.models import ProxyProvider
+end = time.time() + 45
+while time.time() < end:
+    for p in ProxyProvider.objects.all()[:3]:
+        p.save()
+    time.sleep(1)
+" >/dev/null 2>&1 &
+  storm=$!
+  sleep 8
+  expect "gate: deactivate gina" "$(gate s PATCH "/v1/users/$gina_pk" '{"isActive":false}' | cut -c1-3)" "200"
+  expect "gate: end gina's sessions (Authentik + outpost)" "$(gate s DELETE "/v1/users/$gina_pk/sessions" | cut -c1-3)" "204"
+  old_session() { curlk -b "$jars/gina" -o /dev/null -w '%{http_code}' "$(U v05)/api/config"; }
+  expect "gina's old vault session right after deactivation" "$(old_session)" "302"
+  sleep 10
+  expect "gina's old vault session 10 s later" "$(old_session)" "302"
+  wait "$storm" 2>/dev/null
+  expect "gate: remove gina" "$(gate s DELETE "/v1/users/$gina_pk" | cut -c1-3)" "204"
+fi
+
 echo "== [s] provisioning: invalid input refused as a whole; rotation and removal"
 old_alice=$(key alice) old_bob=$(key bob)
 cp "$work/clients.json" "$work/clients.before.json"
