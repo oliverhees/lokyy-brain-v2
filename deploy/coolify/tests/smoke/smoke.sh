@@ -321,18 +321,26 @@ gate() {
     .then(async (r) => console.log(r.status + " " + (await r.text())), (e) => console.log("ERR " + e.message))' 2>/dev/null
 }
 if has_portal && [[ -n $(dc s ps -q portal 2>/dev/null) ]]; then
-  echo "== [s] deactivating ends the open vault session, also while the outpost refreshes (QA High)"
-  gina_pk=$(gate s POST /v1/users '{"username":"gina","name":"Gina","email":"gina@example.com","slot":"v05","groups":["vault-v05","lokyy-users"]}' | sed -nE 's/^201 //p' | jq -r .user.pk)
-  [[ ${gina_pk:-} =~ ^[0-9]+$ ]] && ok "managed user via authentik-gate" || bad "managed user via authentik-gate"
-  (umask 077; openssl rand -hex 16 >"$work/pass-gina")
-  api POST "/core/users/$gina_pk/set_password/" "$(jq -cn --arg p "$(cat "$work/pass-gina")" '{password:$p}')" >/dev/null
-  rm -f "$jars/gina"; login "$jars/gina" "$(U v05)/" gina "$(cat "$work/pass-gina")" || bad "gina login"
+  echo "== [s] disable and remove end the open vault session, also while the outpost refreshes (QA High)"
+  # managed <user> <slot>: portal-managed employee via the gate, password set, logged in to its vault → pk
+  managed() {
+    local pk
+    pk=$(gate s POST /v1/users "$(jq -cn --arg u "$1" --arg s "$2" '{username:$u,name:$u,email:($u+"@example.com"),slot:$s,groups:[("vault-"+$s),"lokyy-users"]}')" | sed -nE 's/^201 //p' | jq -r .user.pk)
+    [[ ${pk:-} =~ ^[0-9]+$ ]] || { bad "$1: managed user via authentik-gate"; return 1; }
+    (umask 077; openssl rand -hex 16 >"$work/pass-$1")
+    api POST "/core/users/$pk/set_password/" "$(jq -cn --arg p "$(cat "$work/pass-$1")" '{password:$p}')" >/dev/null
+    rm -f "$jars/$1"; login "$jars/$1" "$(U "$2")/" "$1" "$(cat "$work/pass-$1")" >/dev/null 2>&1
+    echo "$pk"
+  }
+  old_session() { curlk -b "$jars/$1" -o /dev/null -w '%{http_code}' "$(U "$2")/api/config"; }
+  gina_pk=$(managed gina v05) && hugo_pk=$(managed hugo v06)
   expect "gina → v05 (own slot)" "$(access "$jars/gina" "$(U v05)/api/config")" "DATA"
+  expect "hugo → v06 (own slot)" "$(access "$jars/hugo" "$(U v06)/api/config")" "DATA"
   # Outpost refresh storm: the session-end event alone is lost while the outpost reloads its providers
   dc s exec -T authentik-worker ak shell -c "
 import time
 from authentik.providers.proxy.models import ProxyProvider
-end = time.time() + 45
+end = time.time() + 50
 while time.time() < end:
     for p in ProxyProvider.objects.all()[:3]:
         p.save()
@@ -340,12 +348,18 @@ while time.time() < end:
 " >/dev/null 2>&1 &
   storm=$!
   sleep 8
+  # disable, as the portal does: deactivate, then end sessions
   expect "gate: deactivate gina" "$(gate s PATCH "/v1/users/$gina_pk" '{"isActive":false}' | cut -c1-3)" "200"
   expect "gate: end gina's sessions (Authentik + outpost)" "$(gate s DELETE "/v1/users/$gina_pk/sessions" | cut -c1-3)" "204"
-  old_session() { curlk -b "$jars/gina" -o /dev/null -w '%{http_code}' "$(U v05)/api/config"; }
-  expect "gina's old vault session right after deactivation" "$(old_session)" "302"
+  # remove, as the portal does: deactivate, end sessions, delete
+  expect "gate: deactivate hugo" "$(gate s PATCH "/v1/users/$hugo_pk" '{"isActive":false}' | cut -c1-3)" "200"
+  expect "gate: end hugo's sessions" "$(gate s DELETE "/v1/users/$hugo_pk/sessions" | cut -c1-3)" "204"
+  expect "gate: delete hugo" "$(gate s DELETE "/v1/users/$hugo_pk" | cut -c1-3)" "204"
+  expect "disabled gina's old vault session right away" "$(old_session gina v05)" "302|401"
+  expect "removed hugo's old vault session right away" "$(old_session hugo v06)" "302|401"
   sleep 10
-  expect "gina's old vault session 10 s later" "$(old_session)" "302"
+  expect "disabled gina's old vault session 10 s later" "$(old_session gina v05)" "302|401"
+  expect "removed hugo's old vault session 10 s later" "$(old_session hugo v06)" "302|401"
   wait "$storm" 2>/dev/null
   expect "gate: remove gina" "$(gate s DELETE "/v1/users/$gina_pk" | cut -c1-3)" "204"
 fi

@@ -340,7 +340,10 @@ export class PortalService {
     let authentikError: Error | null = null;
     if (u.authentikPk !== null) {
       try {
-        await this.#d.authentik.setActive(u.authentikPk, false);
+        try { await this.#d.authentik.setActive(u.authentikPk, false); } catch (e) {
+          // already deleted (retry after a partial removal): nothing left that could log in
+          if (!(e instanceof AuthentikError && e.status === 404)) throw e;
+        }
         await this.#d.authentik.endSessions(u.authentikPk);
       } catch (e) { authentikError = this.#mapAuthentik(e); }
     }
@@ -377,6 +380,11 @@ export class PortalService {
     }
     try {
       if (u.authentikPk !== null) {
+        // Deactivated first, like disable: a failed session end must not leave an account that can log in
+        try { await this.#d.authentik.setActive(u.authentikPk, false); } catch (e) {
+          // already deleted (retry after a partial removal): nothing left that could log in
+          if (!(e instanceof AuthentikError && e.status === 404)) throw e;
+        }
         await this.#d.authentik.endSessions(u.authentikPk);
         await this.#d.authentik.deleteUser(u.authentikPk);
       }

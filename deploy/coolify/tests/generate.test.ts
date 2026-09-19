@@ -570,13 +570,30 @@ test('QA High: outpost session purge policy; the portal role may only run (test)
     const e = pol[0];
     // refuses everyone the gate refuses, then deletes only this user's forward-auth sessions
     for (const x of ['request.user', 'is_superuser', '"lokyy_managed"', 'path != "lokyy"', '"lokyy-admins"', '"authentik Admins"',
-      'from authentik.providers.proxy.models import ProxySession', 'ProxySession.objects.filter(session_data__claims__sub=user.uid).delete()']) {
+      'from authentik.providers.proxy.models import ProxySession',
+      // audit INFO-2: by user_id (UUID) or the sub claim, so a changed sub_mode still matches
+      'ProxySession.objects.filter(Q(user_id=user.uuid) | Q(session_data__claims__sub=user.uid)).delete()']) {
       assert.ok(e.includes(x), x);
     }
     // The policy test API needs the global view_policy (an object permission crashes it in 2026.8.2 with
     // WrongAppError): the only policy permission of the portal role; no change/add/delete on policies
     const role = entries.find((x) => x.startsWith('authentik_rbac.role') && x.includes('name: lokyy-portal'))!;
     assert.deepEqual(role.split('\n').filter((l) => l.includes('authentik_policies')), ['        - authentik_policies.view_policy']);
+  }
+});
+
+test('audit INFO-1: only lokyy-end-proxy-sessions writes; every other policy expression is side-effect free', () => {
+  const WRITE = /\.(delete|save|update|create|bulk_create|bulk_update|get_or_create|update_or_create|set|add|remove|clear|set_password)\(/;
+  const portal = readFileSync(join(coolifyDir, '../../apps/portal/authentik/lokyy-portal.yaml'), 'utf8');
+  for (const b of [...pkgs.map(renderBlueprint), portal]) {
+    const policies = b.split('\n  - model: ').slice(1).filter((e) => e.startsWith('authentik_policies_expression.expressionpolicy'));
+    assert.ok(policies.length > 0);
+    for (const e of policies) {
+      const name = /identifiers: \{ name: ([^ }]+)/.exec(e)?.[1];
+      const expr = e.slice(e.indexOf('expression: |'));
+      if (name === 'lokyy-end-proxy-sessions') assert.equal((expr.match(new RegExp(WRITE.source, 'g')) ?? []).length, 1, 'exactly one delete');
+      else assert.ok(!WRITE.test(expr), `${name} has a write call`);
+    }
   }
 });
 

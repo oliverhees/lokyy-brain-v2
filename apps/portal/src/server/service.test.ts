@@ -318,6 +318,20 @@ describe('role change, disable, enable, remove', () => {
     await expect(h.service.changeRole('admin', 'anna', 'writer')).rejects.toMatchObject({ status: 502, code: 'revocation_failed' });
   });
 
+  it('remove deactivates the Authentik account before ending sessions: a failed session end cannot leave it able to log in (audit LOW)', async () => {
+    await invite('anna');
+    h.ak.purgeFails = true;
+    await expect(h.service.remove('admin', 'anna', { confirm: 'anna', keepData: true })).rejects.toMatchObject({ status: 502 });
+    expect(h.ak.userByName('anna')!.is_active).toBe(false);
+  });
+
+  it('remove still succeeds when the Authentik account is already gone (retry after a partial removal)', async () => {
+    await invite('anna');
+    h.ak.users.delete(h.ak.userByName('anna')!.pk);
+    await h.service.remove('admin', 'anna', { confirm: 'anna', keepData: true });
+    expect((await h.service.listUsers()).users).toEqual([]);
+  });
+
   it('remove disables the user before the Authentik step: a failed Authentik call cannot re-provision a key (re-audit LOW)', async () => {
     await invite('anna');
     h.ak.failNext = { status: 500, body: 'boom' };

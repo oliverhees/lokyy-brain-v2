@@ -31,6 +31,8 @@ export class FakeAuthentik {
   sessions: { uuid: string; username: string }[] = [];
   /** outpost (proxy) sessions, purged by the lokyy-end-proxy-sessions policy */
   proxySessions: { username: string }[] = [];
+  /** the purge policy does not pass (gate answers 502) */
+  purgeFails = false;
   requests: RecordedRequest[] = [];
   recoveryRequests: { pk: number; token_duration: unknown }[] = [];
   recoveryFlowSet = true;
@@ -137,6 +139,7 @@ export class FakeAuthentik {
     if ((m = /^\/api\/v3\/policies\/all\/pol-purge\/test\/$/.exec(path)) && method === 'POST') {
       const u = this.users.get(Number(body?.user));
       if (!u) return json(400, {});
+      if (this.purgeFails) return json(200, { passing: false, messages: [] });
       this.proxySessions = this.proxySessions.filter((x) => x.username !== u.username);
       return json(200, { passing: true, messages: [] });
     }

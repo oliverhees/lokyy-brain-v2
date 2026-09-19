@@ -803,10 +803,12 @@ export function renderBlueprint(pkg: PackageName): string {
     '      expiring: false',
     '      key: !Env PORTAL_AUTHENTIK_TOKEN',
   );
-  // QA High: forward-auth sessions live in the outpost's ProxySession table and end only when the outpost
-  // receives the session-end event, which is lost while it refreshes. authentik-gate runs this policy through
-  // the policy test API (target user = request.user) after deleting the Authentik sessions: it removes the
-  // user's ProxySession rows directly. Refuses the same accounts the gate refuses.
+  // QA High (ADR 0002): forward-auth sessions live in the outpost's ProxySession table and end only when the
+  // outpost receives the session-end event, which is lost while it refreshes. Authentik has no API for proxy
+  // sessions, so authentik-gate runs this unbound policy through the policy test API (target user =
+  // request.user) after deleting the Authentik sessions: the "test" has the side effect of deleting exactly
+  // this user's ProxySession rows. Refuses the same accounts the gate refuses (returns False, deletes nothing;
+  // the gate then answers 502). No other policy expression may write (generator test).
   L.push(
     '  - model: authentik_policies_expression.expressionpolicy',
     '    id: policy-end-proxy-sessions',
@@ -814,12 +816,14 @@ export function renderBlueprint(pkg: PackageName): string {
     '    attrs:',
     '      name: lokyy-end-proxy-sessions',
     '      expression: |',
+    '        from django.db.models import Q',
     '        from authentik.providers.proxy.models import ProxySession',
     '        user = request.user',
     '        if (user.is_superuser or user.path != "lokyy" or not user.attributes.get("lokyy_managed", False)',
     '                or user.groups.filter(name__in=["lokyy-admins", "authentik Admins"]).exists()):',
     '            return False',
-    '        ProxySession.objects.filter(session_data__claims__sub=user.uid).delete()',
+    // user_id (UUID) or the sub claim (hashed id by default): still matches if the provider's sub_mode changes
+    '        ProxySession.objects.filter(Q(user_id=user.uuid) | Q(session_data__claims__sub=user.uid)).delete()',
     '        return True',
   );
   L.push(

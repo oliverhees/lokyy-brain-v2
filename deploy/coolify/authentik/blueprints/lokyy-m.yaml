@@ -99,12 +99,13 @@ entries:
     attrs:
       name: lokyy-end-proxy-sessions
       expression: |
+        from django.db.models import Q
         from authentik.providers.proxy.models import ProxySession
         user = request.user
         if (user.is_superuser or user.path != "lokyy" or not user.attributes.get("lokyy_managed", False)
                 or user.groups.filter(name__in=["lokyy-admins", "authentik Admins"]).exists()):
             return False
-        ProxySession.objects.filter(session_data__claims__sub=user.uid).delete()
+        ProxySession.objects.filter(Q(user_id=user.uuid) | Q(session_data__claims__sub=user.uid)).delete()
         return True
   - model: authentik_core.user
     identifiers: { username: akadmin }
